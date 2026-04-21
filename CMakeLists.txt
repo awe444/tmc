@@ -242,11 +242,11 @@ endif()
 # still needs the agbcc-ism / 32-bit-pointer fixes that future PRs will
 # track, so this list only grows by hand as each file is verified.
 #
-# Since PR #2b.4 the library is linked into `tmc_sdl` by default; the
-# unresolved cross-TU references that 2b.3 had outstanding are now
-# satisfied by `src/platform/shared/port_globals.c` (host BSS for the
-# linker-script globals) and the `__PORT__` BIOS aliases in `bios.c` /
-# `interrupts.c`.
+# Since PR #2b.4 the library can be built cleanly as a dependency; it is
+# only linked into `tmc_sdl` when `TMC_LINK_GAME_SOURCES=ON`. The unresolved
+# cross-TU references that 2b.3 had outstanding are now satisfied by
+# `src/platform/shared/port_globals.c` (host BSS for the linker-script
+# globals) and the `__PORT__` BIOS aliases in `bios.c` / `interrupts.c`.
 # ---------------------------------------------------------------------------
 set(TMC_GAME_LEAF_SOURCES
     # Original 2b.2 leaf set: pure const data / function-pointer dispatch
