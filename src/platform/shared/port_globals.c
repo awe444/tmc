@@ -69,4 +69,3 @@ u16 gPaletteBuffer[256];
 /* IWRAM-resident byte arrays. `gUnk_03003DE4` is a 12-byte mailbox used
  * by the VBlank-DMA helpers in src/main.c::SetVBlankDMA(). */
 u8 gUnk_03003DE4[0xC];
-

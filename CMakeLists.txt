@@ -142,12 +142,14 @@ endif()
 #
 # `tmc_sdl` always links the SDL platform layer + the cross-port shared
 # layer (memory / interrupts / DMA / BIOS / save / asm stubs / port
-# globals). When `TMC_LINK_GAME_SOURCES=ON` (the default since PR #2b.4),
-# the real game sources from `src/**/*.c` are pulled in via the
-# `tmc_game_sources` static library defined further below, and the
-# placeholder `agb_main_stub.c` is dropped so that `src/main.c::AgbMain`
-# becomes the entry point. Setting `TMC_LINK_GAME_SOURCES=OFF` re-enables
-# the stub so the platform layer can still be exercised in isolation.
+# globals). When `TMC_LINK_GAME_SOURCES=ON`, the real game sources from
+# `src/**/*.c` are pulled in via the `tmc_game_sources` static library
+# defined further below, and the placeholder `agb_main_stub.c` is
+# dropped so that `src/main.c::AgbMain` becomes the entry point. With
+# the default `OFF`, the stub takes over and the platform layer is
+# exercised in isolation (PR #2b.4b will flip the default to ON once
+# the remaining link references from outside the leaf set are stubbed
+# or ported — see docs/sdl_port.md).
 # ---------------------------------------------------------------------------
 set(TMC_PLATFORM_SDL_SOURCES
     src/platform/sdl/main.c
