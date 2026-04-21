@@ -88,8 +88,10 @@
 // assertions are guaranteed to trip in a host build. They encode hardware
 // layout that doesn't apply to the SDL port, so collapse them to a no-op
 // here -- the matching ROM build still gets the real check via GBA.mk.
-// See docs/sdl_port.md, PR #2b.3.
-#define static_assert(cond) struct __port_unused_static_assert
+// See docs/sdl_port.md, PR #2b.3. The expansion intentionally leaves the
+// trailing `;` at the call site as a stray null declaration (permitted at
+// file scope in C), which side-steps any tag-name collisions.
+#define static_assert(cond)
 #else
 #define static_assert(cond) extern char assertion[(cond) ? 1 : -1]
 #endif
