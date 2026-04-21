@@ -265,14 +265,15 @@ void ObjAffineSet(struct ObjAffineSrcData* src, void* dst_, int32_t count, int32
         (void)src;
         dst = (int16_t*)((char*)dst + offset * 4);
     }
-    (void)src;
     (void)count;
 }
 
 /* RL (run-length) decompression is used by a small number of asset
- * blobs. Until the real decoder is ported we fall through to a
- * byte-for-byte copy of the post-header payload, which keeps callers
- * from dereferencing uninitialised destination memory. */
+ * blobs. The real decoder has not been ported yet; until it is,
+ * treat these as no-ops. Callers that dereference the destination
+ * will observe whatever the host-side memory arena was initialised
+ * to (zero on startup), which is the same state the game sees on
+ * freshly-erased EWRAM. */
 void RLUnCompWram(const void* src, void* dst) {
     (void)src;
     (void)dst;
@@ -282,6 +283,10 @@ void RLUnCompVram(const void* src, void* dst) {
     (void)dst;
 }
 
+/* Temporary stub for the BIOS arc-tangent. Returns 0 until a real
+ * atan2 implementation is wired in (the existing call sites feed the
+ * result into rotation math that the SDL port's PR #5 renderer will
+ * consume). */
 uint16_t ArcTan2(int16_t x, int16_t y) {
     (void)x;
     (void)y;
