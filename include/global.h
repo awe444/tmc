@@ -83,7 +83,16 @@
 #define min(a, b) ((a) < (b) ? (a) : (b))
 #define max(a, b) ((a) >= (b) ? (a) : (b))
 
+#ifdef __PORT__
+// Host pointers are 8 bytes (vs 4 on the GBA), so most TMC struct-layout
+// assertions are guaranteed to trip in a host build. They encode hardware
+// layout that doesn't apply to the SDL port, so collapse them to a no-op
+// here -- the matching ROM build still gets the real check via GBA.mk.
+// See docs/sdl_port.md, PR #2b.3.
+#define static_assert(cond) struct __port_unused_static_assert
+#else
 #define static_assert(cond) extern char assertion[(cond) ? 1 : -1]
+#endif
 
 #define super (&this->base)
 
