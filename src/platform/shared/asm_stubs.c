@@ -28,8 +28,8 @@
  * (sub-step 2b.1).  Manual edits are fine; they will not be clobbered
  * unless someone re-runs the generator wholesale.
  */
-#include <assert.h>
-#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 /* Suppress -Wmissing-prototypes / -Wmissing-declarations: these stubs are
  * deliberately exposed only by symbol name for the linker.  Their real
@@ -40,12 +40,36 @@
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #endif
 
-/* The trap macro factors out the assert + noreturn hint so each stub
+/* `noreturn` attribute spelled portably across GCC/Clang/MSVC. The stubs
+ * must never return -- callers may have non-void prototypes, so silently
+ * falling through with an undefined return value would corrupt state. */
+#if defined(__GNUC__) || defined(__clang__)
+#define PORT_ASM_STUB_NORETURN __attribute__((noreturn))
+#elif defined(_MSC_VER)
+#define PORT_ASM_STUB_NORETURN __declspec(noreturn)
+#else
+#define PORT_ASM_STUB_NORETURN
+#endif
+
+/* Centralised trap: log which unported asm function was called and
+ * abort.  Kept out of line so the per-symbol stubs stay tiny.  Uses
+ * abort() (not assert()) so the trap survives -DNDEBUG, which is the
+ * default in CMake Release / RelWithDebInfo builds. */
+static PORT_ASM_STUB_NORETURN void Port_AsmStubTrap(const char* name) {
+    fprintf(stderr,
+            "[tmc_sdl] FATAL: unported asm function called: asm/src/%s\n"
+            "         See docs/sdl_port.md, roadmap PR #2b.\n",
+            name);
+    fflush(stderr);
+    abort();
+}
+
+/* The trap macro factors out the noreturn-tagged stub body so each stub
  * stays a single line and the file is mechanical to read. */
-#define PORT_ASM_STUB(name)                                                   \
-    void name(void);                                                          \
-    void name(void) {                                                         \
-        assert(0 && "asm/src/" #name " is not yet ported (see docs/sdl_port.md PR #2b)"); \
+#define PORT_ASM_STUB(name)                                                    \
+    PORT_ASM_STUB_NORETURN void name(void);                                    \
+    PORT_ASM_STUB_NORETURN void name(void) {                                   \
+        Port_AsmStubTrap(#name);                                               \
     }
 
 
