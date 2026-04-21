@@ -117,8 +117,7 @@ int Port_HeadersSelfCheck(void) {
      * so this check fails if that shared offset ever drifts. */
     u16 saved_keyinput = REG_KEYINPUT;
     REG_KEYINPUT = 0x03FF;
-    ok = ok && (gPortIo[REG_OFFSET_KEYINPUT] == 0xFF)
-             && (gPortIo[REG_OFFSET_KEYINPUT + 1] == 0x03);
+    ok = ok && (gPortIo[REG_OFFSET_KEYINPUT] == 0xFF) && (gPortIo[REG_OFFSET_KEYINPUT + 1] == 0x03);
     REG_KEYINPUT = saved_keyinput;
 
     /* Exercise the agbcc-ism no-ops too so the linker can't drop them. */
