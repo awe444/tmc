@@ -1,0 +1,52 @@
+name: SDL port build
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'src/platform/**'
+      - 'include/platform/**'
+      - '.github/workflows/sdl.yml'
+  pull_request:
+    paths:
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - 'src/platform/**'
+      - 'include/platform/**'
+      - '.github/workflows/sdl.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ubuntu-latest (${{ matrix.version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [USA]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-dev ninja-build
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -DTMC_GAME_VERSION=${{ matrix.version }} -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release -j
+
+      - name: Smoke test (headless, 30 frames)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./build/tmc_sdl --frames=30 --mute --save-dir=.

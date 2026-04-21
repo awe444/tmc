@@ -48,6 +48,9 @@ Documentation: <https://zeldaret.github.io/tmc>
 
 To set up the repository, see [INSTALL.md](INSTALL.md).
 
+To build the (work-in-progress) host SDL port, see [INSTALL_SDL.md](INSTALL_SDL.md)
+and [docs/sdl_port.md](docs/sdl_port.md).
+
 ## Contributing
 
 All contributions are welcome. This is a group effort, and even small contributions can make a difference.
