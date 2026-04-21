@@ -111,6 +111,15 @@ int Port_HeadersSelfCheck(void) {
     int ok = (REG_DISPCNT == 0xBEEF) && (gPortIo[0] == 0xEF) && (gPortIo[1] == 0xBE);
     REG_DISPCNT = saved;
 
+    /* PR #3: Port_InputPump() now mirrors `~mask & 0x3FF` into the
+     * REG_KEYINPUT slot in gPortIo. Confirm here that writing through the
+     * rewired macro lands at the header-defined KEYINPUT register offset,
+     * so this check fails if that shared offset ever drifts. */
+    u16 saved_keyinput = REG_KEYINPUT;
+    REG_KEYINPUT = 0x03FF;
+    ok = ok && (gPortIo[REG_OFFSET_KEYINPUT] == 0xFF) && (gPortIo[REG_OFFSET_KEYINPUT + 1] == 0x03);
+    REG_KEYINPUT = saved_keyinput;
+
     /* Exercise the agbcc-ism no-ops too so the linker can't drop them. */
     PortHeaderNaked();
     (void)PortHeaderAgbccIsms(0x1234);

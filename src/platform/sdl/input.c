@@ -11,10 +11,10 @@
  * Each frame Port_InputPump() reads the SDL event queue, builds an
  * active-high 10-bit GBA-format key bitmask (matching the layout in
  * include/gba/io_reg.h: A=0x001, B=0x002, SELECT=0x004, START=0x008,
- * RIGHT=0x010, LEFT=0x020, UP=0x040, DOWN=0x080, R=0x100, L=0x200), and
- * stashes it in s_key_mask. PR #2 will additionally write
- * `~s_key_mask & 0x3FF` into the emulated REG_KEYINPUT slot so the
- * existing src/common.c::ReadKeyInput() works unchanged.
+ * RIGHT=0x010, LEFT=0x020, UP=0x040, DOWN=0x080, R=0x100, L=0x200),
+ * stashes it in s_key_mask, and mirrors `~s_key_mask & 0x3FF` into the
+ * emulated REG_KEYINPUT slot (gPortIo + 0x130) so the existing
+ * src/common.c::ReadKeyInput() works unchanged.
  */
 #include "platform/port.h"
 
@@ -39,6 +39,26 @@ enum {
     PORT_KEY_L = 0x0200,
     PORT_KEYS_MASK = 0x03FF,
 };
+
+/* Offset of REG_KEYINPUT inside the emulated I/O register block (gPortIo).
+ * Mirrors REG_OFFSET_KEYINPUT in include/gba/io_reg.h. Repeated here so
+ * input.c stays free of the GBA headers (and their agbcc-isms).
+ *
+ * Note: src/platform/shared/port_headers_check.c validates the expected
+ * KEYINPUT offset value separately, but it does not reference this local
+ * PORT_REG_OFFSET_KEYINPUT macro directly. */
+#define PORT_REG_OFFSET_KEYINPUT 0x130
+
+static void write_keyinput_reg(uint16_t active_high_mask) {
+    /* REG_KEYINPUT is active-low on real hardware: 1 = released,
+     * 0 = pressed. Write the inverted mask into the slot that the
+     * rewired REG_KEYINPUT macro aliases (gPortIo + 0x130) so the
+     * existing src/common.c::ReadKeyInput() code path works unchanged. */
+    uint16_t reg_value = (uint16_t)(~active_high_mask & PORT_KEYS_MASK);
+    uint8_t* slot = gPortIo + PORT_REG_OFFSET_KEYINPUT;
+    slot[0] = (uint8_t)(reg_value & 0xFF);
+    slot[1] = (uint8_t)((reg_value >> 8) & 0xFF);
+}
 
 /* Analog-stick deadzone as a fraction of SDL's [-32768, 32767] range. */
 #define PORT_STICK_DEADZONE 8000
@@ -193,6 +213,12 @@ int Port_InputInit(void) {
 #endif
     s_key_mask = 0;
     s_keyboard_mask = 0;
+    /* Prime the emulated REG_KEYINPUT slot to "no keys pressed" before any
+     * game code runs. ReadKeyInput() may sample the register before the
+     * first Port_InputPump() — for example, src/main.c::AgbMain runs early
+     * init before entering the frame loop — and on real hardware the
+     * register defaults to 0x3FF (all keys released, active-low). */
+    write_keyinput_reg(0);
     return 0;
 }
 
@@ -246,13 +272,12 @@ void Port_InputPump(void) {
 
     s_key_mask = (uint16_t)((s_keyboard_mask | poll_gamepad_mask()) & PORT_KEYS_MASK);
 
-    /* PR #2 will additionally do something equivalent to:
-     *     *(volatile uint16_t*)(gPortIo + REG_OFFSET_KEYINPUT) =
-     *         (uint16_t)(~s_key_mask & PORT_KEYS_MASK);
-     * once the GBA io_reg macros have been redirected at the host
-     * memory map. We deliberately don't touch gPortIo here so the
-     * platform layer stays decoupled from the GBA register layout.
-     */
+    /* Mirror the active-low view of s_key_mask into the emulated
+     * REG_KEYINPUT slot (gPortIo + 0x130). The macro REG_KEYINPUT in
+     * include/gba/io_reg.h is rewired to that same address under
+     * __PORT__ (see PR #2a in docs/sdl_port.md), so the existing
+     * src/common.c::ReadKeyInput() works unchanged on the host. */
+    write_keyinput_reg(s_key_mask);
 }
 
 uint16_t Port_GetKeyMask(void) {
