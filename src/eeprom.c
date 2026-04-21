@@ -75,8 +75,7 @@ u16 EEPROMRead(u16 address, u16* data) {
         // setup address
 #ifdef __PORT__
         /* cast-as-lvalue is unsupported by modern compilers */
-        ptr = (u16*)((u8*)ptr + (gEEPROMConfig->address_width << 1) + 1);
-        ptr = (u16*)((u8*)ptr + 1);
+        ptr = (u16*)((u8*)ptr + (gEEPROMConfig->address_width << 1) + 2);
 #else
         (u8*)ptr += (gEEPROMConfig->address_width << 1) + 1;
         ((u8*)ptr)++;
