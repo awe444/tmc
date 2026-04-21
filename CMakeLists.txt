@@ -297,6 +297,15 @@ set(TMC_GAME_LEAF_SOURCES
     src/title.c
     src/ui.c
     src/vram.c
+    # 2b.3 wave 2: files that needed a small `#ifdef __PORT__` rewrite of
+    # the legacy GCC cast-as-lvalue extension (`(u8*)p += n;`), and the
+    # `r5` register-clobber asm hint in `room.c` that exists purely to
+    # nudge the matching ROM compiler's regalloc.
+    src/affine.c
+    src/code_0805EC04.c
+    src/eeprom.c
+    src/npcUtils.c
+    src/room.c
 )
 
 if(TMC_LINK_GAME_SOURCES)

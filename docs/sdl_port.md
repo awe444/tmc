@@ -10,8 +10,8 @@ goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
 > `__PORT__` header rewiring) has landed, and PR #2b is in progress (2b.1,
-> 2b.2, and wave 1 of 2b.3 complete — 58 of 66 `src/*.c` TUs now build
-> clean under `__PORT__`).** The build produces a `tmc_sdl`
+> 2b.2, and waves 1–2 of 2b.3 complete — 63 of 66 `src/*.c` TUs now
+> build clean under `__PORT__`).** The build produces a `tmc_sdl`
 > executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
 > gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
 > SDL audio device, and runs an empty 59.7274 Hz frame loop. The GBA decomp
@@ -216,12 +216,19 @@ are tracked here for future contributors.
       `screenTileMap`, `script`, `scroll`, `sound`, `staffroll`,
       `subtask`, `text`, `title`, `ui`, `vram`.
     - Still blocked on file-specific fixes (deferred to subsequent 2b.3
-      waves): `affine.c`, `code_0805EC04.c`, `eeprom.c`, `npcUtils.c` (C
-      compound-lvalue cast: `(u8*)d += 8;`), `backgroundAnimations.c`,
-      `common.c` (generated `assets/*_offsets.h` not wired into the CMake
-      build yet), `cutscene.c` (initializer uses address of `gUnk_*` that
-      isn't a link-time constant on host), `room.c` (inline `asm` with
-      hard-coded register name `r5`).
+      waves): `backgroundAnimations.c`, `common.c` (generated
+      `assets/*_offsets.h` not wired into the CMake build yet),
+      `cutscene.c` (initializer uses address of `gUnk_*` that isn't a
+      link-time constant on host).
+    - Wave 2: rewrote five small agbcc-isms behind `#ifdef __PORT__` so
+      the matching ROM build still emits the original instruction
+      sequence, and added the files to `TMC_GAME_LEAF_SOURCES`. Four of
+      them (`affine.c`, `code_0805EC04.c`, `eeprom.c`, `npcUtils.c`)
+      used GCC's removed cast-as-lvalue extension (`(u8*)p += n;` /
+      `(u16*)ent->child = a2 + 1;`); the host build now writes the
+      explicit `p = (T*)((u8*)p + n);` form. The fifth (`room.c`) had
+      an `asm("" ::: "r5")` register-clobber hint to nudge agbcc's
+      regalloc, which the host build skips.
   - [ ] **2b.4** Replace `agb_main_stub.c` with the real
     `src/main.c::AgbMain`, flip `TMC_LINK_GAME_SOURCES` to ON by
     default, and tick this PR off.
