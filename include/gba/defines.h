@@ -3,10 +3,27 @@
 
 #include <stddef.h>
 
+#ifdef __PORT__
+/* Pull in the host emulated memory map. The platform layer owns the backing
+ * arrays (gPortEwram, gPortIwram, gPortVram, gPortOam, gPortPltt, gPortIo);
+ * by making EWRAM_START, IWRAM_START, PLTT, VRAM, OAM and (in io_reg.h)
+ * REG_BASE point at those arrays, every derived macro in this header and in
+ * io_reg.h automatically resolves to a host-array address with no other
+ * source changes. See docs/sdl_port.md (PR #2). */
+#include "platform/port.h"
+#include <stdint.h>
+#endif
+
 #define TRUE 1
 #define FALSE 0
 
-#if defined(__APPLE__)
+#ifdef __PORT__
+/* These attributes only have meaning on the GBA toolchain, where they place
+ * data into the IWRAM/EWRAM linker sections. On the host we let the linker
+ * put EWRAM_DATA/IWRAM_DATA in regular .data/.bss. */
+#define IWRAM_DATA
+#define EWRAM_DATA
+#elif defined(__APPLE__)
 #define IWRAM_DATA __attribute__((section("__DATA,iwram_data")))
 #define EWRAM_DATA __attribute__((section("__DATA,ewram_data")))
 #else
@@ -14,7 +31,13 @@
 #define EWRAM_DATA __attribute__((section("ewram_data")))
 #endif
 
+#ifdef __PORT__
+/* `naked` is meaningless on hosted compilers (and refused outright by clang
+ * on x86_64); the SDL port either decompiles or stubs naked routines. */
+#define NAKED
+#else
 #define NAKED __attribute__((naked))
+#endif
 #define UNUSED __attribute__((unused))
 #ifdef __CLION_IDE__
 #define PACKED
@@ -24,16 +47,45 @@
 #define ALIGNED(n) __attribute__((aligned(n)))
 #endif
 
+#ifdef __PORT__
+/* On the host, native pointers may be 8 bytes and require stronger alignment
+ * than the original GBA BIOS scratch offsets provide. Model the tail of IWRAM
+ * with a packed overlay so these slots remain lvalue macros while all host
+ * pointer-sized fields stay within the 0x8000-byte gPortIwram region. The
+ * overlay must be exactly PORT_IWRAM_SIZE bytes; that invariant is pinned
+ * down in src/platform/shared/port_headers_check.c. */
+struct PortBiosScratch {
+    uint8_t filler0[0x7FE8];
+    struct SoundInfo* soundInfoPtr;
+    uint16_t intrCheck;
+    uint8_t filler1[6];
+    void* intrVector;
+} PACKED;
+
+#define SOUND_INFO_PTR (((struct PortBiosScratch*)(void*)gPortIwram)->soundInfoPtr)
+#define INTR_CHECK (((struct PortBiosScratch*)(void*)gPortIwram)->intrCheck)
+#define INTR_VECTOR (((struct PortBiosScratch*)(void*)gPortIwram)->intrVector)
+#else
 #define SOUND_INFO_PTR (*(struct SoundInfo**)0x3007FF0)
 #define INTR_CHECK (*(u16*)0x3007FF8)
 #define INTR_VECTOR (*(void**)0x3007FFC)
+#endif
 
+#ifdef __PORT__
+#define EWRAM_START ((uintptr_t)gPortEwram)
+#define IWRAM_START ((uintptr_t)gPortIwram)
+#else
 #define EWRAM_START 0x02000000
-#define EWRAM_END (EWRAM_START + 0x40000)
 #define IWRAM_START 0x03000000
+#endif
+#define EWRAM_END (EWRAM_START + 0x40000)
 #define IWRAM_END (IWRAM_START + 0x8000)
 
+#ifdef __PORT__
+#define PLTT ((uintptr_t)gPortPltt)
+#else
 #define PLTT 0x5000000
+#endif
 #define PLTT_SIZE 0x400
 #define PAL_RAM ((u8*)(PLTT))
 
@@ -43,7 +95,11 @@
 #define OBJ_PLTT (PLTT + 0x200)
 #define OBJ_PLTT_SIZE 0x200
 
+#ifdef __PORT__
+#define VRAM ((uintptr_t)gPortVram)
+#else
 #define VRAM 0x6000000
+#endif
 #define VRAM_SIZE 0x18000
 
 #define BG_VRAM VRAM
@@ -65,7 +121,11 @@
 #define OBJ_VRAM1 (void*)(VRAM + 0x14000)
 #define OBJ_VRAM1_SIZE 0x4000
 
+#ifdef __PORT__
+#define OAM ((uintptr_t)gPortOam)
+#else
 #define OAM 0x7000000
+#endif
 #define OAM_SIZE 0x400
 
 #define ROM_HEADER_SIZE 0xC0

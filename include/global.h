@@ -29,11 +29,23 @@
 #include <string.h>
 
 // Prevent cross-jump optimization.
+#ifdef __PORT__
+#define BLOCK_CROSS_JUMP
+#else
 #define BLOCK_CROSS_JUMP asm("");
+#endif
 
 // to help in decompiling
+#ifdef __PORT__
+/* Inline-asm comments and `.syntax` directives are GBA/agbcc-specific and
+ * have no equivalent on the host toolchain — make them no-ops under the
+ * SDL port (and any future host port that defines __PORT__). */
+#define asm_comment(x)
+#define asm_unified(x)
+#else
 #define asm_comment(x) asm volatile("@ -- " x " -- ")
 #define asm_unified(x) asm(".syntax unified\n" x "\n.syntax divided")
+#endif
 
 #if defined(__APPLE__) || defined(__CYGWIN__)
 // Get the IDE to stfu
@@ -75,7 +87,7 @@
 
 #define super (&this->base)
 
-#if NON_MATCHING
+#if NON_MATCHING || defined(__PORT__)
 #define ASM_FUNC(path, decl)
 #else
 #define ASM_FUNC(path, decl)    \
@@ -84,7 +96,7 @@
     }
 #endif
 
-#if NON_MATCHING
+#if NON_MATCHING || defined(__PORT__)
 #define NONMATCH(path, decl) decl
 #define END_NONMATCH
 #else
@@ -95,13 +107,15 @@
 #define END_NONMATCH }
 #endif
 
-#if NON_MATCHING
+#if NON_MATCHING || defined(__PORT__)
+/* `register T x asm("rN")` is an arm-gcc agbcc-ism that won't compile on
+ * the host. The SDL port treats FORCE_REGISTER as a plain declaration. */
 #define FORCE_REGISTER(var, reg) var
 #else
 #define FORCE_REGISTER(var, reg) register var asm(#reg)
 #endif
 
-#if NON_MATCHING
+#if NON_MATCHING || defined(__PORT__)
 #define MEMORY_BARRIER
 #else
 #define MEMORY_BARRIER asm("" ::: "memory")
