@@ -162,7 +162,7 @@ PORT_ASM_STUB(GetNonCollidedSide)
 PORT_ASM_STUB(CheckNEastTile)
 PORT_ASM_STUB(PlayerCheckNEastTile)
 
-/* ---- asm/src/projectileUpdate.s (1 symbols) ---- */
+/* ---- asm/src/projectileUpdate.s (1 symbol) ---- */
 PORT_ASM_STUB(ProjectileUpdate)
 
 /* ---- asm/src/script.s (8 symbols) ---- */
