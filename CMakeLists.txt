@@ -37,6 +37,17 @@ option(TMC_WIDESCREEN     "Reserve hooks for the future widescreen renderer."   
 option(TMC_USE_FETCHCONTENT_SDL
     "Fall back to FetchContent for SDL2 if it isn't found on the system." OFF)
 
+# Sub-step 2b.2 of the SDL-port roadmap (see docs/sdl_port.md). When ON, the
+# build additionally compiles the subset of `src/**/*.c` that already builds
+# cleanly under `__PORT__` into a separate `tmc_game_sources` static library.
+# That library is NOT linked into `tmc_sdl` yet -- most of its TUs reference
+# symbols from TUs that are still agbcc-only (they trip struct-layout static
+# asserts because host pointers are 8 bytes, not 4), and those are what
+# sub-step 2b.3 is for. The library is still built as a dependency of
+# `tmc_sdl`, so the leaf TUs are continuously compile-verified by CI.
+option(TMC_LINK_GAME_SOURCES
+    "Also compile the subset of src/**/*.c that builds under __PORT__ (2b.2)." OFF)
+
 # Only the "sdl" platform is implemented in this PR. Other values are
 # reserved so future ports can slot into the same option without breaking the
 # CLI surface.
@@ -123,12 +134,12 @@ endif()
 # ---------------------------------------------------------------------------
 # Source list
 #
-# This PR only links the platform layer + a placeholder AgbMain (see
-# src/platform/shared/agb_main_stub.c). Wiring the real game C sources
-# (src/**/*.c) into this target is PR #2 of the roadmap and is a much
-# larger change because the existing decomp still relies on agbcc-specific
-# constructs and unported ARM assembly. The stub keeps the platform layer
-# buildable and exercisable on its own in the meantime.
+# The core tmc_sdl target links the platform layer + a placeholder AgbMain
+# (see src/platform/shared/agb_main_stub.c). Wiring the real game C sources
+# (src/**/*.c) into this target is tracked by sub-steps 2b.2 - 2b.4 of the
+# roadmap. Sub-step 2b.2 (this commit) adds the opt-in TMC_LINK_GAME_SOURCES
+# build of the leaf TUs that already compile clean under __PORT__; the list
+# lives further down next to the library target.
 # ---------------------------------------------------------------------------
 set(TMC_PLATFORM_SDL_SOURCES
     src/platform/sdl/main.c
@@ -207,6 +218,68 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
+# Optional: compile the leaf-utility subset of src/**/*.c (PR #2b.2).
+#
+# These TUs are almost all const data tables / function-pointer dispatch
+# tables with no struct-layout dependencies, so they already compile clean
+# under `__PORT__` with the SDL build's flags. The rest of `src/` needs the
+# agbcc-ism / 32-bit-pointer fixes that sub-step 2b.3 tracks, so this list
+# only grows by hand as each file is verified.
+#
+# The library is NOT linked into `tmc_sdl` because most of these TUs
+# reference symbols (hitboxes, enemy functions, ...) that live in TUs that
+# aren't yet buildable. Adding `tmc_game_sources` as a dependency still
+# forces the compile step to run on every build, which is what keeps CI
+# from regressing the set.
+# ---------------------------------------------------------------------------
+set(TMC_GAME_LEAF_SOURCES
+    src/droptables.c
+    src/enemy.c
+    src/flagDebug.c
+    src/manager.c
+    src/npcDefinitions.c
+    src/npcFunctions.c
+    src/object.c
+    src/objectDefinitions.c
+    src/playerHitbox.c
+    src/playerItemDefinitions.c
+    src/projectile.c
+    src/sineTable.c
+)
+
+if(TMC_LINK_GAME_SOURCES)
+    add_library(tmc_game_sources STATIC ${TMC_GAME_LEAF_SOURCES})
+    target_include_directories(tmc_game_sources PRIVATE
+        include
+        include/platform
+    )
+    target_compile_definitions(tmc_game_sources PRIVATE
+        __PORT__
+        PORT_SDL
+        ${TMC_VERSION_DEFINES}
+    )
+    if(MSVC)
+        target_compile_options(tmc_game_sources PRIVATE /W3 /wd4146 /wd4244 /wd4305)
+    else()
+        target_compile_options(tmc_game_sources PRIVATE
+            -O2 -g
+            -Wall
+            -Wno-multichar
+            -Wno-parentheses
+            -Wno-unused-parameter
+            -Wno-unused-function
+            -Wno-unused-variable
+            -Wno-missing-braces
+            -fno-strict-aliasing
+        )
+    endif()
+    # Build the library alongside tmc_sdl so CI catches regressions, but do
+    # NOT link it -- it has unresolved references that sub-step 2b.3 will
+    # satisfy by porting the remaining TUs.
+    add_dependencies(tmc_sdl tmc_game_sources)
+endif()
+
+# ---------------------------------------------------------------------------
 # Install (optional, mostly for packaging future releases)
 # ---------------------------------------------------------------------------
 include(GNUInstallDirs)
@@ -223,5 +296,6 @@ message(STATUS "  Game version    : ${TMC_GAME_VERSION}")
 message(STATUS "  Audio           : ${TMC_ENABLE_AUDIO}")
 message(STATUS "  Gamepad         : ${TMC_ENABLE_GAMEPAD}")
 message(STATUS "  Widescreen hook : ${TMC_WIDESCREEN}")
+message(STATUS "  Link game srcs  : ${TMC_LINK_GAME_SOURCES}")
 message(STATUS "  SDL2 target     : ${_TMC_SDL_TARGET}")
 message(STATUS "")
