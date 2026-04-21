@@ -9,26 +9,34 @@ which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
-> `__PORT__` header rewiring) has landed, PR #2b is in progress (2b.1,
-> 2b.2, waves 1–3 of 2b.3, and the 2b.4a foundation are complete — all
-> 66 `src/*.c` TUs build clean under `__PORT__`, and the
-> `tmc_game_sources` static library now resolves every link reference
-> rooted at `src/main.c::AgbMain` provided the host-side
-> `port_globals.c` / BIOS aliases are linked alongside it; full
-> link-and-run is gated on 2b.4b stubbing the remaining ~1000 references
-> reaching into `src/enemy/`, `src/manager/`, `src/menu/`, `src/data/`,
-> and `asm/src/`).** The build produces a `tmc_sdl`
-> executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
-> gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
-> SDL audio device, and runs an empty 59.7274 Hz frame loop. The GBA decomp
-> headers (`include/gba/*.h`, `include/global.h`) now compile under a host C
-> compiler when `__PORT__` is defined, with `REG_*`, `BG_PLTT`, `OBJ_PLTT`,
-> `BG_VRAM`, `OAM`, `EWRAM_START`, `IWRAM_START`, `INTR_CHECK` and
-> `INTR_VECTOR` aliasing the host arrays in `src/platform/shared/gba_memory.c`,
-> and the agbcc-isms (`EWRAM_DATA`, `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`,
-> `MEMORY_BARRIER`, `ASM_FUNC`, `NONMATCH`, `SystemCall`, …) collapsing to
-> no-ops. The real game logic is **not yet linked in** — that is the
-> remaining 2b.4b sub-step.
+> `__PORT__` header rewiring) has landed, and PR #2b is feature-complete
+> at the link level (2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, and the
+> link-resolution half of 2b.4b are done). Every `src/**/*.c` TU that
+> the SDL port can sensibly consume now builds clean under `__PORT__`
+> (618 of 618; the 13 files that needed file-local fixes were patched
+> behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
+> tree. A `TMC_LINK_GAME_SOURCES=ON` configuration now links cleanly
+> into `tmc_sdl` — the ~850 symbols that still live only in unported
+> `asm/src/`, the not-yet-linked `src/gba/m4a.c`, and the large const
+> tables under `data/` are satisfied by weak abort/BSS stubs in
+> `src/platform/shared/port_unresolved_stubs.c`. The runtime flip of
+> the default to `ON` is intentionally deferred — `src/main.c::AgbMain`
+> reaches enough unresolved stubs during early init that it SIGSEGVs,
+> and fleshing those paths out is the scope of PRs #3 – #7.** The
+> default build produces a `tmc_sdl` executable that opens a 240×160
+> (scaled 4×) window, accepts keyboard and gamepad input (X-Input on
+> Windows via `SDL_GameController`), opens a silent SDL audio device,
+> and runs an empty 59.7274 Hz frame loop. The GBA decomp headers
+> (`include/gba/*.h`, `include/global.h`) now compile under a host C
+> compiler when `__PORT__` is defined, with `REG_*`, `BG_PLTT`,
+> `OBJ_PLTT`, `BG_VRAM`, `OAM`, `EWRAM_START`, `IWRAM_START`,
+> `INTR_CHECK` and `INTR_VECTOR` aliasing the host arrays in
+> `src/platform/shared/gba_memory.c`, and the agbcc-isms (`EWRAM_DATA`,
+> `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`, `MEMORY_BARRIER`, `ASM_FUNC`,
+> `NONMATCH`, `SystemCall`, …) collapsing to no-ops. The real game
+> logic **links cleanly** but does not yet **run** — closing that
+> remaining gap is spread across PRs #3 – #7.
+
 
 ## Building
 
@@ -300,24 +308,51 @@ are tracked here for future contributors.
     the library was switched to "always built as a dependency"); the
     leaf set is still compile-checked on every PR by
     `add_dependencies(tmc_sdl tmc_game_sources)`.
-  - [ ] **2b.4b** Flip `TMC_LINK_GAME_SOURCES` to ON by default. Blocks
-    on resolving the ~1000 link references the game library still pulls
-    in from outside the leaf set: enemy / manager / menu / item /
-    projectile / npc / world-event / data tables under `src/enemy/`,
-    `src/manager/`, `src/menu/`, `src/item/`, `src/projectile/`,
-    `src/npc/`, `src/object/`, `src/playerItem/`, `src/subtask/`,
-    `src/worldEvent/`, `src/data/`, `src/gba/m4a.c`; the BSS globals
-    declared in `linker.ld` but not yet defined in `port_globals.c`
-    (`gPlayerEntity`, `gPlayerState`, `gSave`, `gArea`, `gHUD`,
-    `gMapTop`, `gMapBottom`, the `gUnk_02xxxxxx` family, …); the const
-    data tables under `data/` (hitboxes, palettes, gfx groups, area
-    metadata, sound `sfxXxx` / `bgmXxx` IDs); and the
-    `ram_*` / `script_*` / `sub_08xxxxxx` symbols still living only in
-    `asm/src/`. Two complementary tactics: (a) widen `TMC_GAME_LEAF_SOURCES`
-    to include the subdir TUs that already build clean once their headers
-    are touched, and (b) extend `port_globals.c` plus a sibling
-    `port_unresolved_stubs.c` to provide weak/abort stubs for everything
-    else, leveraging the same pattern as `asm_stubs.c`.
+  - [x] **2b.4b** (link only) Widened `TMC_GAME_LEAF_SOURCES` to the
+    entire `src/**/*.c` tree (618 TUs). The 13 files that did not
+    compile under `__PORT__` with the wave-3 header fixes got small
+    file-local patches behind `#ifdef __PORT__`:
+    `src/worldEvent/worldEvent{12,13,14,16,17,19,20,21,22,25}.c` now
+    use the existing `PORT_ROM_PTR(&script_X)` macro (same treatment
+    `cutscene.c` got in wave 3) so the 64-bit-host script addresses fit
+    the widened `EntityData::spritePtr` slot;
+    `src/manager/diggingCaveEntranceManager.c` and
+    `src/playerItem/playerItemGust.c` dropped the `static` qualifier
+    on file-local const tables that a header had forward-declared
+    non-static (agbcc tolerated the mismatch; clang/gcc don't);
+    `src/menu/kinstoneMenu.c` rewrote the one `--(s16)u16_lvalue`
+    cast-as-lvalue to an explicit sign-extending temp-then-store (same
+    pattern wave 2 used elsewhere). With the full tree in, the game
+    library still pulled in ~850 symbols from outside the host build's
+    reach (raw ARM asm in `asm/src/`, the unbuilt `src/gba/m4a.c`, and
+    the large const tables under `data/`). A new
+    `src/platform/shared/port_unresolved_stubs.c` (machine-generated
+    from the ld error log) provides weak placeholders for every one of
+    them: function-like names (`sub_*`, `m4a*`, `Get*`, `Set*`,
+    `Update*`, `Clone*`, `Clear*`, `ram_*`) get `abort()` trap stubs
+    that print the offending symbol; everything else gets 256 B of
+    weak, 16-B-aligned BSS which satisfies both data references and
+    indirect jumps (the latter SIGSEGV immediately because BSS is not
+    executable on any supported host — the same "loud abort" contract
+    `asm_stubs.c` uses). `bios.c` grew unprefixed aliases for
+    `LZ77UnCompVram`, `LZ77UnCompWram`, `CpuSet`, `CpuFastSet`, `Sqrt`,
+    `Div`, `Mod`, `BgAffineSet`, `ObjAffineSet`, `RLUnCompWram`,
+    `RLUnCompVram`, `ArcTan2` so the real host implementations replace
+    the weak stubs. With this in place, `cmake -DTMC_LINK_GAME_SOURCES=ON`
+    builds a `tmc_sdl` binary that **links cleanly** from the real
+    `src/main.c::AgbMain`; the Ubuntu CI now runs both a default
+    (`OFF`) build+smoke test and a second `=ON` build pass that
+    verifies the link.
+  - [ ] **2b.4b** (runtime flip) Flip `TMC_LINK_GAME_SOURCES` to ON by
+    default. Blocks on making `AgbMain` boot: the weak stubs above
+    keep the link succeeding but trap on call, so the existing
+    headless smoke test (`--frames=30`) would SIGSEGV once any unported
+    path is exercised during init. The remaining work is distributed
+    across the later roadmap entries (input in PR #3, software
+    rasterizer in PR #4, m4a in PR #7) rather than landing as a
+    single big step here; once those ports reduce the stub surface
+    enough that `AgbMain` survives the smoke-test budget, the default
+    can flip.
 - [ ] **PR #3.** Have `Port_InputPump()` write `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot. The existing `src/common.c::ReadKeyInput`
   then works unchanged. Smoke test: title-screen menu navigation logged
