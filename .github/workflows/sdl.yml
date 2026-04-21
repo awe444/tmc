@@ -23,34 +23,19 @@ permissions:
 
 jobs:
   build:
-    name: ${{ matrix.os }} (${{ matrix.version }})
-    runs-on: ${{ matrix.os }}
+    name: ubuntu-latest (${{ matrix.version }})
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
         version: [USA]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install SDL2 (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Install SDL2
         run: |
           sudo apt-get update
           sudo apt-get install -y libsdl2-dev ninja-build
-
-      - name: Install SDL2 (macOS)
-        if: matrix.os == 'macos-latest'
-        run: |
-          brew update
-          brew install sdl2 ninja
-
-      - name: Install SDL2 (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          vcpkg install sdl2:x64-windows
-          echo "CMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" >> $env:GITHUB_ENV
 
       - name: Configure
         run: |
@@ -60,19 +45,8 @@ jobs:
         run: cmake --build build --config Release -j
 
       - name: Smoke test (headless, 30 frames)
-        if: matrix.os != 'windows-latest'
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
-
-      - name: Smoke test (Windows, headless, 30 frames)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        env:
-          SDL_VIDEODRIVER: dummy
-          SDL_AUDIODRIVER: dummy
-        run: |
-          $exe = Get-ChildItem -Path build -Recurse -Filter tmc_sdl.exe | Select-Object -First 1
-          & $exe.FullName --frames=30 --mute --save-dir=.

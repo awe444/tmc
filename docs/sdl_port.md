@@ -139,7 +139,7 @@ are tracked here for future contributors.
 
 - [x] **PR #1.** CMake skeleton + SDL platform stubs (this PR). Blank
   window, working keyboard + X-Input, silent audio, save-file scaffold,
-  CI matrix on Linux/macOS/Windows.
+  Ubuntu CI build + headless smoke test.
 - [ ] **PR #2.** Wire `src/**/*.c` into the SDL target. Repoint
   `include/gba/io_reg.h`, `include/gba/defines.h`, `include/gba/macro.h`,
   and `include/gba/syscall.h` at the host memory map under `__PORT__`.
