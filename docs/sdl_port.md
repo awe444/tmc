@@ -10,7 +10,7 @@ goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
 > `__PORT__` header rewiring) has landed, and PR #2b is in progress (2b.1,
-> 2b.2, and waves 1–2 of 2b.3 complete — 63 of 66 `src/*.c` TUs now
+> 2b.2, and waves 1–3 of 2b.3 complete — all 66 `src/*.c` TUs now
 > build clean under `__PORT__`).** The build produces a `tmc_sdl`
 > executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
 > gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
@@ -130,6 +130,9 @@ src/platform/shared/           ← cross-port C: reused by future ports
     m4a_stub.c                 ← silent m4a stand-ins
     asm_stubs.c                ← trap stubs for unported asm/src/*.s functions
     agb_main_stub.c            ← placeholder for src/main.c::AgbMain (PR #2)
+    generated/assets/          ← host-port stubs for the ROM build's
+                                  `assets/*_offsets.h`; regenerate with
+                                  `tools/port/gen_offset_stubs.py`
 src/                           ← unchanged GBA-decomp game source
 include/                       ← unchanged GBA-decomp headers
 ```
@@ -216,10 +219,7 @@ are tracked here for future contributors.
       `screenTileMap`, `script`, `scroll`, `sound`, `staffroll`,
       `subtask`, `text`, `title`, `ui`, `vram`.
     - Still blocked on file-specific fixes (deferred to subsequent 2b.3
-      waves): `backgroundAnimations.c`, `common.c` (generated
-      `assets/*_offsets.h` not wired into the CMake build yet),
-      `cutscene.c` (initializer uses address of `gUnk_*` that isn't a
-      link-time constant on host).
+      waves): (none — wave 3 cleared the remaining `src/*.c` leaves).
     - Wave 2: rewrote five small agbcc-isms behind `#ifdef __PORT__` so
       the matching ROM build still emits the original instruction
       sequence, and added the files to `TMC_GAME_LEAF_SOURCES`. Four of
@@ -229,6 +229,29 @@ are tracked here for future contributors.
       explicit `p = (T*)((u8*)p + n);` form. The fifth (`room.c`) had
       an `asm("" ::: "r5")` register-clobber hint to nudge agbcc's
       regalloc, which the host build skips.
+    - Wave 3: cleared the three remaining top-level `src/*.c` blockers
+      (`backgroundAnimations.c`, `common.c`, `cutscene.c`).
+      `assets/gfx_offsets.h` and `assets/map_offsets.h` are generated
+      by the ROM-build `asset_processor` from the extracted base ROM
+      and are therefore unavailable in the SDL build; a new
+      `tools/port/gen_offset_stubs.py` walks every `.c`/`.h` that
+      pulls in either header, collects the 1,293 unique `offset_*`
+      identifiers it references, and emits host-port stubs under
+      `src/platform/shared/generated/assets/` that collapse each one
+      to `0` (the SDL port does not yet dereference the underlying
+      asset blobs). The CMake build adds `src/platform/shared/generated/`
+      to the include path for `tmc_game_sources` only, leaving the
+      real `assets/` directory untouched. `cutscene.c` stores 25
+      script-function addresses in the `EntityData::spritePtr` slot
+      via `(u32)&script_X`, which truncates on a 64-bit host and stops
+      being a valid constant initializer; the field is widened to
+      `uintptr_t` under `__PORT__` in `include/room.h`, and a new
+      `PORT_ROM_PTR(x)` macro in `include/global.h` expands to the
+      matching `(u32)` cast under the ROM build and `(uintptr_t)` under
+      the SDL build. `cutscene.c`'s initializers use `PORT_ROM_PTR(...)`
+      in both branches. The CI matrix's
+      `TMC_LINK_GAME_SOURCES=ON` build now compiles every top-level
+      `src/*.c`.
   - [ ] **2b.4** Replace `agb_main_stub.c` with the real
     `src/main.c::AgbMain`, flip `TMC_LINK_GAME_SOURCES` to ON by
     default, and tick this PR off.
