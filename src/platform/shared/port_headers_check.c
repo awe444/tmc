@@ -44,6 +44,12 @@ _Static_assert(sizeof(gPortVram) == PORT_VRAM_SIZE, "VRAM size mismatch");
 _Static_assert(sizeof(gPortOam) == PORT_OAM_SIZE, "OAM size mismatch");
 _Static_assert(sizeof(gPortPltt) == PORT_PLTT_SIZE, "PLTT size mismatch");
 _Static_assert(sizeof(gPortIo) == PORT_IO_SIZE, "IO size mismatch");
+_Static_assert(0x7FF0 + sizeof(*SOUND_INFO_PTR) <= PORT_IWRAM_SIZE,
+               "SOUND_INFO_PTR exceeds IWRAM bounds");
+_Static_assert(0x7FF8 + sizeof(INTR_CHECK) <= PORT_IWRAM_SIZE,
+               "INTR_CHECK exceeds IWRAM bounds");
+_Static_assert(0x7FFC + sizeof(INTR_VECTOR) <= PORT_IWRAM_SIZE,
+               "INTR_VECTOR exceeds IWRAM bounds");
 
 /* ------------------------------------------------------------------------ */
 /* 2. agbcc-isms must compile (as no-ops) on the host.                      */
