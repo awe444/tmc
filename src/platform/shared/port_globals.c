@@ -61,10 +61,10 @@ typedef struct Window {
 Window gNewWindow;
 Window gCurrentWindow;
 
-/* Palette buffer (mirrors BG_PLTT in EWRAM). On hardware this is sized
- * to fit the BG palette region copied via DmaCopy32(.., BG_PLTT_SIZE).
- * Allocate enough u16s to cover the full palette (256 entries = 512 B). */
-u16 gPaletteBuffer[256];
+/* Palette buffer (mirrors the full hardware palette in EWRAM). Linked
+ * game code treats this as a 0x400-byte mirror and may copy the entire
+ * BG+OBJ palette into it, so allocate 512 u16 entries (1024 B). */
+u16 gPaletteBuffer[512];
 
 /* IWRAM-resident byte arrays. `gUnk_03003DE4` is a 12-byte mailbox used
  * by the VBlank-DMA helpers in src/main.c::SetVBlankDMA(). */
