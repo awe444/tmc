@@ -9,9 +9,12 @@ which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
-> `__PORT__` header rewiring) has landed, and PR #2b is feature-complete
+> `__PORT__` header rewiring) has landed, PR #2b is feature-complete
 > at the link level (2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, and the
-> link-resolution half of 2b.4b are done). Every `src/**/*.c` TU that
+> link-resolution half of 2b.4b are done), and PR #3 (mirroring the
+> SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed
+> so the existing `src/common.c::ReadKeyInput()` works unchanged once
+> the real `AgbMain` is the executable's entry point. Every `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
 > behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
@@ -353,10 +356,17 @@ are tracked here for future contributors.
     single big step here; once those ports reduce the stub surface
     enough that `AgbMain` survives the smoke-test budget, the default
     can flip.
-- [ ] **PR #3.** Have `Port_InputPump()` write `~mask & 0x3FF` into the
-  emulated `REG_KEYINPUT` slot. The existing `src/common.c::ReadKeyInput`
-  then works unchanged. Smoke test: title-screen menu navigation logged
-  by the game responds to the keyboard.
+- [x] **PR #3.** `Port_InputPump()` now writes `~mask & 0x3FF` into the
+  emulated `REG_KEYINPUT` slot (`gPortIo + 0x130`) every frame, and
+  `Port_InputInit()` primes the slot to `0x3FF` (no keys pressed) before
+  any game code can sample it. The existing
+  `src/common.c::ReadKeyInput()` works unchanged on the host because
+  `REG_KEYINPUT` is rewired to that same byte slot under `__PORT__` (PR
+  #2a). `Port_HeadersSelfCheck()` was extended with a round-trip through
+  the rewired `REG_KEYINPUT` macro so any future change that desyncs the
+  repeated `PORT_REG_OFFSET_KEYINPUT` constant in `input.c` from
+  `REG_OFFSET_KEYINPUT` in `include/gba/io_reg.h` fails the headless
+  smoke test in CI.
 - [ ] **PR #4.** Software rasterizer for BG mode 0 (4 text BGs) and OBJ
   layer (regular sprites, 4 bpp + 8 bpp). Reuse sa2's renderer as a
   structural reference (MIT-licensed; preserve attribution).
