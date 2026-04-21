@@ -64,55 +64,55 @@
  * `include/gba/io_reg.h` are validated against these via Port_HeadersSelfCheck
  * in port_headers_check.c. */
 #define IO_DISPCNT 0x000
-#define IO_BG0CNT  0x008
+#define IO_BG0CNT 0x008
 #define IO_BG0HOFS 0x010
 #define IO_BG0VOFS 0x012
 
 /* DISPCNT bits we use. */
-#define DISPCNT_MODE_MASK    0x0007
-#define DISPCNT_OBJ_1D_MAP   0x0040
+#define DISPCNT_MODE_MASK 0x0007
+#define DISPCNT_OBJ_1D_MAP 0x0040
 #define DISPCNT_FORCED_BLANK 0x0080
-#define DISPCNT_BG0_ON       0x0100
-#define DISPCNT_OBJ_ON       0x1000
+#define DISPCNT_BG0_ON 0x0100
+#define DISPCNT_OBJ_ON 0x1000
 
 /* BGCNT bits. */
-#define BGCNT_PRIORITY_MASK   0x0003
-#define BGCNT_CHARBASE_SHIFT  2
-#define BGCNT_CHARBASE_MASK   0x000C /* bits 2-3 */
-#define BGCNT_256COLOR        0x0080
+#define BGCNT_PRIORITY_MASK 0x0003
+#define BGCNT_CHARBASE_SHIFT 2
+#define BGCNT_CHARBASE_MASK 0x000C /* bits 2-3 */
+#define BGCNT_256COLOR 0x0080
 #define BGCNT_SCREENBASE_MASK 0x1F00 /* bits 8-12 */
 #define BGCNT_SCREENBASE_SHIFT 8
 #define BGCNT_SCREENSIZE_MASK 0xC000 /* bits 14-15 */
 #define BGCNT_SCREENSIZE_SHIFT 14
 
 /* OBJ attribute 0. */
-#define OBJ_ATTR0_Y_MASK         0x00FF
-#define OBJ_ATTR0_AFFINE         0x0100
-#define OBJ_ATTR0_DISABLE        0x0200 /* only meaningful when AFFINE = 0 */
-#define OBJ_ATTR0_DOUBLE_SIZE    0x0200 /* meaningful when AFFINE = 1 */
-#define OBJ_ATTR0_MODE_MASK      0x0C00 /* 0=normal, 1=semi, 2=window, 3=prohibited */
-#define OBJ_ATTR0_MOSAIC         0x1000
-#define OBJ_ATTR0_256COLOR       0x2000
-#define OBJ_ATTR0_SHAPE_MASK     0xC000
-#define OBJ_ATTR0_SHAPE_SHIFT    14
+#define OBJ_ATTR0_Y_MASK 0x00FF
+#define OBJ_ATTR0_AFFINE 0x0100
+#define OBJ_ATTR0_DISABLE 0x0200     /* only meaningful when AFFINE = 0 */
+#define OBJ_ATTR0_DOUBLE_SIZE 0x0200 /* meaningful when AFFINE = 1 */
+#define OBJ_ATTR0_MODE_MASK 0x0C00   /* 0=normal, 1=semi, 2=window, 3=prohibited */
+#define OBJ_ATTR0_MOSAIC 0x1000
+#define OBJ_ATTR0_256COLOR 0x2000
+#define OBJ_ATTR0_SHAPE_MASK 0xC000
+#define OBJ_ATTR0_SHAPE_SHIFT 14
 
 /* OBJ attribute 1. */
-#define OBJ_ATTR1_X_MASK   0x01FF /* 9-bit signed */
-#define OBJ_ATTR1_X_SIGN   0x0100
-#define OBJ_ATTR1_HFLIP    0x1000
-#define OBJ_ATTR1_VFLIP    0x2000
-#define OBJ_ATTR1_SIZE_MASK  0xC000
+#define OBJ_ATTR1_X_MASK 0x01FF /* 9-bit signed */
+#define OBJ_ATTR1_X_SIGN 0x0100
+#define OBJ_ATTR1_HFLIP 0x1000
+#define OBJ_ATTR1_VFLIP 0x2000
+#define OBJ_ATTR1_SIZE_MASK 0xC000
 #define OBJ_ATTR1_SIZE_SHIFT 14
 
 /* OBJ attribute 2. */
-#define OBJ_ATTR2_TILE_MASK     0x03FF
+#define OBJ_ATTR2_TILE_MASK 0x03FF
 #define OBJ_ATTR2_PRIORITY_MASK 0x0C00
 #define OBJ_ATTR2_PRIORITY_SHIFT 10
-#define OBJ_ATTR2_PALETTE_MASK  0xF000
+#define OBJ_ATTR2_PALETTE_MASK 0xF000
 #define OBJ_ATTR2_PALETTE_SHIFT 12
 
 /* GBA video memory layout (offsets into gPortVram). */
-#define VRAM_BG_END   0x10000 /* first 64 KiB of VRAM is BG */
+#define VRAM_BG_END 0x10000 /* first 64 KiB of VRAM is BG */
 #define VRAM_OBJ_BASE 0x10000
 
 /* PR #2a self-check guarantees these match the macros in
@@ -172,10 +172,10 @@ static inline uint16_t vram_read16(uint32_t off) {
  * pixels so the compositor doesn't have to re-read the palette per
  * pixel. */
 typedef struct {
-    uint8_t opaque[DISP_W];   /* 1 = drawn, 0 = transparent */
-    uint16_t colors[DISP_W];  /* BGR555 when opaque[x] != 0 */
-    int priority;             /* 0..3 from BGCNT */
-    int active;               /* 1 if this BG produced any output this frame */
+    uint8_t opaque[DISP_W];  /* 1 = drawn, 0 = transparent */
+    uint16_t colors[DISP_W]; /* BGR555 when opaque[x] != 0 */
+    int priority;            /* 0..3 from BGCNT */
+    int active;              /* 1 if this BG produced any output this frame */
 } BgScanline;
 
 /* Map the BGCNT screen-size code (0..3) to per-axis size in tiles
@@ -315,13 +315,25 @@ static void render_text_bg_scanline(int bg_index, int y, BgScanline* out) {
  * disabled. Each entry is { width, height } in pixels. */
 static const uint8_t kObjDimensions[16][2] = {
     /* shape 0 (square) */
-    { 8, 8 }, { 16, 16 }, { 32, 32 }, { 64, 64 },
+    { 8, 8 },
+    { 16, 16 },
+    { 32, 32 },
+    { 64, 64 },
     /* shape 1 (wide) */
-    { 16, 8 }, { 32, 8 }, { 32, 16 }, { 64, 32 },
+    { 16, 8 },
+    { 32, 8 },
+    { 32, 16 },
+    { 64, 32 },
     /* shape 2 (tall) */
-    { 8, 16 }, { 8, 32 }, { 16, 32 }, { 32, 64 },
+    { 8, 16 },
+    { 8, 32 },
+    { 16, 32 },
+    { 32, 64 },
     /* shape 3 (prohibited) */
-    { 0, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 },
+    { 0, 0 },
+    { 0, 0 },
+    { 0, 0 },
+    { 0, 0 },
 };
 
 /* OBJ output for a single scanline split by priority. We iterate OAM in
@@ -480,10 +492,14 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
  * BGs are ignored. */
 static int bg_is_text_in_mode(int mode, int bg_index) {
     switch (mode) {
-        case 0: return 1; /* all four BGs are text */
-        case 1: return bg_index <= 1; /* BG0/BG1 text, BG2 affine, BG3 off */
-        case 2: return 0; /* BG0/BG1 off, BG2/BG3 affine */
-        default: return 0; /* bitmap modes */
+        case 0:
+            return 1; /* all four BGs are text */
+        case 1:
+            return bg_index <= 1; /* BG0/BG1 text, BG2 affine, BG3 off */
+        case 2:
+            return 0; /* BG0/BG1 off, BG2/BG3 affine */
+        default:
+            return 0; /* bitmap modes */
     }
 }
 
@@ -573,22 +589,22 @@ typedef struct {
 } RendererSnapshot;
 
 static void snapshot_save(RendererSnapshot* s) {
-    memcpy(s->io,      &gPortIo[0],                sizeof(s->io));
-    memcpy(s->pltt,    &gPortPltt[0],              16 * 2);
-    memcpy(s->pltt + 16 * 2, &gPortPltt[0x200],    16 * 2);
-    memcpy(s->bg_chr,  &gPortVram[0],              sizeof(s->bg_chr));
-    memcpy(s->bg_map,  &gPortVram[0x800],          sizeof(s->bg_map));
-    memcpy(s->obj_chr, &gPortVram[VRAM_OBJ_BASE],  sizeof(s->obj_chr));
-    memcpy(s->oam,     &gPortOam[0],               sizeof(s->oam));
+    memcpy(s->io, &gPortIo[0], sizeof(s->io));
+    memcpy(s->pltt, &gPortPltt[0], 16 * 2);
+    memcpy(s->pltt + 16 * 2, &gPortPltt[0x200], 16 * 2);
+    memcpy(s->bg_chr, &gPortVram[0], sizeof(s->bg_chr));
+    memcpy(s->bg_map, &gPortVram[0x800], sizeof(s->bg_map));
+    memcpy(s->obj_chr, &gPortVram[VRAM_OBJ_BASE], sizeof(s->obj_chr));
+    memcpy(s->oam, &gPortOam[0], sizeof(s->oam));
 }
 static void snapshot_restore(const RendererSnapshot* s) {
-    memcpy(&gPortIo[0],               s->io,      sizeof(s->io));
-    memcpy(&gPortPltt[0],             s->pltt,            16 * 2);
-    memcpy(&gPortPltt[0x200],         s->pltt + 16 * 2,   16 * 2);
-    memcpy(&gPortVram[0],             s->bg_chr,  sizeof(s->bg_chr));
-    memcpy(&gPortVram[0x800],         s->bg_map,  sizeof(s->bg_map));
+    memcpy(&gPortIo[0], s->io, sizeof(s->io));
+    memcpy(&gPortPltt[0], s->pltt, 16 * 2);
+    memcpy(&gPortPltt[0x200], s->pltt + 16 * 2, 16 * 2);
+    memcpy(&gPortVram[0], s->bg_chr, sizeof(s->bg_chr));
+    memcpy(&gPortVram[0x800], s->bg_map, sizeof(s->bg_map));
     memcpy(&gPortVram[VRAM_OBJ_BASE], s->obj_chr, sizeof(s->obj_chr));
-    memcpy(&gPortOam[0],              s->oam,     sizeof(s->oam));
+    memcpy(&gPortOam[0], s->oam, sizeof(s->oam));
 }
 
 static void io_write16(uint32_t off, uint16_t v) {
@@ -686,7 +702,7 @@ int Port_RendererSelfCheck(void) {
      * palette[16+1] with a different colour, expect every "background"
      * pixel of tile 0 to use the new colour. */
     pltt_write16(16 + 1, 0x001F); /* red */
-    vram_write16(0x800, 0x1000); /* pal bank 1, no flip */
+    vram_write16(0x800, 0x1000);  /* pal bank 1, no flip */
     Port_RenderFrame(fb);
     uint32_t red_argb = bgr555_to_argb8888(0x001F);
     ok = ok && (fb[0] == red_argb);
