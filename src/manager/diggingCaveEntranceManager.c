@@ -235,7 +235,15 @@ static const DiggingCaveEntrance diggingCaveEntrancesHyliaDigCaves[] = {
 };
 
 /** Holds the lists of DiggingCaveEntrances indexed by area id. */
+#ifdef __PORT__
+/* The matching header declares this non-static; keep the GBA build's
+ * agbcc-tolerated `static` definition but drop it under __PORT__ so
+ * standards-conforming hosts compile cleanly. See docs/sdl_port.md
+ * (PR #2b.4b). */
+const DiggingCaveEntrance* const diggingCaveEntrances[] = {
+#else
 static const DiggingCaveEntrance* const diggingCaveEntrances[] = {
+#endif
     diggingCaveEntrancesMinishWoods,
     diggingCaveEntrancesEmpty,
     diggingCaveEntrancesHyruleTown,

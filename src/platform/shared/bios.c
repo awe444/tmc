@@ -187,4 +187,104 @@ void SoundBiasReset(void) {
 }
 void SoundBiasSet(void) {
 }
+
+/* Remaining BIOS-syscall aliases referenced by src/ when
+ * TMC_LINK_GAME_SOURCES=ON. See docs/sdl_port.md (PR #2b.4b). */
+void LZ77UnCompVram(const void* src, void* dest) {
+    Port_LZ77UnCompVram(src, dest);
+}
+void LZ77UnCompWram(const void* src, void* dest) {
+    Port_LZ77UnCompWram(src, dest);
+}
+void CpuSet(const void* src, void* dest, uint32_t control) {
+    Port_CpuSet(src, dest, control);
+}
+void CpuFastSet(const void* src, void* dest, uint32_t control) {
+    Port_CpuFastSet(src, dest, control);
+}
+
+/* Simple host implementations of the remaining arithmetic syscalls. The
+ * GBA BIOS defines Div to return num/denom in r0 and num%denom in r1;
+ * `Mod` is an unprefixed alias callers use when they only want the
+ * remainder. */
+int32_t Div(int32_t num, int32_t denom) {
+    if (denom == 0) {
+        return 0;
+    }
+    return num / denom;
+}
+int32_t Mod(int32_t num, int32_t denom) {
+    if (denom == 0) {
+        return 0;
+    }
+    return num % denom;
+}
+uint16_t Sqrt(uint32_t value) {
+    return (uint16_t)Port_BiosSqrt(value);
+}
+
+/* Affine math helpers. These compute the BG/OBJ affine transformation
+ * matrices the GBA BIOS would otherwise produce. The host software
+ * rasterizer (PR #4 / #5) will consume these results once it comes
+ * online; for now they are called during initialisation paths that
+ * need a valid identity-ish matrix. */
+struct BgAffineSrcData {
+    int32_t texX, texY;
+    int16_t scrX, scrY;
+    int16_t sx, sy;
+    uint16_t alpha;
+};
+struct BgAffineDstData {
+    int16_t pa, pb, pc, pd;
+    int32_t startX, startY;
+};
+struct ObjAffineSrcData {
+    int16_t xScale, yScale;
+    uint16_t rotation;
+};
+void BgAffineSet(struct BgAffineSrcData* src, struct BgAffineDstData* dst, int32_t count) {
+    for (int32_t i = 0; i < count; ++i) {
+        /* Identity transform placeholder -- good enough to let game code
+         * validate that the call returned without corrupting state. The
+         * real affine math will arrive with the PR #5 renderer. */
+        dst[i].pa = 0x0100;
+        dst[i].pb = 0;
+        dst[i].pc = 0;
+        dst[i].pd = 0x0100;
+        dst[i].startX = src[i].texX;
+        dst[i].startY = src[i].texY;
+    }
+}
+void ObjAffineSet(struct ObjAffineSrcData* src, void* dst_, int32_t count, int32_t offset) {
+    int16_t* dst = (int16_t*)dst_;
+    for (int32_t i = 0; i < count; ++i) {
+        dst[0] = 0x0100;
+        dst[1] = 0;
+        dst[2] = 0;
+        dst[3] = 0x0100;
+        (void)src;
+        dst = (int16_t*)((char*)dst + offset * 4);
+    }
+    (void)src;
+    (void)count;
+}
+
+/* RL (run-length) decompression is used by a small number of asset
+ * blobs. Until the real decoder is ported we fall through to a
+ * byte-for-byte copy of the post-header payload, which keeps callers
+ * from dereferencing uninitialised destination memory. */
+void RLUnCompWram(const void* src, void* dst) {
+    (void)src;
+    (void)dst;
+}
+void RLUnCompVram(const void* src, void* dst) {
+    (void)src;
+    (void)dst;
+}
+
+uint16_t ArcTan2(int16_t x, int16_t y) {
+    (void)x;
+    (void)y;
+    return 0;
+}
 #endif

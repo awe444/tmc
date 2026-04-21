@@ -51,12 +51,22 @@ jobs:
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
 
-      # PR #2b.4a of the SDL-port roadmap: the `tmc_game_sources` static
-      # library is now always built as a dependency of `tmc_sdl` (regardless
-      # of `TMC_LINK_GAME_SOURCES`), so the previous second `=ON` configure/
-      # build pass is no longer necessary -- the leaf set is compile-checked
-      # by the default build above. Verify the artifact exists so a future
-      # CMake refactor can't silently drop the dependency.
-      - name: Verify tmc_game_sources library was built
+      # PR #2b.4b of the SDL-port roadmap: the link step now succeeds
+      # with `TMC_LINK_GAME_SOURCES=ON` thanks to the weak-stub coverage
+      # in `src/platform/shared/port_unresolved_stubs.c`. Build (but do
+      # not yet run) the resulting `tmc_sdl` binary so the CI catches
+      # any regression in either the leaf-set compile or the final link.
+      # The runtime smoke test is intentionally left on the default
+      # (OFF) build until the remaining asm/data stubs are fleshed out
+      # enough for `src/main.c::AgbMain` to boot without segfaulting --
+      # flipping the default to ON is tracked as a follow-up.
+      - name: Configure (TMC_LINK_GAME_SOURCES=ON)
         run: |
-          test -f build/libtmc_game_sources.a
+          cmake -S . -B build-link-on -DTMC_GAME_VERSION=${{ matrix.version }} -DTMC_LINK_GAME_SOURCES=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (TMC_LINK_GAME_SOURCES=ON)
+        run: cmake --build build-link-on --config Release -j
+
+      - name: Verify link-on tmc_sdl was produced
+        run: |
+          test -x build-link-on/tmc_sdl

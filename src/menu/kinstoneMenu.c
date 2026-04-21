@@ -357,7 +357,17 @@ void KinstoneMenu_Type5_Overlay2(void) {
 
 void KinstoneMenu_Type5_Overlay3(void) {
     // TODO figure out why in some place s16 is needed and u16 in others
+#ifdef __PORT__
+    /* agbcc accepts the cast-as-lvalue extension; standards-conforming
+     * hosts don't. Sign-extend through a scratch variable then write
+     * back. See docs/sdl_port.md (PR #2b.4b). */
+    s16 __port_tmp = (s16)gMenu.transitionTimer;
+    --__port_tmp;
+    gMenu.transitionTimer = (u16)__port_tmp;
+    if (__port_tmp < 0) {
+#else
     if (--(s16)gMenu.transitionTimer < 0) {
+#endif
         SetMenuType(2);
     }
 }
