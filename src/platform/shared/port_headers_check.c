@@ -112,14 +112,13 @@ int Port_HeadersSelfCheck(void) {
     REG_DISPCNT = saved;
 
     /* PR #3: Port_InputPump() now mirrors `~mask & 0x3FF` into the
-     * REG_KEYINPUT slot at gPortIo + 0x130. The PORT_REG_OFFSET_KEYINPUT
-     * constant in src/platform/sdl/input.c is repeated by hand to keep
-     * input.c free of the GBA headers, so confirm here that the two
-     * agree by writing through the rewired macro and reading from the
-     * raw byte slot. */
+     * REG_KEYINPUT slot in gPortIo. Confirm here that writing through the
+     * rewired macro lands at the header-defined KEYINPUT register offset,
+     * so this check fails if that shared offset ever drifts. */
     u16 saved_keyinput = REG_KEYINPUT;
     REG_KEYINPUT = 0x03FF;
-    ok = ok && (gPortIo[0x130] == 0xFF) && (gPortIo[0x131] == 0x03);
+    ok = ok && (gPortIo[REG_OFFSET_KEYINPUT] == 0xFF)
+             && (gPortIo[REG_OFFSET_KEYINPUT + 1] == 0x03);
     REG_KEYINPUT = saved_keyinput;
 
     /* Exercise the agbcc-ism no-ops too so the linker can't drop them. */
