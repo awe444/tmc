@@ -1,0 +1,61 @@
+CMakeFiles/tmc_game_sources.dir/src/objectUtils.c.o: \
+ /home/runner/work/tmc/tmc/src/objectUtils.c /usr/include/stdc-predef.h \
+ /home/runner/work/tmc/tmc/include/entity.h \
+ /home/runner/work/tmc/tmc/include/global.h \
+ /home/runner/work/tmc/tmc/include/gba/gba.h /usr/include/string.h \
+ /usr/include/x86_64-linux-gnu/bits/libc-header-start.h \
+ /usr/include/features.h /usr/include/features-time64.h \
+ /usr/include/x86_64-linux-gnu/bits/wordsize.h \
+ /usr/include/x86_64-linux-gnu/bits/timesize.h \
+ /usr/include/x86_64-linux-gnu/sys/cdefs.h \
+ /usr/include/x86_64-linux-gnu/bits/long-double.h \
+ /usr/include/x86_64-linux-gnu/gnu/stubs.h \
+ /usr/include/x86_64-linux-gnu/gnu/stubs-64.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stddef.h \
+ /usr/include/x86_64-linux-gnu/bits/types/locale_t.h \
+ /usr/include/x86_64-linux-gnu/bits/types/__locale_t.h \
+ /usr/include/strings.h \
+ /usr/include/x86_64-linux-gnu/bits/strings_fortified.h \
+ /usr/include/x86_64-linux-gnu/bits/string_fortified.h \
+ /home/runner/work/tmc/tmc/include/gba/defines.h \
+ /home/runner/work/tmc/tmc/include/platform/port.h \
+ /usr/lib/gcc/x86_64-linux-gnu/13/include/stdint.h /usr/include/stdint.h \
+ /usr/include/x86_64-linux-gnu/bits/types.h \
+ /usr/include/x86_64-linux-gnu/bits/typesizes.h \
+ /usr/include/x86_64-linux-gnu/bits/time64.h \
+ /usr/include/x86_64-linux-gnu/bits/wchar.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-intn.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-uintn.h \
+ /usr/include/x86_64-linux-gnu/bits/stdint-least.h \
+ /home/runner/work/tmc/tmc/include/gba/io_reg.h \
+ /home/runner/work/tmc/tmc/include/gba/types.h \
+ /home/runner/work/tmc/tmc/include/gba/multi_boot.h \
+ /home/runner/work/tmc/tmc/include/gba/syscall.h \
+ /home/runner/work/tmc/tmc/include/gba/macro.h \
+ /home/runner/work/tmc/tmc/include/gba/isagbprint.h \
+ /home/runner/work/tmc/tmc/include/sprite.h \
+ /home/runner/work/tmc/tmc/include/physics.h \
+ /home/runner/work/tmc/tmc/include/entity.h \
+ /home/runner/work/tmc/tmc/include/room.h \
+ /home/runner/work/tmc/tmc/include/droptables.h \
+ /home/runner/work/tmc/tmc/include/transitions.h \
+ /home/runner/work/tmc/tmc/include/roomid.h \
+ /home/runner/work/tmc/tmc/include/object.h \
+ /home/runner/work/tmc/tmc/include/definitions.h \
+ /home/runner/work/tmc/tmc/include/gba/types.h \
+ /home/runner/work/tmc/tmc/include/asm.h \
+ /home/runner/work/tmc/tmc/include/effects.h \
+ /home/runner/work/tmc/tmc/include/player.h \
+ /home/runner/work/tmc/tmc/include/pauseMenu.h \
+ /home/runner/work/tmc/tmc/include/subtask.h \
+ /home/runner/work/tmc/tmc/include/game.h \
+ /home/runner/work/tmc/tmc/include/area.h \
+ /home/runner/work/tmc/tmc/include/map.h \
+ /home/runner/work/tmc/tmc/include/screen.h \
+ /home/runner/work/tmc/tmc/include/message.h \
+ /home/runner/work/tmc/tmc/include/room.h \
+ /home/runner/work/tmc/tmc/include/definitions.h \
+ /home/runner/work/tmc/tmc/include/vram.h \
+ /home/runner/work/tmc/tmc/include/object/linkAnimation.h \
+ /home/runner/work/tmc/tmc/include/object/itemOnGround.h \
+ /home/runner/work/tmc/tmc/include/color.h

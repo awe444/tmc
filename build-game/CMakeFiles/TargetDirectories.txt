@@ -1,0 +1,8 @@
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/tmc_sdl.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/tmc_game_sources.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/edit_cache.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/rebuild_cache.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/list_install_components.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/install.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/install/local.dir
+/home/runner/work/tmc/tmc/build-game/CMakeFiles/install/strip.dir
