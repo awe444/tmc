@@ -107,6 +107,13 @@ static void InitOverlays(void) {
     RegisterRamReset(RESET_ALL & ~RESET_EWRAM);
     *(vu16*)BG_PLTT = 0x7FFF;
     REG_WAITCNT = WAITCNT_PREFETCH_ENABLE | WAITCNT_WS0_S_1 | WAITCNT_WS0_N_3;
+#ifndef __PORT__
+    /* GBA-only boot fixup: clear the EWRAM tail and copy the IRQ handler /
+     * tail-of-EWRAM overlay from ROM to their RAM execution addresses. The
+     * SDL host has no ROM-to-RAM relocation, no overlay segment, and the
+     * `gUnk_02000030` / `RAMFUNCS_END` / `gCopyToEndOfEwram_*` /
+     * `gEndOfEwram` symbols are linker-script artefacts that don't exist
+     * on the host. */
     size = 0x3FFD0;
     MemClear(gUnk_02000030, size);
     size = (u32)RAMFUNCS_END - (u32)sub_080B197C;
@@ -118,6 +125,9 @@ static void InitOverlays(void) {
     if (size != 0) {
         MemCopy(gCopyToEndOfEwram_Start, gEndOfEwram, size);
     }
+#else
+    (void)size;
+#endif
 
     DispReset(0);
     EnableVBlankIntr();

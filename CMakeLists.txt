@@ -37,16 +37,22 @@ option(TMC_WIDESCREEN     "Reserve hooks for the future widescreen renderer."   
 option(TMC_USE_FETCHCONTENT_SDL
     "Fall back to FetchContent for SDL2 if it isn't found on the system." OFF)
 
-# Sub-step 2b.2 of the SDL-port roadmap (see docs/sdl_port.md). When ON, the
-# build additionally compiles the subset of `src/**/*.c` that already builds
-# cleanly under `__PORT__` into a separate `tmc_game_sources` static library.
-# That library is NOT linked into `tmc_sdl` yet -- most of its TUs reference
-# symbols from TUs that are still agbcc-only (they trip struct-layout static
-# asserts because host pointers are 8 bytes, not 4), and those are what
-# sub-step 2b.3 is for. The library is still built as a dependency of
-# `tmc_sdl`, so the leaf TUs are continuously compile-verified by CI.
+# Sub-step 2b.4a of the SDL-port roadmap (see docs/sdl_port.md). The
+# `tmc_game_sources` static library (built from the subset of
+# `src/**/*.c` that compiles cleanly under `__PORT__`) is **always**
+# built as a dependency of `tmc_sdl` so CI catches regressions in the
+# leaf set. When `TMC_LINK_GAME_SOURCES=ON`, the library is also linked
+# into the executable, replacing the empty-loop `agb_main_stub.c`
+# placeholder with the real `src/main.c::AgbMain`. The 2b.4a foundation
+# (host definitions of the `linker.ld` globals + unprefixed BIOS aliases
+# under `__PORT__`) satisfies the link references rooted at `AgbMain`,
+# but the full call graph still pulls in symbols from `src/enemy/`,
+# `src/manager/`, `src/menu/`, `src/data/`, `asm/src/`, ... -- those
+# will be added or stubbed in 2b.4b. Until then this option stays
+# default OFF, and turning it ON requires also providing the missing
+# symbol stubs.
 option(TMC_LINK_GAME_SOURCES
-    "Also compile the subset of src/**/*.c that builds under __PORT__ (2b.2)." OFF)
+    "Link the src/**/*.c game sources into tmc_sdl (PR #2b.4)." OFF)
 
 # Only the "sdl" platform is implemented in this PR. Other values are
 # reserved so future ports can slot into the same option without breaking the
@@ -134,12 +140,16 @@ endif()
 # ---------------------------------------------------------------------------
 # Source list
 #
-# The core tmc_sdl target links the platform layer + a placeholder AgbMain
-# (see src/platform/shared/agb_main_stub.c). Wiring the real game C sources
-# (src/**/*.c) into this target is tracked by sub-steps 2b.2 - 2b.4 of the
-# roadmap. Sub-step 2b.2 (this commit) adds the opt-in TMC_LINK_GAME_SOURCES
-# build of the leaf TUs that already compile clean under __PORT__; the list
-# lives further down next to the library target.
+# `tmc_sdl` always links the SDL platform layer + the cross-port shared
+# layer (memory / interrupts / DMA / BIOS / save / asm stubs / port
+# globals). When `TMC_LINK_GAME_SOURCES=ON`, the real game sources from
+# `src/**/*.c` are pulled in via the `tmc_game_sources` static library
+# defined further below, and the placeholder `agb_main_stub.c` is
+# dropped so that `src/main.c::AgbMain` becomes the entry point. With
+# the default `OFF`, the stub takes over and the platform layer is
+# exercised in isolation (PR #2b.4b will flip the default to ON once
+# the remaining link references from outside the leaf set are stubbed
+# or ported — see docs/sdl_port.md).
 # ---------------------------------------------------------------------------
 set(TMC_PLATFORM_SDL_SOURCES
     src/platform/sdl/main.c
@@ -155,10 +165,15 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/bios.c
     src/platform/shared/m4a_stub.c
     src/platform/shared/save_file.c
-    src/platform/shared/agb_main_stub.c
+    src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
 )
+
+if(NOT TMC_LINK_GAME_SOURCES)
+    # Fallback empty-loop AgbMain when the game sources are not linked.
+    list(APPEND TMC_PLATFORM_SHARED_SOURCES src/platform/shared/agb_main_stub.c)
+endif()
 
 add_executable(tmc_sdl
     ${TMC_PLATFORM_SDL_SOURCES}
@@ -218,19 +233,20 @@ if(UNIX AND NOT APPLE)
 endif()
 
 # ---------------------------------------------------------------------------
-# Optional: compile the leaf-utility subset of src/**/*.c (PR #2b.2).
+# Optional: compile the leaf-utility subset of src/**/*.c (PR #2b.2-2b.4).
 #
 # These TUs are almost all const data tables / function-pointer dispatch
 # tables with no struct-layout dependencies, so they already compile clean
-# under `__PORT__` with the SDL build's flags. The rest of `src/` needs the
-# agbcc-ism / 32-bit-pointer fixes that sub-step 2b.3 tracks, so this list
-# only grows by hand as each file is verified.
+# under `__PORT__` with the SDL build's flags. The rest of `src/` (the
+# `src/enemy/`, `src/data/`, `src/manager/`, `src/menu/`, ... subdirs)
+# still needs the agbcc-ism / 32-bit-pointer fixes that future PRs will
+# track, so this list only grows by hand as each file is verified.
 #
-# The library is NOT linked into `tmc_sdl` because most of these TUs
-# reference symbols (hitboxes, enemy functions, ...) that live in TUs that
-# aren't yet buildable. Adding `tmc_game_sources` as a dependency still
-# forces the compile step to run on every build, which is what keeps CI
-# from regressing the set.
+# Since PR #2b.4 the library can be built cleanly as a dependency; it is
+# only linked into `tmc_sdl` when `TMC_LINK_GAME_SOURCES=ON`. The unresolved
+# cross-TU references that 2b.3 had outstanding are now satisfied by
+# `src/platform/shared/port_globals.c` (host BSS for the linker-script
+# globals) and the `__PORT__` BIOS aliases in `bios.c` / `interrupts.c`.
 # ---------------------------------------------------------------------------
 set(TMC_GAME_LEAF_SOURCES
     # Original 2b.2 leaf set: pure const data / function-pointer dispatch
@@ -318,42 +334,48 @@ set(TMC_GAME_LEAF_SOURCES
     src/cutscene.c
 )
 
+add_library(tmc_game_sources STATIC ${TMC_GAME_LEAF_SOURCES})
+target_include_directories(tmc_game_sources PRIVATE
+    include
+    include/platform
+    # Host-port stub headers for `assets/*_offsets.h`, which the
+    # matching ROM build generates from the asset_processor. The
+    # SDL port must not touch `assets/`, so these stubs live under
+    # a separate include root. See tools/port/gen_offset_stubs.py
+    # and docs/sdl_port.md (PR #2b.3, wave 3).
+    src/platform/shared/generated
+)
+target_compile_definitions(tmc_game_sources PRIVATE
+    __PORT__
+    PORT_SDL
+    ${TMC_VERSION_DEFINES}
+)
+if(MSVC)
+    target_compile_options(tmc_game_sources PRIVATE /W3 /wd4146 /wd4244 /wd4305)
+else()
+    target_compile_options(tmc_game_sources PRIVATE
+        -O2 -g
+        -Wall
+        -Wno-multichar
+        -Wno-parentheses
+        -Wno-unused-parameter
+        -Wno-unused-function
+        -Wno-unused-variable
+        -Wno-missing-braces
+        -fno-strict-aliasing
+    )
+endif()
+# Always build the library alongside tmc_sdl so CI catches regressions
+# in the leaf set on every PR. Only LINK it into the executable when
+# `TMC_LINK_GAME_SOURCES=ON`; with the default OFF, the build still
+# produces a working `tmc_sdl` from the empty-loop `agb_main_stub.c`,
+# while the leaf set is continuously compile-verified.
+add_dependencies(tmc_sdl tmc_game_sources)
 if(TMC_LINK_GAME_SOURCES)
-    add_library(tmc_game_sources STATIC ${TMC_GAME_LEAF_SOURCES})
-    target_include_directories(tmc_game_sources PRIVATE
-        include
-        include/platform
-        # Host-port stub headers for `assets/*_offsets.h`, which the
-        # matching ROM build generates from the asset_processor. The
-        # SDL port must not touch `assets/`, so these stubs live under
-        # a separate include root. See tools/port/gen_offset_stubs.py
-        # and docs/sdl_port.md (PR #2b.3, wave 3).
-        src/platform/shared/generated
-    )
-    target_compile_definitions(tmc_game_sources PRIVATE
-        __PORT__
-        PORT_SDL
-        ${TMC_VERSION_DEFINES}
-    )
-    if(MSVC)
-        target_compile_options(tmc_game_sources PRIVATE /W3 /wd4146 /wd4244 /wd4305)
-    else()
-        target_compile_options(tmc_game_sources PRIVATE
-            -O2 -g
-            -Wall
-            -Wno-multichar
-            -Wno-parentheses
-            -Wno-unused-parameter
-            -Wno-unused-function
-            -Wno-unused-variable
-            -Wno-missing-braces
-            -fno-strict-aliasing
-        )
-    endif()
-    # Build the library alongside tmc_sdl so CI catches regressions, but do
-    # NOT link it -- it has unresolved references that sub-step 2b.3 will
-    # satisfy by porting the remaining TUs.
-    add_dependencies(tmc_sdl tmc_game_sources)
+    # PR #2b.4a foundation makes this link possible for the call graph
+    # rooted at `AgbMain` provided the missing-symbol stubs from 2b.4b
+    # are also present (not yet checked in -- see docs/sdl_port.md).
+    target_link_libraries(tmc_sdl PRIVATE tmc_game_sources)
 endif()
 
 # ---------------------------------------------------------------------------

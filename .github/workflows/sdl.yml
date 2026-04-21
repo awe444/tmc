@@ -51,14 +51,12 @@ jobs:
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
 
-      # Sub-step 2b.2 of the SDL-port roadmap: verify that the subset of
-      # `src/**/*.c` which already compiles under `__PORT__` keeps compiling.
-      # The resulting tmc_game_sources static library is not linked into
-      # tmc_sdl yet (sub-steps 2b.3/2b.4 handle that), but building it here
-      # catches regressions in the leaf TUs on every PR.
-      - name: Configure (TMC_LINK_GAME_SOURCES=ON)
+      # PR #2b.4a of the SDL-port roadmap: the `tmc_game_sources` static
+      # library is now always built as a dependency of `tmc_sdl` (regardless
+      # of `TMC_LINK_GAME_SOURCES`), so the previous second `=ON` configure/
+      # build pass is no longer necessary -- the leaf set is compile-checked
+      # by the default build above. Verify the artifact exists so a future
+      # CMake refactor can't silently drop the dependency.
+      - name: Verify tmc_game_sources library was built
         run: |
-          cmake -S . -B build-game -DTMC_GAME_VERSION=${{ matrix.version }} -DCMAKE_BUILD_TYPE=Release -DTMC_LINK_GAME_SOURCES=ON
-
-      - name: Build (TMC_LINK_GAME_SOURCES=ON)
-        run: cmake --build build-game --config Release -j
+          test -f build/libtmc_game_sources.a
