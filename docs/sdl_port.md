@@ -125,6 +125,7 @@ src/platform/shared/           ← cross-port C: reused by future ports
     bios.c                     ← LZ77UnComp, CpuSet, RegisterRamReset, …
     save_file.c                ← Flash backend (tmc.sav)
     m4a_stub.c                 ← silent m4a stand-ins
+    asm_stubs.c                ← trap stubs for unported asm/src/*.s functions
     agb_main_stub.c            ← placeholder for src/main.c::AgbMain (PR #2)
 src/                           ← unchanged GBA-decomp game source
 include/                       ← unchanged GBA-decomp headers
@@ -168,6 +169,22 @@ are tracked here for future contributors.
   need real decomp or `assert(0 && "not yet ported")` stubs). At the end
   of this PR the SDL window should run the real `AgbMain` loop instead of
   the placeholder in `src/platform/shared/agb_main_stub.c`.
+  - [x] **2b.1** `src/platform/shared/asm_stubs.c` provides
+    `assert(0 && "not yet ported")` trap stubs for all 106
+    `thumb_func_start` / `arm_func_start` symbols exported by the
+    non-boot files in `asm/src/` (excluding `crt0.s`, `intr.s`,
+    `stack_check.s`, `veneer.s`, which the SDL platform layer subsumes).
+    A `Port_AsmStubCount()` anchor + `sPortAsmStubTable[]` keep the
+    symbols alive against `--gc-sections` so the linker can resolve
+    callers from `src/` as those files start being added in 2b.2.
+  - [ ] **2b.2** Add a `TMC_LINK_GAME_SOURCES` CMake option (default
+    OFF) that opts into compiling `src/**/*.c`. Land the leaf utility
+    TUs that compile clean under `__PORT__` first.
+  - [ ] **2b.3** Iteratively bring in the remaining game TUs, fixing
+    any new agbcc-isms behind `#ifdef __PORT__` in the GBA headers.
+  - [ ] **2b.4** Replace `agb_main_stub.c` with the real
+    `src/main.c::AgbMain`, flip `TMC_LINK_GAME_SOURCES` to ON by
+    default, and tick this PR off.
 - [ ] **PR #3.** Have `Port_InputPump()` write `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot. The existing `src/common.c::ReadKeyInput`
   then works unchanged. Smoke test: title-screen menu navigation logged
