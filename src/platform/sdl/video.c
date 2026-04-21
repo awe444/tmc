@@ -2,11 +2,14 @@
  * @file video.c
  * @brief SDL window + renderer + framebuffer presentation.
  *
- * This is the placeholder renderer for PR #1: it just paints a solid
- * color into the 240x160 framebuffer and uploads it to an SDL_Texture.
- * PR #4-5 will replace `Port_VideoPresent` with a real software
- * rasterizer that reads VRAM, OAM, PLTT, and the BG/BLEND/window
- * registers from `gPortVram` / `gPortOam` / `gPortPltt` / `gPortIo`.
+ * As of PR #4 of the SDL-port roadmap (see docs/sdl_port.md), this
+ * file is purely the SDL "swap chain": every frame it asks the
+ * cross-port software rasterizer in `src/platform/shared/render.c`
+ * to fill the 240x160 ARGB8888 framebuffer from the emulated
+ * gPortVram / gPortOam / gPortPltt / gPortIo arrays, then uploads
+ * the result into an SDL streaming texture and presents it. PR #5
+ * will extend the rasterizer with affine BGs, windows and blending
+ * without touching this TU.
  */
 #include "platform/port.h"
 
@@ -15,8 +18,8 @@
 #include <stdio.h>
 #include <string.h>
 
-#define GBA_DISPLAY_W 240
-#define GBA_DISPLAY_H 160
+#define GBA_DISPLAY_W PORT_GBA_DISPLAY_WIDTH
+#define GBA_DISPLAY_H PORT_GBA_DISPLAY_HEIGHT
 
 static SDL_Window* s_window = NULL;
 static SDL_Renderer* s_renderer = NULL;
@@ -89,12 +92,11 @@ void Port_VideoPresent(void) {
         return;
     }
 
-    /* PR #4-5 will compose backgrounds and sprites into s_framebuffer
-     * here. For now keep it cleared to opaque black so the user sees a
-     * stable window rather than an uninitialized buffer. */
-    for (int i = 0; i < GBA_DISPLAY_W * GBA_DISPLAY_H; ++i) {
-        s_framebuffer[i] = 0xFF000000u; /* opaque black */
-    }
+    /* PR #4: hand off to the cross-port software rasterizer. It writes
+     * a packed 240x160 ARGB8888 image into s_framebuffer using the
+     * emulated GBA memory regions exposed in include/platform/port.h.
+     * Future ports (PSP, PS2, Win32) reuse the same renderer. */
+    Port_RenderFrame(s_framebuffer);
 
     SDL_UpdateTexture(s_texture, NULL, s_framebuffer, GBA_DISPLAY_W * (int)sizeof(uint32_t));
     SDL_RenderClear(s_renderer);
