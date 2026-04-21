@@ -48,12 +48,22 @@
 #endif
 
 #ifdef __PORT__
-/* The GBA places these BIOS scratch slots near the top of IWRAM (offsets
- * 0x7FF0/0x7FF8/0x7FFC inside the 0x8000-byte region). We mirror the layout
- * in gPortIwram so the same offsets are valid on the host. */
-#define SOUND_INFO_PTR (*(struct SoundInfo**)(gPortIwram + 0x7FF0))
-#define INTR_CHECK (*(uint16_t*)(gPortIwram + 0x7FF8))
-#define INTR_VECTOR (*(void**)(gPortIwram + 0x7FFC))
+/* On the host, native pointers may be 8 bytes and require stronger alignment
+ * than the original GBA BIOS scratch offsets provide. Model the tail of IWRAM
+ * with a packed overlay so these slots remain lvalue macros while all host
+ * pointer-sized fields stay within the 0x8000-byte gPortIwram region. */
+struct PortBiosScratch
+{
+    uint8_t filler0[0x7FE8];
+    struct SoundInfo *soundInfoPtr;
+    uint16_t intrCheck;
+    uint8_t filler1[6];
+    void *intrVector;
+} PACKED;
+
+#define SOUND_INFO_PTR (((struct PortBiosScratch *)(void *)gPortIwram)->soundInfoPtr)
+#define INTR_CHECK (((struct PortBiosScratch *)(void *)gPortIwram)->intrCheck)
+#define INTR_VECTOR (((struct PortBiosScratch *)(void *)gPortIwram)->intrVector)
 #else
 #define SOUND_INFO_PTR (*(struct SoundInfo**)0x3007FF0)
 #define INTR_CHECK (*(u16*)0x3007FF8)
