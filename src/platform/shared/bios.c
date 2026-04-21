@@ -160,3 +160,25 @@ uint32_t Port_BiosSqrt(uint32_t value) {
     }
     return lo;
 }
+
+/* ---------- Unprefixed aliases for the GBA BIOS entry points ----------- */
+/*
+ * Sub-step 2b.4 of the SDL-port roadmap: the real `src/main.c::AgbMain`
+ * (and a handful of other src/ TUs) calls these BIOS functions by their
+ * unprefixed names declared in `include/gba/syscall.h`. On the GBA they
+ * resolve to `asm/lib/libagbsyscall.s`; on the host we forward them to
+ * the matching `Port_*` implementation above. Compiling them only under
+ * `__PORT__` keeps the matching ROM build untouched.
+ */
+#ifdef __PORT__
+void RegisterRamReset(uint32_t flags) { Port_RegisterRamReset(flags); }
+void SoftReset(uint32_t flags)        { Port_SoftReset(flags); }
+
+/* `Stop()` (include/gba/syscall.h) sandwiches its `SystemCall(3)` between
+ * SoundBiasReset()/SoundBiasSet(). On hardware those silence the audio
+ * DAC before powering down; on the host there is nothing to silence and
+ * `Stop()` itself is reduced to a no-op (SystemCall is `((void)0)` under
+ * __PORT__), so these are pure stubs to keep the linker happy. */
+void SoundBiasReset(void) {}
+void SoundBiasSet(void)   {}
+#endif

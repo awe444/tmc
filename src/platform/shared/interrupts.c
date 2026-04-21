@@ -108,3 +108,17 @@ int Port_ShouldQuit(void) {
 void Port_RequestQuit(void) {
     s_quit_requested = 1;
 }
+
+/* ---------- Unprefixed alias for VBlankIntrWait ------------------------ */
+/*
+ * Sub-step 2b.4: the real `src/main.c` and `src/interrupts.c` call
+ * `VBlankIntrWait()` directly (declared in include/gba/syscall.h, normally
+ * resolved by asm/lib/libagbsyscall.s on the GBA). Forward to the host
+ * pacer so the game loop blocks on the same ~59.7274 Hz boundary. Only
+ * defined under `__PORT__` so the matching ROM build is unaffected.
+ */
+#ifdef __PORT__
+void VBlankIntrWait(void) {
+    Port_VBlankIntrWait();
+}
+#endif

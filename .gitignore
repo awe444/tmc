@@ -1,6 +1,7 @@
 # build artifacts
 src/*.s
 build/
+build-*/
 cmake-build-*
 build-sdl*/
 *.elf

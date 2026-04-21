@@ -101,6 +101,18 @@ int main(int argc, char** argv) {
 
     Port_InitMemory();
 
+    /* PR #2a: validate the rewired GBA headers as part of the headless
+     * smoke test. Originally invoked from the agb_main_stub; moved here
+     * in PR #2b.4 because the real `src/main.c::AgbMain` now takes over.
+     * Defined in src/platform/shared/port_headers_check.c. */
+    extern int Port_HeadersSelfCheck(void);
+    if (Port_HeadersSelfCheck() != 0) {
+        fprintf(stderr, "[tmc_sdl] FATAL: GBA header rewiring self-check failed. "
+                        "See src/platform/shared/port_headers_check.c.\n");
+        SDL_Quit();
+        return 1;
+    }
+
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
         SDL_Quit();
         return 1;

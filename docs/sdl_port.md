@@ -9,9 +9,15 @@ which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
-> `__PORT__` header rewiring) has landed, and PR #2b is in progress (2b.1,
-> 2b.2, and waves 1–3 of 2b.3 complete — all 66 `src/*.c` TUs now
-> build clean under `__PORT__`).** The build produces a `tmc_sdl`
+> `__PORT__` header rewiring) has landed, PR #2b is in progress (2b.1,
+> 2b.2, waves 1–3 of 2b.3, and the 2b.4a foundation are complete — all
+> 66 `src/*.c` TUs build clean under `__PORT__`, and the
+> `tmc_game_sources` static library now resolves every link reference
+> rooted at `src/main.c::AgbMain` provided the host-side
+> `port_globals.c` / BIOS aliases are linked alongside it; full
+> link-and-run is gated on 2b.4b stubbing the remaining ~1000 references
+> reaching into `src/enemy/`, `src/manager/`, `src/menu/`, `src/data/`,
+> and `asm/src/`).** The build produces a `tmc_sdl`
 > executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
 > gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
 > SDL audio device, and runs an empty 59.7274 Hz frame loop. The GBA decomp
@@ -21,7 +27,8 @@ goal here is the equivalent `tmc.sdl`.
 > `INTR_VECTOR` aliasing the host arrays in `src/platform/shared/gba_memory.c`,
 > and the agbcc-isms (`EWRAM_DATA`, `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`,
 > `MEMORY_BARRIER`, `ASM_FUNC`, `NONMATCH`, `SystemCall`, …) collapsing to
-> no-ops. The real game logic is **not yet linked in** — that is PR #2b.
+> no-ops. The real game logic is **not yet linked in** — that is the
+> remaining 2b.4b sub-step.
 
 ## Building
 
@@ -76,7 +83,7 @@ cmake --build --preset sdl-mingw
 | `TMC_ENABLE_GAMEPAD`         | `ON`    | Initialise `SDL_GameController` for X-Input pads.        |
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
-| `TMC_LINK_GAME_SOURCES`      | `OFF`   | Also compile the `src/**/*.c` leaves that build under `__PORT__` (sub-step 2b.2). |
+| `TMC_LINK_GAME_SOURCES`      | `OFF`   | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4a). The library is always **built** as a dependency; this option controls whether it is also **linked**. Turning it ON requires the 2b.4b stubs for the symbols still reaching into `src/enemy/`, `src/manager/`, etc. |
 
 ## Running
 
@@ -184,21 +191,18 @@ are tracked here for future contributors.
     symbols alive against `--gc-sections` so the linker can resolve
     callers from `src/` as those files start being added in 2b.2.
   - [x] **2b.2** Added the `TMC_LINK_GAME_SOURCES` CMake option
-    (default OFF). When ON, a `tmc_game_sources` static library is
-    built from the subset of `src/**/*.c` that already compiles
-    cleanly under `__PORT__` with the SDL build's flags: currently
+    (default OFF). A `tmc_game_sources` static library is always built
+    as a dependency of `tmc_sdl` (so the leaf set is compile-checked on
+    every PR) from the subset of `src/**/*.c` that already compiles
+    cleanly under `__PORT__` with the SDL build's flags: originally
     `droptables.c`, `enemy.c`, `flagDebug.c`, `manager.c`,
     `npcDefinitions.c`, `npcFunctions.c`, `object.c`,
     `objectDefinitions.c`, `playerHitbox.c`, `playerItemDefinitions.c`,
     `projectile.c`, `sineTable.c` (all of them pure const data / function-
     pointer dispatch tables, so no struct-layout assumptions are in play).
-    The library is built as a dependency of `tmc_sdl` but deliberately
-    **not** linked into it: most of its TUs reference symbols (hitboxes,
-    enemy functions, …) that live in TUs still blocked on 2b.3's
-    agbcc-ism / 32-bit-pointer fixes. The Ubuntu CI job runs a second
-    `cmake -DTMC_LINK_GAME_SOURCES=ON` build so regressions in the leaf
-    set surface on every PR. New leaves are added by appending to
-    `TMC_GAME_LEAF_SOURCES` in `CMakeLists.txt`.
+    Whether the library is also **linked** into `tmc_sdl` is gated by
+    `TMC_LINK_GAME_SOURCES` (see 2b.4a). New leaves are added by appending
+    to `TMC_GAME_LEAF_SOURCES` in `CMakeLists.txt`.
   - [x] **2b.3** (in progress) Iteratively bring in the remaining game TUs,
     fixing any new agbcc-isms behind `#ifdef __PORT__` in the GBA headers.
     - Wave 1: neutralised the dominant blocker — `static_assert(sizeof(X)
@@ -252,9 +256,68 @@ are tracked here for future contributors.
       in both branches. The CI matrix's
       `TMC_LINK_GAME_SOURCES=ON` build now compiles every top-level
       `src/*.c`.
-  - [ ] **2b.4** Replace `agb_main_stub.c` with the real
-    `src/main.c::AgbMain`, flip `TMC_LINK_GAME_SOURCES` to ON by
-    default, and tick this PR off.
+  - [x] **2b.4a** Foundation for replacing `agb_main_stub.c` with the
+    real `src/main.c::AgbMain`. The `TMC_LINK_GAME_SOURCES` option now
+    additionally **links** the `tmc_game_sources` library into the
+    `tmc_sdl` executable (replacing the stub) instead of merely building
+    it — and the stub TU is now opt-out: it only enters the executable
+    when `TMC_LINK_GAME_SOURCES=OFF`. Three pieces of host-side
+    infrastructure make the link possible for the call graph rooted at
+    `AgbMain`:
+    1. `src/platform/shared/port_globals.c` allocates host BSS for the
+       linker-script globals that `linker.ld` would otherwise fix at
+       hard-coded EWRAM/IWRAM offsets — `gMain`, `gInput`, `gScreen`,
+       `gRoomControls`, `struct_02000010 gUnk_02000010`, `gRand`,
+       `gMessage`, `gTextRender`, `gNewWindow` / `gCurrentWindow` (with
+       the file-local `Window` struct from `src/message.c` mirrored
+       here), `gPaletteBuffer[256]`, and `u8 gUnk_03003DE4[0xC]`. The
+       struct sizes do not match the ROM build's
+       `static_assert(sizeof(X) == ...)` (those are no-ops under
+       `__PORT__` per 2b.3 wave 1), and that's fine — the host owns the
+       layout because pointers are 8 bytes.
+    2. `bios.c` and `interrupts.c` now define unprefixed
+       `RegisterRamReset`, `SoftReset`, `SoundBiasReset`,
+       `SoundBiasSet`, and `VBlankIntrWait` under `#ifdef __PORT__`,
+       forwarding to the existing `Port_*` implementations. On the GBA
+       these resolve via `asm/lib/libagbsyscall.s`; on the host that
+       file is unbuilt, so the unprefixed names need real definitions.
+    3. `src/main.c::InitOverlays` had a small `#ifndef __PORT__` patch
+       wrapped around the GBA-only EWRAM clear and the
+       `RAMFUNCS_END`/`sub_080B197C` / `gCopyToEndOfEwram_*` /
+       `gEndOfEwram` ROM-to-RAM relocation block. Those symbols are
+       linker-script artefacts; rather than fabricate matching weak
+       aliases we skip the whole sequence on the host (no overlays, no
+       EWRAM-tail clobber). The matching ROM build is byte-identical.
+
+    The `Port_HeadersSelfCheck()` runtime check has moved from the
+    dropped stub into `src/platform/sdl/main.c` so it still runs during
+    the headless smoke test.
+
+    Behaviour with `TMC_LINK_GAME_SOURCES=OFF` (the still-default) is
+    unchanged: `tmc_sdl` builds from the empty-loop `agb_main_stub.c`,
+    and the smoke test passes. The Ubuntu CI job now only runs the
+    default build (the second `=ON` configure pass was redundant once
+    the library was switched to "always built as a dependency"); the
+    leaf set is still compile-checked on every PR by
+    `add_dependencies(tmc_sdl tmc_game_sources)`.
+  - [ ] **2b.4b** Flip `TMC_LINK_GAME_SOURCES` to ON by default. Blocks
+    on resolving the ~1000 link references the game library still pulls
+    in from outside the leaf set: enemy / manager / menu / item /
+    projectile / npc / world-event / data tables under `src/enemy/`,
+    `src/manager/`, `src/menu/`, `src/item/`, `src/projectile/`,
+    `src/npc/`, `src/object/`, `src/playerItem/`, `src/subtask/`,
+    `src/worldEvent/`, `src/data/`, `src/gba/m4a.c`; the BSS globals
+    declared in `linker.ld` but not yet defined in `port_globals.c`
+    (`gPlayerEntity`, `gPlayerState`, `gSave`, `gArea`, `gHUD`,
+    `gMapTop`, `gMapBottom`, the `gUnk_02xxxxxx` family, …); the const
+    data tables under `data/` (hitboxes, palettes, gfx groups, area
+    metadata, sound `sfxXxx` / `bgmXxx` IDs); and the
+    `ram_*` / `script_*` / `sub_08xxxxxx` symbols still living only in
+    `asm/src/`. Two complementary tactics: (a) widen `TMC_GAME_LEAF_SOURCES`
+    to include the subdir TUs that already build clean once their headers
+    are touched, and (b) extend `port_globals.c` plus a sibling
+    `port_unresolved_stubs.c` to provide weak/abort stubs for everything
+    else, leveraging the same pattern as `asm_stubs.c`.
 - [ ] **PR #3.** Have `Port_InputPump()` write `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot. The existing `src/common.c::ReadKeyInput`
   then works unchanged. Smoke test: title-screen menu navigation logged
