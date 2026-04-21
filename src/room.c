@@ -56,7 +56,7 @@ Entity* LoadRoomEntity(const EntityData* dat) {
     Entity* entity;
 
 // r4/r5 regalloc
-#ifndef NON_MATCHING
+#if !defined(NON_MATCHING) && !defined(__PORT__)
     asm("" ::: "r5");
 #endif
 

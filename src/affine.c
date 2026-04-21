@@ -39,7 +39,14 @@ void CopyOAM(void) {
         d = (u16*)&gOAMControls.oam[gOAMControls.updated];
         for (; rem != 0; rem--) {
             *d = 0x2A0;
+#ifdef __PORT__
+            /* GCC's cast-as-lvalue extension was removed; rewrite under the
+             * SDL host build but keep the original form for the matching ROM
+             * build. */
+            d = (u16*)((u8*)d + 8);
+#else
             (u8*)d += 8;
+#endif
         }
     }
     if (gOAMControls.unk[0].unk7) {
