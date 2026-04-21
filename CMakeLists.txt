@@ -168,8 +168,15 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
-    src/platform/shared/port_unresolved_stubs.c
 )
+# `port_unresolved_stubs.c` is intentionally NOT compiled directly into
+# `tmc_sdl`: its weak symbols would otherwise be resolved before the
+# linker scans `tmc_game_sources`, and a static library only pulls in
+# objects to satisfy *undefined* symbols. To keep real definitions from
+# being shadowed by the placeholders, the stubs live in their own
+# `tmc_unresolved_stubs` archive that is linked **after**
+# `tmc_game_sources` (see further below). Per the same logic, it is only
+# linked when `TMC_LINK_GAME_SOURCES=ON`.
 
 if(NOT TMC_LINK_GAME_SOURCES)
     # Fallback empty-loop AgbMain when the game sources are not linked.
@@ -934,11 +941,47 @@ endif()
 # produces a working `tmc_sdl` from the empty-loop `agb_main_stub.c`,
 # while the leaf set is continuously compile-verified.
 add_dependencies(tmc_sdl tmc_game_sources)
+
+# Weak-symbol placeholder archive for the ~850 references that
+# `tmc_game_sources` still pulls in from outside the host build's
+# reach (raw ARM asm in `asm/src/`, the unbuilt `src/gba/m4a.c`, and
+# the const tables under `data/*.c`). Built as its own static library
+# so it can be ordered **after** `tmc_game_sources` on the linker
+# command line: a static archive only contributes objects that
+# satisfy currently-undefined symbols, so this ordering ensures any
+# real (strong) definition that exists inside `tmc_game_sources` is
+# extracted first, and the weak placeholder only fills genuine gaps.
+# See docs/sdl_port.md (PR #2b.4b) and the same-named source comment.
+add_library(tmc_unresolved_stubs STATIC
+    src/platform/shared/port_unresolved_stubs.c
+)
+target_include_directories(tmc_unresolved_stubs PRIVATE
+    include
+    include/platform
+)
+target_compile_definitions(tmc_unresolved_stubs PRIVATE
+    __PORT__
+    PORT_SDL
+    ${TMC_VERSION_DEFINES}
+)
+if(MSVC)
+    target_compile_options(tmc_unresolved_stubs PRIVATE /W3)
+else()
+    target_compile_options(tmc_unresolved_stubs PRIVATE
+        -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function
+        -fno-strict-aliasing
+    )
+endif()
+add_dependencies(tmc_sdl tmc_unresolved_stubs)
+
 if(TMC_LINK_GAME_SOURCES)
     # PR #2b.4a foundation makes this link possible for the call graph
     # rooted at `AgbMain` provided the missing-symbol stubs from 2b.4b
-    # are also present (not yet checked in -- see docs/sdl_port.md).
-    target_link_libraries(tmc_sdl PRIVATE tmc_game_sources)
+    # are also present. Order matters: `tmc_unresolved_stubs` MUST come
+    # after `tmc_game_sources` so the linker pulls real (strong)
+    # definitions out of the game library first and only falls through
+    # to the weak placeholders for genuine gaps.
+    target_link_libraries(tmc_sdl PRIVATE tmc_game_sources tmc_unresolved_stubs)
 endif()
 
 # ---------------------------------------------------------------------------

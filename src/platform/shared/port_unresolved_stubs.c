@@ -40,7 +40,7 @@
 #include <stdint.h>
 
 #if defined(__GNUC__) || defined(__clang__)
-#define PORT_WEAK     __attribute__((weak))
+#define PORT_WEAK __attribute__((weak))
 #define PORT_NORETURN __attribute__((noreturn))
 #else
 #define PORT_WEAK
@@ -61,10 +61,10 @@ static PORT_NORETURN void Port_UnresolvedTrap(const char* name) {
 /* Each function stub is tagged `weak` so that when the real definition
  * comes online (either from a newly-linked src/ TU or from a future
  * port_* implementation), it transparently replaces the stub. */
-#define PORT_UNRESOLVED_FUNC(name)                    \
-    PORT_NORETURN void name(void);                    \
-    PORT_WEAK PORT_NORETURN void name(void) {         \
-        Port_UnresolvedTrap(#name);                   \
+#define PORT_UNRESOLVED_FUNC(name)            \
+    PORT_NORETURN void name(void);            \
+    PORT_WEAK PORT_NORETURN void name(void) { \
+        Port_UnresolvedTrap(#name);           \
     }
 /* 41 function-like symbols. */
 PORT_UNRESOLVED_FUNC(CloneTile)
@@ -120,8 +120,7 @@ PORT_UNRESOLVED_FUNC(sub_080B1BA4)
  * source / data tables, so there is no struct-size requirement to
  * honour here.
  */
-#define PORT_UNRESOLVED_DATA(name) \
-    char name[256] PORT_WEAK __attribute__((aligned(16)))
+#define PORT_UNRESOLVED_DATA(name) char name[256] PORT_WEAK __attribute__((aligned(16)))
 
 PORT_UNRESOLVED_DATA(ButtonUIElement_Actions);
 PORT_UNRESOLVED_DATA(EzloNagUIElement_Actions);
