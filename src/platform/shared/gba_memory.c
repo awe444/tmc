@@ -15,12 +15,11 @@ uint8_t gPortOam[PORT_OAM_SIZE];
 uint8_t gPortPltt[PORT_PLTT_SIZE];
 uint8_t gPortIo[PORT_IO_SIZE];
 
-void Port_InitMemory(void)
-{
+void Port_InitMemory(void) {
     memset(gPortEwram, 0, sizeof(gPortEwram));
     memset(gPortIwram, 0, sizeof(gPortIwram));
-    memset(gPortVram,  0, sizeof(gPortVram));
-    memset(gPortOam,   0, sizeof(gPortOam));
-    memset(gPortPltt,  0, sizeof(gPortPltt));
-    memset(gPortIo,    0, sizeof(gPortIo));
+    memset(gPortVram, 0, sizeof(gPortVram));
+    memset(gPortOam, 0, sizeof(gPortOam));
+    memset(gPortPltt, 0, sizeof(gPortPltt));
+    memset(gPortIo, 0, sizeof(gPortIo));
 }

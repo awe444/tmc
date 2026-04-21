@@ -14,34 +14,32 @@
 #include <string.h>
 
 typedef struct {
-    int         scale;
-    int         fullscreen;
-    int         mute;
-    int         frames;        /* >0: exit after N frames (CI smoke test) */
+    int scale;
+    int fullscreen;
+    int mute;
+    int frames; /* >0: exit after N frames (CI smoke test) */
     const char* save_dir;
 } CliOptions;
 
-static void print_usage(const char* argv0)
-{
+static void print_usage(const char* argv0) {
     fprintf(stderr,
-        "Usage: %s [options]\n"
-        "  --scale=N        Integer window scale (default: 4)\n"
-        "  --fullscreen     Start in fullscreen-desktop mode\n"
-        "  --mute           Disable audio output\n"
-        "  --save-dir=PATH  Directory containing tmc.sav (default: cwd)\n"
-        "  --frames=N       Run for N frames then exit (for CI smoke tests)\n"
-        "  --help           Show this message\n",
-        argv0);
+            "Usage: %s [options]\n"
+            "  --scale=N        Integer window scale (default: 4)\n"
+            "  --fullscreen     Start in fullscreen-desktop mode\n"
+            "  --mute           Disable audio output\n"
+            "  --save-dir=PATH  Directory containing tmc.sav (default: cwd)\n"
+            "  --frames=N       Run for N frames then exit (for CI smoke tests)\n"
+            "  --help           Show this message\n",
+            argv0);
 }
 
-static int parse_int_suffix(const char* arg, const char* prefix, int* out)
-{
+static int parse_int_suffix(const char* arg, const char* prefix, int* out) {
     size_t plen = strlen(prefix);
     if (strncmp(arg, prefix, plen) != 0) {
         return 0;
     }
     char* end = NULL;
-    long  v   = strtol(arg + plen, &end, 10);
+    long v = strtol(arg + plen, &end, 10);
     if (end == arg + plen || v < 0 || v > 1000000) {
         return 0;
     }
@@ -49,13 +47,12 @@ static int parse_int_suffix(const char* arg, const char* prefix, int* out)
     return 1;
 }
 
-static int parse_cli(int argc, char** argv, CliOptions* opts)
-{
-    opts->scale      = 4;
+static int parse_cli(int argc, char** argv, CliOptions* opts) {
+    opts->scale = 4;
     opts->fullscreen = 0;
-    opts->mute       = 0;
-    opts->frames     = 0;
-    opts->save_dir   = NULL;
+    opts->mute = 0;
+    opts->frames = 0;
+    opts->save_dir = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char* a = argv[i];
@@ -63,10 +60,18 @@ static int parse_cli(int argc, char** argv, CliOptions* opts)
             print_usage(argv[0]);
             return 0;
         }
-        if (strcmp(a, "--fullscreen") == 0) { opts->fullscreen = 1; continue; }
-        if (strcmp(a, "--mute") == 0)       { opts->mute       = 1; continue; }
-        if (parse_int_suffix(a, "--scale=",  &opts->scale))  continue;
-        if (parse_int_suffix(a, "--frames=", &opts->frames)) continue;
+        if (strcmp(a, "--fullscreen") == 0) {
+            opts->fullscreen = 1;
+            continue;
+        }
+        if (strcmp(a, "--mute") == 0) {
+            opts->mute = 1;
+            continue;
+        }
+        if (parse_int_suffix(a, "--scale=", &opts->scale))
+            continue;
+        if (parse_int_suffix(a, "--frames=", &opts->frames))
+            continue;
         if (strncmp(a, "--save-dir=", 11) == 0) {
             opts->save_dir = a + 11;
             continue;
@@ -82,8 +87,7 @@ static int parse_cli(int argc, char** argv, CliOptions* opts)
  * implement that via Port_SetFrameBudget() which the shared interrupts
  * layer decrements on each VBlank. */
 
-int main(int argc, char** argv)
-{
+int main(int argc, char** argv) {
     CliOptions opts;
     int parsed = parse_cli(argc, argv, &opts);
     if (parsed <= 0) {
@@ -111,15 +115,13 @@ int main(int argc, char** argv)
 #if TMC_ENABLE_AUDIO
     if (!opts.mute) {
         if (Port_AudioInit() != 0) {
-            fprintf(stderr,
-                "[tmc_sdl] Audio init failed; continuing without sound.\n");
+            fprintf(stderr, "[tmc_sdl] Audio init failed; continuing without sound.\n");
         }
     }
 #endif
 
     if (Port_SaveLoad(opts.save_dir) != 0) {
-        fprintf(stderr,
-            "[tmc_sdl] Warning: could not load save file (continuing).\n");
+        fprintf(stderr, "[tmc_sdl] Warning: could not load save file (continuing).\n");
     }
 
     Port_SetFrameBudget(opts.frames);

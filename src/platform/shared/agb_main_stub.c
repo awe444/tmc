@@ -15,12 +15,10 @@
 
 #include <stdio.h>
 
-void AgbMain(void)
-{
-    fprintf(stderr,
-            "[tmc_sdl] AgbMain stub running. The real game source has not "
-            "yet been linked into the SDL build (see docs/sdl_port.md, "
-            "roadmap PR #2). The window will stay blank until then.\n");
+void AgbMain(void) {
+    fprintf(stderr, "[tmc_sdl] AgbMain stub running. The real game source has not "
+                    "yet been linked into the SDL build (see docs/sdl_port.md, "
+                    "roadmap PR #2). The window will stay blank until then.\n");
 
     /* Mirror the structure of the real game loop in src/main.c so that
      * future PRs only have to delete this file rather than restructure

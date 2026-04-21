@@ -19,10 +19,18 @@
  * the unprefixed names to these stubs when audio is disabled and to the
  * real implementation when it is enabled. */
 
-void Port_m4aSoundInit(void)        { /* silent */ }
-void Port_m4aSoundMain(void)        { /* silent */ }
-void Port_m4aSoundVSync(void)       { /* silent */ }
-void Port_m4aSoundVSyncOn(void)     { /* silent */ }
-void Port_m4aSoundVSyncOff(void)    { /* silent */ }
-void Port_m4aSoundClear(void)       { /* silent */ }
-void Port_SoundReq(int song)        { (void)song; }
+void Port_m4aSoundInit(void) { /* silent */
+}
+void Port_m4aSoundMain(void) { /* silent */
+}
+void Port_m4aSoundVSync(void) { /* silent */
+}
+void Port_m4aSoundVSyncOn(void) { /* silent */
+}
+void Port_m4aSoundVSyncOff(void) { /* silent */
+}
+void Port_m4aSoundClear(void) { /* silent */
+}
+void Port_SoundReq(int song) {
+    (void)song;
+}

@@ -29,10 +29,10 @@ extern "C" {
 /* ------------------------------------------------------------------------ */
 #define PORT_EWRAM_SIZE 0x40000u
 #define PORT_IWRAM_SIZE 0x08000u
-#define PORT_VRAM_SIZE  0x18000u
-#define PORT_OAM_SIZE   0x00400u
-#define PORT_PLTT_SIZE  0x00400u
-#define PORT_IO_SIZE    0x00400u
+#define PORT_VRAM_SIZE 0x18000u
+#define PORT_OAM_SIZE 0x00400u
+#define PORT_PLTT_SIZE 0x00400u
+#define PORT_IO_SIZE 0x00400u
 
 extern uint8_t gPortEwram[PORT_EWRAM_SIZE];
 extern uint8_t gPortIwram[PORT_IWRAM_SIZE];
@@ -52,7 +52,7 @@ void Port_InitMemory(void);
 /* game timing is unmodified.                                               */
 /* ------------------------------------------------------------------------ */
 #define PORT_FRAMES_PER_SECOND 59.7274
-#define PORT_FRAME_NS          16743055  /* 1e9 / 59.7274 */
+#define PORT_FRAME_NS 16743055 /* 1e9 / 59.7274 */
 
 /** Block until the next emulated VBlank. Replacement for VBlankIntrWait. */
 void Port_VBlankIntrWait(void);
@@ -61,7 +61,7 @@ void Port_VBlankIntrWait(void);
 void Port_OnVBlank(void);
 
 /** Returns non-zero once the user has requested shutdown (SDL_QUIT, etc.). */
-int  Port_ShouldQuit(void);
+int Port_ShouldQuit(void);
 
 /** Set the quit flag. Wakes any thread parked in Port_VBlankIntrWait. */
 void Port_RequestQuit(void);
@@ -80,7 +80,7 @@ void Port_SetFrameBudget(int frames);
 /* ------------------------------------------------------------------------ */
 
 /** Initialize keyboard + gamepad subsystems. Returns 0 on success. */
-int  Port_InputInit(void);
+int Port_InputInit(void);
 
 /** Tear down input. Safe to call multiple times. */
 void Port_InputShutdown(void);
@@ -96,7 +96,7 @@ uint16_t Port_GetKeyMask(void);
 /* ------------------------------------------------------------------------ */
 
 /** Open the SDL window and renderer. Returns 0 on success. */
-int  Port_VideoInit(int scale, int fullscreen);
+int Port_VideoInit(int scale, int fullscreen);
 
 /** Tear down the SDL window. */
 void Port_VideoShutdown(void);
@@ -112,7 +112,7 @@ void Port_VideoPresent(void);
 /* ------------------------------------------------------------------------ */
 
 /** Open SDL audio (silent stub mixer for now). */
-int  Port_AudioInit(void);
+int Port_AudioInit(void);
 
 /** Close SDL audio. */
 void Port_AudioShutdown(void);
@@ -121,19 +121,19 @@ void Port_AudioShutdown(void);
 /* Save backend.                                                            */
 /* ------------------------------------------------------------------------ */
 
-#define PORT_SAVE_SIZE 0x10000u  /* 64 KiB Flash layout */
+#define PORT_SAVE_SIZE 0x10000u /* 64 KiB Flash layout */
 
 /** Load `tmc.sav` from disk into the emulated Flash buffer. */
-int  Port_SaveLoad(const char* save_dir);
+int Port_SaveLoad(const char* save_dir);
 
 /** Flush the emulated Flash buffer back out to disk. */
-int  Port_SaveFlush(void);
+int Port_SaveFlush(void);
 
 /** Direct read access to a byte in the emulated Flash. */
 uint8_t Port_SaveReadByte(uint32_t offset);
 
 /** Direct write access to a byte in the emulated Flash. */
-void    Port_SaveWriteByte(uint32_t offset, uint8_t value);
+void Port_SaveWriteByte(uint32_t offset, uint8_t value);
 
 /* ------------------------------------------------------------------------ */
 /* Game entry point.                                                        */
@@ -146,7 +146,7 @@ void    Port_SaveWriteByte(uint32_t offset, uint8_t value);
 void AgbMain(void);
 
 #ifdef __cplusplus
-}  /* extern "C" */
+} /* extern "C" */
 #endif
 
 #endif /* TMC_PLATFORM_PORT_H */

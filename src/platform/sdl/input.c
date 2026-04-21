@@ -27,46 +27,56 @@
  * here to keep this file independent of the GBA headers — those headers
  * pull in agbcc-isms that we don't want in the platform layer. */
 enum {
-    PORT_KEY_A      = 0x0001,
-    PORT_KEY_B      = 0x0002,
+    PORT_KEY_A = 0x0001,
+    PORT_KEY_B = 0x0002,
     PORT_KEY_SELECT = 0x0004,
-    PORT_KEY_START  = 0x0008,
-    PORT_KEY_RIGHT  = 0x0010,
-    PORT_KEY_LEFT   = 0x0020,
-    PORT_KEY_UP     = 0x0040,
-    PORT_KEY_DOWN   = 0x0080,
-    PORT_KEY_R      = 0x0100,
-    PORT_KEY_L      = 0x0200,
-    PORT_KEYS_MASK  = 0x03FF,
+    PORT_KEY_START = 0x0008,
+    PORT_KEY_RIGHT = 0x0010,
+    PORT_KEY_LEFT = 0x0020,
+    PORT_KEY_UP = 0x0040,
+    PORT_KEY_DOWN = 0x0080,
+    PORT_KEY_R = 0x0100,
+    PORT_KEY_L = 0x0200,
+    PORT_KEYS_MASK = 0x03FF,
 };
 
 /* Analog-stick deadzone as a fraction of SDL's [-32768, 32767] range. */
 #define PORT_STICK_DEADZONE 8000
 
-static SDL_GameController* s_gamepad         = NULL;
-static SDL_JoystickID      s_gamepad_id      = -1;
-static uint16_t            s_key_mask        = 0;
-static uint16_t            s_keyboard_mask   = 0;
+static SDL_GameController* s_gamepad = NULL;
+static SDL_JoystickID s_gamepad_id = -1;
+static uint16_t s_key_mask = 0;
+static uint16_t s_keyboard_mask = 0;
 
 /* ------------------------------------------------------------------------ */
 /* Keyboard mapping.                                                         */
 /* ------------------------------------------------------------------------ */
-static uint16_t key_for_scancode(SDL_Scancode sc)
-{
+static uint16_t key_for_scancode(SDL_Scancode sc) {
     switch (sc) {
-        case SDL_SCANCODE_X:        return PORT_KEY_A;
-        case SDL_SCANCODE_Z:        return PORT_KEY_B;
+        case SDL_SCANCODE_X:
+            return PORT_KEY_A;
+        case SDL_SCANCODE_Z:
+            return PORT_KEY_B;
         case SDL_SCANCODE_RSHIFT:
-        case SDL_SCANCODE_BACKSPACE: return PORT_KEY_SELECT;
+        case SDL_SCANCODE_BACKSPACE:
+            return PORT_KEY_SELECT;
         case SDL_SCANCODE_RETURN:
-        case SDL_SCANCODE_RETURN2:  return PORT_KEY_START;
-        case SDL_SCANCODE_RIGHT:    return PORT_KEY_RIGHT;
-        case SDL_SCANCODE_LEFT:     return PORT_KEY_LEFT;
-        case SDL_SCANCODE_UP:       return PORT_KEY_UP;
-        case SDL_SCANCODE_DOWN:     return PORT_KEY_DOWN;
-        case SDL_SCANCODE_S:        return PORT_KEY_R;
-        case SDL_SCANCODE_A:        return PORT_KEY_L;
-        default:                    return 0;
+        case SDL_SCANCODE_RETURN2:
+            return PORT_KEY_START;
+        case SDL_SCANCODE_RIGHT:
+            return PORT_KEY_RIGHT;
+        case SDL_SCANCODE_LEFT:
+            return PORT_KEY_LEFT;
+        case SDL_SCANCODE_UP:
+            return PORT_KEY_UP;
+        case SDL_SCANCODE_DOWN:
+            return PORT_KEY_DOWN;
+        case SDL_SCANCODE_S:
+            return PORT_KEY_R;
+        case SDL_SCANCODE_A:
+            return PORT_KEY_L;
+        default:
+            return 0;
     }
 }
 
@@ -74,8 +84,7 @@ static uint16_t key_for_scancode(SDL_Scancode sc)
 /* Gamepad helpers.                                                          */
 /* ------------------------------------------------------------------------ */
 #if TMC_ENABLE_GAMEPAD
-static void open_first_controller(void)
-{
+static void open_first_controller(void) {
     if (s_gamepad != NULL) {
         return;
     }
@@ -86,26 +95,22 @@ static void open_first_controller(void)
             if (s_gamepad != NULL) {
                 SDL_Joystick* joy = SDL_GameControllerGetJoystick(s_gamepad);
                 s_gamepad_id = joy ? SDL_JoystickInstanceID(joy) : -1;
-                fprintf(stderr,
-                        "[tmc_sdl] Gamepad opened: %s\n",
-                        SDL_GameControllerName(s_gamepad));
+                fprintf(stderr, "[tmc_sdl] Gamepad opened: %s\n", SDL_GameControllerName(s_gamepad));
                 return;
             }
         }
     }
 }
 
-static void close_controller(void)
-{
+static void close_controller(void) {
     if (s_gamepad != NULL) {
         SDL_GameControllerClose(s_gamepad);
-        s_gamepad    = NULL;
+        s_gamepad = NULL;
         s_gamepad_id = -1;
     }
 }
 
-static uint16_t poll_gamepad_mask(void)
-{
+static uint16_t poll_gamepad_mask(void) {
     if (s_gamepad == NULL || !SDL_GameControllerGetAttached(s_gamepad)) {
         return 0;
     }
@@ -148,29 +153,34 @@ static uint16_t poll_gamepad_mask(void)
     /* Left analog stick → digital D-pad with deadzone. */
     Sint16 ax = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_LEFTX);
     Sint16 ay = SDL_GameControllerGetAxis(s_gamepad, SDL_CONTROLLER_AXIS_LEFTY);
-    if (ax >  PORT_STICK_DEADZONE) mask |= PORT_KEY_RIGHT;
-    if (ax < -PORT_STICK_DEADZONE) mask |= PORT_KEY_LEFT;
-    if (ay >  PORT_STICK_DEADZONE) mask |= PORT_KEY_DOWN;
-    if (ay < -PORT_STICK_DEADZONE) mask |= PORT_KEY_UP;
+    if (ax > PORT_STICK_DEADZONE)
+        mask |= PORT_KEY_RIGHT;
+    if (ax < -PORT_STICK_DEADZONE)
+        mask |= PORT_KEY_LEFT;
+    if (ay > PORT_STICK_DEADZONE)
+        mask |= PORT_KEY_DOWN;
+    if (ay < -PORT_STICK_DEADZONE)
+        mask |= PORT_KEY_UP;
 
     return mask;
 }
 #else
-static void     open_first_controller(void) {}
-static void     close_controller(void)      {}
-static uint16_t poll_gamepad_mask(void)     { return 0; }
+static void open_first_controller(void) {
+}
+static void close_controller(void) {
+}
+static uint16_t poll_gamepad_mask(void) {
+    return 0;
+}
 #endif /* TMC_ENABLE_GAMEPAD */
 
 /* ------------------------------------------------------------------------ */
 /* Public API.                                                               */
 /* ------------------------------------------------------------------------ */
-int Port_InputInit(void)
-{
+int Port_InputInit(void) {
 #if TMC_ENABLE_GAMEPAD
     if (SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
-        fprintf(stderr,
-                "[tmc_sdl] SDL_INIT_GAMECONTROLLER failed: %s\n",
-                SDL_GetError());
+        fprintf(stderr, "[tmc_sdl] SDL_INIT_GAMECONTROLLER failed: %s\n", SDL_GetError());
         /* Non-fatal — keyboard still works. */
     } else {
         /* Optional mappings file shipped next to the binary. */
@@ -181,20 +191,18 @@ int Port_InputInit(void)
         open_first_controller();
     }
 #endif
-    s_key_mask      = 0;
+    s_key_mask = 0;
     s_keyboard_mask = 0;
     return 0;
 }
 
-void Port_InputShutdown(void)
-{
+void Port_InputShutdown(void) {
 #if TMC_ENABLE_GAMEPAD
     close_controller();
 #endif
 }
 
-void Port_InputPump(void)
-{
+void Port_InputPump(void) {
     SDL_Event ev;
     while (SDL_PollEvent(&ev)) {
         switch (ev.type) {
@@ -247,7 +255,6 @@ void Port_InputPump(void)
      */
 }
 
-uint16_t Port_GetKeyMask(void)
-{
+uint16_t Port_GetKeyMask(void) {
     return s_key_mask;
 }
