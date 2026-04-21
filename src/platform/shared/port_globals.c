@@ -44,11 +44,11 @@ TextRender gTextRender;
 /* `Window` is declared as a file-local typedef inside src/message.c (it
  * is not exposed via a header), but the storage for `gNewWindow` /
  * `gCurrentWindow` lives in BSS on the GBA via linker.ld. Mirror the
- * struct definition here verbatim so the host can allocate the same
- * backing storage; sizeof differences are irrelevant because message.c
- * only ever uses `sizeof(*ptr)` against its own definition and never
- * reads it from this TU. */
-typedef struct PortWindow {
+ * exact struct tag and typedef name here so the host-side definition is
+ * type-compatible with `extern Window ...` declarations in message.c.
+ * The field layout is kept verbatim from the message subsystem's local
+ * definition. */
+typedef struct Window {
     u8 unk0;
     u8 active;
     u8 unk2;
@@ -57,9 +57,9 @@ typedef struct PortWindow {
     u8 yPos;
     u8 width;
     u8 height;
-} PortWindow;
-PortWindow gNewWindow;
-PortWindow gCurrentWindow;
+} Window;
+Window gNewWindow;
+Window gCurrentWindow;
 
 /* Palette buffer (mirrors BG_PLTT in EWRAM). On hardware this is sized
  * to fit the BG palette region copied via DmaCopy32(.., BG_PLTT_SIZE).
