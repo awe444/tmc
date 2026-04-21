@@ -141,7 +141,7 @@
  * the same instruction stream. See docs/sdl_port.md (PR #2b.3). */
 #ifdef __PORT__
 #include <stdint.h>
-#define PORT_ROM_PTR(x) ((uintptr_t)(const void *)(x))
+#define PORT_ROM_PTR(x) ((uintptr_t)(const void*)(x))
 #else
 #define PORT_ROM_PTR(x) ((u32)(x))
 #endif
