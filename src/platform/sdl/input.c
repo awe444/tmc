@@ -42,10 +42,11 @@ enum {
 
 /* Offset of REG_KEYINPUT inside the emulated I/O register block (gPortIo).
  * Mirrors REG_OFFSET_KEYINPUT in include/gba/io_reg.h. Repeated here so
- * input.c stays free of the GBA headers (and their agbcc-isms); the
- * Port_HeadersSelfCheck() runtime check in
- * src/platform/shared/port_headers_check.c asserts the two values
- * agree. */
+ * input.c stays free of the GBA headers (and their agbcc-isms).
+ *
+ * Note: src/platform/shared/port_headers_check.c validates the expected
+ * KEYINPUT offset value separately, but it does not reference this local
+ * PORT_REG_OFFSET_KEYINPUT macro directly. */
 #define PORT_REG_OFFSET_KEYINPUT 0x130
 
 static void write_keyinput_reg(uint16_t active_high_mask) {
