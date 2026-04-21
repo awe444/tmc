@@ -105,7 +105,15 @@ typedef struct {
     u32 type2;
     u16 xPos;
     u16 yPos;
+#ifdef __PORT__
+    /* On GBA `u32` matches the pointer width; on a 64-bit host build the
+     * `(u32)&foo` initializers in e.g. src/cutscene.c would truncate the
+     * address and stop being a link-time constant. Widen to uintptr_t
+     * under __PORT__; the matching ROM build keeps the original u32. */
+    uintptr_t spritePtr;
+#else
     u32 spritePtr;
+#endif
 } EntityData;
 
 typedef struct {
