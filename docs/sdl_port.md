@@ -11,10 +11,12 @@ goal here is the equivalent `tmc.sdl`.
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
 > `__PORT__` header rewiring) has landed, PR #2b is feature-complete
 > at the link level (2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, and the
-> link-resolution half of 2b.4b are done), and PR #3 (mirroring the
-> SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed
-> so the existing `src/common.c::ReadKeyInput()` works unchanged once
-> the real `AgbMain` is the executable's entry point. Every `src/**/*.c` TU that
+> link-resolution half of 2b.4b are done), PR #3 (mirroring the
+> SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed,
+> and PR #4 (software rasterizer for BG mode 0 + OBJ regular sprites,
+> 4 bpp + 8 bpp) now drives `Port_VideoPresent()` from the emulated
+> VRAM/OAM/PLTT/IO arrays — affine BGs, windows and blending stay
+> deferred to PR #5.** Every `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
 > behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
@@ -25,11 +27,13 @@ goal here is the equivalent `tmc.sdl`.
 > `src/platform/shared/port_unresolved_stubs.c`. The runtime flip of
 > the default to `ON` is intentionally deferred — `src/main.c::AgbMain`
 > reaches enough unresolved stubs during early init that it SIGSEGVs,
-> and fleshing those paths out is the scope of PRs #3 – #7.** The
+> and fleshing those paths out is the scope of PRs #5 – #7.** The
 > default build produces a `tmc_sdl` executable that opens a 240×160
 > (scaled 4×) window, accepts keyboard and gamepad input (X-Input on
 > Windows via `SDL_GameController`), opens a silent SDL audio device,
-> and runs an empty 59.7274 Hz frame loop. The GBA decomp headers
+> presents the emulated GBA framebuffer composited from the
+> background tilemaps and OBJ layer, and runs at 59.7274 Hz. The
+> GBA decomp headers
 > (`include/gba/*.h`, `include/global.h`) now compile under a host C
 > compiler when `__PORT__` is defined, with `REG_*`, `BG_PLTT`,
 > `OBJ_PLTT`, `BG_VRAM`, `OAM`, `EWRAM_START`, `IWRAM_START`,
@@ -38,7 +42,7 @@ goal here is the equivalent `tmc.sdl`.
 > `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`, `MEMORY_BARRIER`, `ASM_FUNC`,
 > `NONMATCH`, `SystemCall`, …) collapsing to no-ops. The real game
 > logic **links cleanly** but does not yet **run** — closing that
-> remaining gap is spread across PRs #3 – #7.
+> remaining gap is spread across PRs #5 – #7.
 
 
 ## Building
@@ -351,8 +355,8 @@ are tracked here for future contributors.
     keep the link succeeding but trap on call, so the existing
     headless smoke test (`--frames=30`) would SIGSEGV once any unported
     path is exercised during init. The remaining work is distributed
-    across the later roadmap entries (input in PR #3, software
-    rasterizer in PR #4, m4a in PR #7) rather than landing as a
+    across the later roadmap entries (affine BGs / windows / blending
+    in PR #5, m4a in PR #7) rather than landing as a
     single big step here; once those ports reduce the stub surface
     enough that `AgbMain` survives the smoke-test budget, the default
     can flip.
@@ -367,9 +371,50 @@ are tracked here for future contributors.
   repeated `PORT_REG_OFFSET_KEYINPUT` constant in `input.c` from
   `REG_OFFSET_KEYINPUT` in `include/gba/io_reg.h` fails the headless
   smoke test in CI.
-- [ ] **PR #4.** Software rasterizer for BG mode 0 (4 text BGs) and OBJ
-  layer (regular sprites, 4 bpp + 8 bpp). Reuse sa2's renderer as a
-  structural reference (MIT-licensed; preserve attribution).
+- [x] **PR #4.** Software rasterizer for BG mode 0 (4 text BGs) and OBJ
+  layer (regular sprites, 4 bpp + 8 bpp). Added a cross-port renderer in
+  `src/platform/shared/render.c` plus a public entry point
+  `Port_RenderFrame()` (declared in `include/platform/port.h`) that
+  reads exclusively from the emulated `gPortIo` / `gPortVram` /
+  `gPortPltt` / `gPortOam` arrays and writes a packed 240x160 ARGB8888
+  framebuffer. `src/platform/sdl/video.c::Port_VideoPresent()` calls
+  the renderer instead of the previous opaque-black fill, so future
+  ports (PSP, PS2, win32) can reuse the renderer verbatim.
+  Implemented:
+  * `DISPCNT` mode + bg/obj enable bits + forced-blank (white screen).
+  * BG mode 0 -- all four text BGs, each with `BGxCNT` priority,
+    char base / screen base, 16-color (4 bpp) and 256-color (8 bpp),
+    and the four screen-size codes (256x256 / 512x256 / 256x512 /
+    512x512 with the standard SC0..SC3 sub-screen wrapping); per-axis
+    `BGxHOFS` / `BGxVOFS` scrolling; tilemap entries decode tile id
+    (10 bits), hflip, vflip, palette bank (4 bpp only).
+  * OBJ layer -- regular (non-affine) sprites in 4 bpp and 8 bpp,
+    1D and 2D OBJ tile mapping (DISPCNT bit 6), all 12 shape x size
+    combinations (8x8 .. 64x64), hflip / vflip, attr0 disable bit,
+    correct GBA priority composition (OBJ over BG of equal priority;
+    lower BG number / lower OAM index wins within an equal-priority
+    tier; OBJ wraps at the GBA's 9-bit signed X / 8-bit unsigned Y).
+  * BGR555 -> ARGB8888 conversion uses 5-bit replication so palette
+    entry 0x7FFF expands exactly to 0xFFFFFFFF.
+
+  A new `Port_RendererSelfCheck()` programs a known tilemap +
+  sprite into the emulated memory regions and verifies the produced
+  pixels for backdrop fill, BG tile sampling, hflip / vflip, palette
+  bank selection, transparency vs. palette colour 0, BG scroll, OBJ
+  drawing, attr0 disable, and BG-vs-OBJ priority resolution. The
+  Ubuntu CI smoke test (`--frames=30`) now runs both
+  `Port_HeadersSelfCheck()` and `Port_RendererSelfCheck()` before
+  entering the frame loop, so any regression in the rasterizer that
+  is observable through the public memory-region contract fails CI
+  with a clear message.
+
+  Out of scope (deferred to PR #5+ as planned): affine BGs (modes
+  1/2 affine layers), bitmap modes 3/4/5, windows 0/1/OBJ/outside,
+  BLDCNT/BLDALPHA/BLDY blending and brightness fade, mosaic, OBJ
+  semi-transparent / OBJ-window modes. The renderer falls through
+  cleanly for those (affine sprites are skipped; bitmap modes draw
+  the backdrop) so the screen stays in a defined state until those
+  features land.
 - [ ] **PR #5.** Affine BGs (modes 1/2), windows 0/1/OBJ/outside, alpha
   blending (BLDCNT/BLDALPHA/BLDY), brightness fade, mosaic.
 - [ ] **PR #6.** Wire `Port_SaveReadByte` / `Port_SaveWriteByte` into

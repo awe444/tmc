@@ -168,6 +168,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
+    src/platform/shared/render.c
 )
 # `port_unresolved_stubs.c` is intentionally NOT compiled directly into
 # `tmc_sdl`: its weak symbols would otherwise be resolved before the

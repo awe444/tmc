@@ -112,6 +112,16 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    /* PR #4: validate the software rasterizer (BG mode 0 + OBJ layer)
+     * against a battery of known tilemap / sprite inputs so any future
+     * regression surfaces in the headless smoke test. Defined in
+     * src/platform/shared/render.c. */
+    if (Port_RendererSelfCheck() != 0) {
+        fprintf(stderr, "[tmc_sdl] FATAL: software rasterizer self-check failed. "
+                        "See src/platform/shared/render.c::Port_RendererSelfCheck().\n");
+        SDL_Quit();
+        return 1;
+    }
 
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
         SDL_Quit();

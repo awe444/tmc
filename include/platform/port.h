@@ -102,10 +102,57 @@ int Port_VideoInit(int scale, int fullscreen);
 void Port_VideoShutdown(void);
 
 /**
- * Present the current emulated framebuffer. PR #4-5 will replace the
- * placeholder solid-color fill with the real BG/OBJ rasterizer.
+ * Present the current emulated framebuffer. As of PR #4 this drives a
+ * software rasterizer that reads VRAM, OAM, PLTT, and the BG/OBJ I/O
+ * registers from `gPortVram` / `gPortOam` / `gPortPltt` / `gPortIo`.
+ * Affine BGs, windows and BLDCNT/BLDALPHA/BLDY blending are deferred to
+ * PR #5; until they land, those features are ignored.
  */
 void Port_VideoPresent(void);
+
+/* ------------------------------------------------------------------------ */
+/* Software rasterizer (PR #4).                                              */
+/*                                                                          */
+/* The rasterizer is host-portable and lives in `src/platform/shared/        */
+/* render.c`. It has no SDL or OS dependency: it reads exclusively from the  */
+/* host arrays declared above and writes a packed 240 x 160 ARGB8888         */
+/* framebuffer (row-major, no padding). Future ports (PSP, PS2, win32)       */
+/* reuse it by calling `Port_RenderFrame()` and uploading the result to      */
+/* their own swap chain.                                                     */
+/* ------------------------------------------------------------------------ */
+#define PORT_GBA_DISPLAY_WIDTH 240
+#define PORT_GBA_DISPLAY_HEIGHT 160
+
+/**
+ * Render one frame's worth of GBA video output into `framebuffer`.
+ *
+ * Scope of PR #4: BG mode 0 (4 text BGs) + the OBJ layer (regular, i.e.
+ * non-affine, sprites in 4 bpp and 8 bpp, 1D and 2D OBJ tile mapping,
+ * all 12 shape x size combinations, hflip / vflip, per-priority
+ * compositing). The OBJ "semi-transparent" / "OBJ window" modes,
+ * windows 0/1, BLDCNT/BLDALPHA/BLDY blending, brightness fade, mosaic,
+ * and bitmap modes 3/4/5 are deferred to later PRs and currently
+ * draw as opaque normal pixels (or, for unimplemented modes, a solid
+ * fill of the backdrop color).
+ *
+ * `framebuffer` must point at a buffer of at least
+ * `PORT_GBA_DISPLAY_WIDTH * PORT_GBA_DISPLAY_HEIGHT` 32-bit pixels.
+ * Each pixel is 0xAARRGGBB; alpha is always 0xFF.
+ */
+void Port_RenderFrame(uint32_t* framebuffer);
+
+/**
+ * Headless self-check for the rasterizer (PR #4). Programs a known
+ * tilemap + sprite into gPortVram / gPortPltt / gPortOam / gPortIo,
+ * runs `Port_RenderFrame()`, and verifies the produced pixels.
+ * Returns 0 on success, non-zero on any mismatch. Called from the
+ * platform layer's headless smoke test alongside `Port_HeadersSelfCheck()`.
+ *
+ * The function saves and restores the affected I/O register / palette /
+ * VRAM / OAM bytes so it can be invoked at any time without side
+ * effects on subsequent rendering.
+ */
+int Port_RendererSelfCheck(void);
 
 /* ------------------------------------------------------------------------ */
 /* Audio.                                                                   */
