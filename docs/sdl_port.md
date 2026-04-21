@@ -8,8 +8,10 @@ The port is modelled on the [SAT-R/sa2 SDL port](https://github.com/SAT-R/sa2),
 which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
-> Status: **PR #1 of the roadmap is implemented, and PR #2a (foundational
-> `__PORT__` header rewiring) has landed.** The build produces a `tmc_sdl`
+> Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
+> `__PORT__` header rewiring) has landed, and PR #2b is in progress (2b.1,
+> 2b.2, and wave 1 of 2b.3 complete — 58 of 66 `src/*.c` TUs now build
+> clean under `__PORT__`).** The build produces a `tmc_sdl`
 > executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
 > gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
 > SDL audio device, and runs an empty 59.7274 Hz frame loop. The GBA decomp
@@ -194,8 +196,32 @@ are tracked here for future contributors.
     `cmake -DTMC_LINK_GAME_SOURCES=ON` build so regressions in the leaf
     set surface on every PR. New leaves are added by appending to
     `TMC_GAME_LEAF_SOURCES` in `CMakeLists.txt`.
-  - [ ] **2b.3** Iteratively bring in the remaining game TUs, fixing
-    any new agbcc-isms behind `#ifdef __PORT__` in the GBA headers.
+  - [x] **2b.3** (in progress) Iteratively bring in the remaining game TUs,
+    fixing any new agbcc-isms behind `#ifdef __PORT__` in the GBA headers.
+    - Wave 1: neutralised the dominant blocker — `static_assert(sizeof(X)
+      == ...)` on GBA struct sizes — by collapsing `static_assert` to a
+      forward-declared unused `struct` tag under `__PORT__` in
+      `include/global.h`. These assertions encode GBA hardware layout (4-
+      byte pointers) that doesn't hold on a 64-bit host; the matching ROM
+      build keeps the real check. With that one header tweak, 46
+      additional `src/**/*.c` TUs compile cleanly under `__PORT__`, and
+      they've been folded into `TMC_GAME_LEAF_SOURCES`: `beanstalkSubtask`,
+      `code_08049CD4`, `code_08049DF4`, `collision`, `color`, `debug`,
+      `demo`, `enemyUtils`, `enterPortalSubtask`, `entity`, `fade`,
+      `fileselect`, `flags`, `game`, `gameData`, `gameOverTask`,
+      `gameUtils`, `interrupts`, `item`, `itemDefinitions`, `itemMetaData`,
+      `itemUtils`, `kinstone`, `main`, `message`, `movement`, `npc`,
+      `objectUtils`, `physics`, `player`, `playerItem`, `playerItemUtils`,
+      `playerUtils`, `projectileUtils`, `roomInit`, `save`,
+      `screenTileMap`, `script`, `scroll`, `sound`, `staffroll`,
+      `subtask`, `text`, `title`, `ui`, `vram`.
+    - Still blocked on file-specific fixes (deferred to subsequent 2b.3
+      waves): `affine.c`, `code_0805EC04.c`, `eeprom.c`, `npcUtils.c` (C
+      compound-lvalue cast: `(u8*)d += 8;`), `backgroundAnimations.c`,
+      `common.c` (generated `assets/*_offsets.h` not wired into the CMake
+      build yet), `cutscene.c` (initializer uses address of `gUnk_*` that
+      isn't a link-time constant on host), `room.c` (inline `asm` with
+      hard-coded register name `r5`).
   - [ ] **2b.4** Replace `agb_main_stub.c` with the real
     `src/main.c::AgbMain`, flip `TMC_LINK_GAME_SOURCES` to ON by
     default, and tick this PR off.

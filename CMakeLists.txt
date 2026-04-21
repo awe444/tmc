@@ -233,6 +233,8 @@ endif()
 # from regressing the set.
 # ---------------------------------------------------------------------------
 set(TMC_GAME_LEAF_SOURCES
+    # Original 2b.2 leaf set: pure const data / function-pointer dispatch
+    # tables.
     src/droptables.c
     src/enemy.c
     src/flagDebug.c
@@ -245,6 +247,56 @@ set(TMC_GAME_LEAF_SOURCES
     src/playerItemDefinitions.c
     src/projectile.c
     src/sineTable.c
+    # 2b.3 wave 1: files that only needed the `static_assert` no-op in
+    # include/global.h to compile cleanly under __PORT__. These TUs do not
+    # make struct-layout assumptions that break on a 64-bit host, so with
+    # the header fix in place they build as-is.
+    src/beanstalkSubtask.c
+    src/code_08049CD4.c
+    src/code_08049DF4.c
+    src/collision.c
+    src/color.c
+    src/debug.c
+    src/demo.c
+    src/enemyUtils.c
+    src/enterPortalSubtask.c
+    src/entity.c
+    src/fade.c
+    src/fileselect.c
+    src/flags.c
+    src/game.c
+    src/gameData.c
+    src/gameOverTask.c
+    src/gameUtils.c
+    src/interrupts.c
+    src/item.c
+    src/itemDefinitions.c
+    src/itemMetaData.c
+    src/itemUtils.c
+    src/kinstone.c
+    src/main.c
+    src/message.c
+    src/movement.c
+    src/npc.c
+    src/objectUtils.c
+    src/physics.c
+    src/player.c
+    src/playerItem.c
+    src/playerItemUtils.c
+    src/playerUtils.c
+    src/projectileUtils.c
+    src/roomInit.c
+    src/save.c
+    src/screenTileMap.c
+    src/script.c
+    src/scroll.c
+    src/sound.c
+    src/staffroll.c
+    src/subtask.c
+    src/text.c
+    src/title.c
+    src/ui.c
+    src/vram.c
 )
 
 if(TMC_LINK_GAME_SOURCES)
