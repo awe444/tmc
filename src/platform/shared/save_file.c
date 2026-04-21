@@ -56,10 +56,12 @@ int Port_SaveLoad(const char* save_dir)
         return (errno == ENOENT) ? 0 : -1;
     }
     size_t read = fread(s_save_buf, 1, sizeof(s_save_buf), f);
+    int had_error = ferror(f);
+    int hit_eof = (read < sizeof(s_save_buf)) && feof(f);
     fclose(f);
     /* Files smaller than PORT_SAVE_SIZE are tolerated (the rest stays
      * 0xFF) so we can interoperate with emulator save formats. */
-    return (read > 0) ? 0 : -1;
+    return (had_error || (read < sizeof(s_save_buf) && !hit_eof)) ? -1 : 0;
 }
 
 int Port_SaveFlush(void)
