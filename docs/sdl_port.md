@@ -74,6 +74,7 @@ cmake --build --preset sdl-mingw
 | `TMC_ENABLE_GAMEPAD`         | `ON`    | Initialise `SDL_GameController` for X-Input pads.        |
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
+| `TMC_LINK_GAME_SOURCES`      | `OFF`   | Also compile the `src/**/*.c` leaves that build under `__PORT__` (sub-step 2b.2). |
 
 ## Running
 
@@ -177,9 +178,22 @@ are tracked here for future contributors.
     A `Port_AsmStubCount()` anchor + `sPortAsmStubTable[]` keep the
     symbols alive against `--gc-sections` so the linker can resolve
     callers from `src/` as those files start being added in 2b.2.
-  - [ ] **2b.2** Add a `TMC_LINK_GAME_SOURCES` CMake option (default
-    OFF) that opts into compiling `src/**/*.c`. Land the leaf utility
-    TUs that compile clean under `__PORT__` first.
+  - [x] **2b.2** Added the `TMC_LINK_GAME_SOURCES` CMake option
+    (default OFF). When ON, a `tmc_game_sources` static library is
+    built from the subset of `src/**/*.c` that already compiles
+    cleanly under `__PORT__` with the SDL build's flags: currently
+    `droptables.c`, `enemy.c`, `flagDebug.c`, `manager.c`,
+    `npcDefinitions.c`, `npcFunctions.c`, `object.c`,
+    `objectDefinitions.c`, `playerHitbox.c`, `playerItemDefinitions.c`,
+    `projectile.c`, `sineTable.c` (all of them pure const data / function-
+    pointer dispatch tables, so no struct-layout assumptions are in play).
+    The library is built as a dependency of `tmc_sdl` but deliberately
+    **not** linked into it: most of its TUs reference symbols (hitboxes,
+    enemy functions, …) that live in TUs still blocked on 2b.3's
+    agbcc-ism / 32-bit-pointer fixes. The Ubuntu CI job runs a second
+    `cmake -DTMC_LINK_GAME_SOURCES=ON` build so regressions in the leaf
+    set surface on every PR. New leaves are added by appending to
+    `TMC_GAME_LEAF_SOURCES` in `CMakeLists.txt`.
   - [ ] **2b.3** Iteratively bring in the remaining game TUs, fixing
     any new agbcc-isms behind `#ifdef __PORT__` in the GBA headers.
   - [ ] **2b.4** Replace `agb_main_stub.c` with the real
