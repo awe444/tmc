@@ -301,6 +301,11 @@ set(TMC_GAME_LEAF_SOURCES
     # the legacy GCC cast-as-lvalue extension (`(u8*)p += n;`), and the
     # `r5` register-clobber asm hint in `room.c` that exists purely to
     # nudge the matching ROM compiler's regalloc.
+    src/affine.c
+    src/code_0805EC04.c
+    src/eeprom.c
+    src/npcUtils.c
+    src/room.c
     # 2b.3 wave 3: files that depend on assets/*_offsets.h (normally
     # produced by the asset_processor during the GBA ROM build) and on
     # storing ARM function addresses in a u32 slot. The offset headers
