@@ -135,13 +135,14 @@
 /* Some decomp'd data tables store a function/data address in a `u32`
  * slot because on the GBA `sizeof(void*) == sizeof(u32) == 4`. On a
  * 64-bit host that cast truncates the pointer, so it is also not a
- * valid constant initializer. `PORT_ROM_PTR(x)` casts through the
- * widest integer type that is guaranteed to hold a host pointer. The
+ * valid constant initializer. `PORT_ROM_PTR(x)` casts directly to
+ * `uintptr_t` on the host to preserve the full address width without
+ * going through `void*`, which is only valid for object pointers. The
  * matching ROM build keeps the original `(u32)` cast so agbcc emits
  * the same instruction stream. See docs/sdl_port.md (PR #2b.3). */
 #ifdef __PORT__
 #include <stdint.h>
-#define PORT_ROM_PTR(x) ((uintptr_t)(const void*)(x))
+#define PORT_ROM_PTR(x) ((uintptr_t)(x))
 #else
 #define PORT_ROM_PTR(x) ((u32)(x))
 #endif
