@@ -44,12 +44,13 @@ _Static_assert(sizeof(gPortVram) == PORT_VRAM_SIZE, "VRAM size mismatch");
 _Static_assert(sizeof(gPortOam) == PORT_OAM_SIZE, "OAM size mismatch");
 _Static_assert(sizeof(gPortPltt) == PORT_PLTT_SIZE, "PLTT size mismatch");
 _Static_assert(sizeof(gPortIo) == PORT_IO_SIZE, "IO size mismatch");
-_Static_assert(0x7FF0 + sizeof(*SOUND_INFO_PTR) <= PORT_IWRAM_SIZE,
-               "SOUND_INFO_PTR exceeds IWRAM bounds");
-_Static_assert(0x7FF8 + sizeof(INTR_CHECK) <= PORT_IWRAM_SIZE,
-               "INTR_CHECK exceeds IWRAM bounds");
-_Static_assert(0x7FFC + sizeof(INTR_VECTOR) <= PORT_IWRAM_SIZE,
-               "INTR_VECTOR exceeds IWRAM bounds");
+/* The PortBiosScratch overlay (defined in include/gba/defines.h under __PORT__)
+ * places SOUND_INFO_PTR / INTR_CHECK / INTR_VECTOR at 64-bit-pointer-safe
+ * offsets inside gPortIwram. Pin down the overlay size so any future field
+ * reorder that would push a pointer past the end of IWRAM fails at compile
+ * time on every host (32-bit or 64-bit pointers). */
+_Static_assert(sizeof(struct PortBiosScratch) == PORT_IWRAM_SIZE,
+               "PortBiosScratch overlay must be exactly PORT_IWRAM_SIZE bytes");
 
 /* ------------------------------------------------------------------------ */
 /* 2. agbcc-isms must compile (as no-ops) on the host.                      */
@@ -96,9 +97,12 @@ int Port_HeadersSelfCheck(void) {
     assert((uintptr_t)BG_VRAM == (uintptr_t)gPortVram);
     assert((uintptr_t)OAM == (uintptr_t)gPortOam);
 
-    /* IWRAM scratch slots must land inside gPortIwram. */
-    assert((uintptr_t)&INTR_CHECK == (uintptr_t)gPortIwram + 0x7FF8);
-    assert((uintptr_t)&INTR_VECTOR == (uintptr_t)gPortIwram + 0x7FFC);
+    /* IWRAM scratch slots must land inside gPortIwram. With the
+     * PortBiosScratch overlay these offsets reflect the host layout
+     * (8-byte pointers), not the 4-byte GBA BIOS scratch layout. */
+    assert((uintptr_t)&SOUND_INFO_PTR == (uintptr_t)gPortIwram + 0x7FE8);
+    assert((uintptr_t)&INTR_CHECK == (uintptr_t)gPortIwram + 0x7FF0);
+    assert((uintptr_t)&INTR_VECTOR == (uintptr_t)gPortIwram + 0x7FF8);
 
     /* Round-trip a value through REG_DISPCNT to prove the macro really is
      * a writable lvalue backed by gPortIo, then put it back. */
