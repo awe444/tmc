@@ -206,18 +206,42 @@ void CpuFastSet(const void* src, void* dest, uint32_t control) {
 /* Simple host implementations of the remaining arithmetic syscalls. The
  * GBA BIOS defines Div to return num/denom in r0 and num%denom in r1;
  * `Mod` is an unprefixed alias callers use when they only want the
- * remainder. */
-int32_t Div(int32_t num, int32_t denom) {
+ * remainder. On host builds, provide an explicit, standards-conforming
+ * implementation of the combined quotient/remainder behaviour instead of
+ * relying on ARM ABI register state. */
+static void port_divmod(int32_t num, int32_t denom, int32_t* quotient, int32_t* remainder) {
     if (denom == 0) {
-        return 0;
+        *quotient = 0;
+        *remainder = 0;
+        return;
     }
-    return num / denom;
+
+    *quotient = num / denom;
+    *remainder = num % denom;
 }
+
+int32_t Div(int32_t num, int32_t denom) {
+    int32_t quotient;
+    int32_t remainder;
+
+    port_divmod(num, denom, &quotient, &remainder);
+    return quotient;
+}
+
+int64_t DivAndMod(int32_t num, int32_t denom) {
+    int32_t quotient;
+    int32_t remainder;
+
+    port_divmod(num, denom, &quotient, &remainder);
+    return (int64_t)(((uint64_t)(uint32_t)remainder << 32) | (uint32_t)quotient);
+}
+
 int32_t Mod(int32_t num, int32_t denom) {
-    if (denom == 0) {
-        return 0;
-    }
-    return num % denom;
+    int32_t quotient;
+    int32_t remainder;
+
+    port_divmod(num, denom, &quotient, &remainder);
+    return remainder;
 }
 uint16_t Sqrt(uint32_t value) {
     return (uint16_t)Port_BiosSqrt(value);
