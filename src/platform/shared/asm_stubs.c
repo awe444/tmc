@@ -66,12 +66,11 @@ static PORT_ASM_STUB_NORETURN void Port_AsmStubTrap(const char* name) {
 
 /* The trap macro factors out the noreturn-tagged stub body so each stub
  * stays a single line and the file is mechanical to read. */
-#define PORT_ASM_STUB(name)                                                    \
-    PORT_ASM_STUB_NORETURN void name(void);                                    \
-    PORT_ASM_STUB_NORETURN void name(void) {                                   \
-        Port_AsmStubTrap(#name);                                               \
+#define PORT_ASM_STUB(name)                  \
+    PORT_ASM_STUB_NORETURN void name(void);  \
+    PORT_ASM_STUB_NORETURN void name(void) { \
+        Port_AsmStubTrap(#name);             \
     }
-
 
 /* ---- asm/src/code_08000E44.s (5 symbols) ---- */
 PORT_ASM_STUB(sub_08000E44)
@@ -326,4 +325,3 @@ size_t Port_AsmStubCount(void);
 size_t Port_AsmStubCount(void) {
     return sizeof(sPortAsmStubTable) / sizeof(sPortAsmStubTable[0]);
 }
-
