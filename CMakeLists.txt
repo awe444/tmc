@@ -145,6 +145,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/m4a_stub.c
     src/platform/shared/save_file.c
     src/platform/shared/agb_main_stub.c
+    src/platform/shared/port_headers_check.c
 )
 
 add_executable(tmc_sdl

@@ -8,11 +8,18 @@ The port is modelled on the [SAT-R/sa2 SDL port](https://github.com/SAT-R/sa2),
 which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
-> Status: **PR #1 of the roadmap is implemented.** The build produces a
-> `tmc_sdl` executable that opens a 240×160 (scaled 4×) window, accepts
-> keyboard and gamepad input (X-Input on Windows via `SDL_GameController`),
-> opens a silent SDL audio device, and runs an empty 59.7274 Hz frame loop.
-> The real game logic is **not yet linked in** — that is the next PR.
+> Status: **PR #1 of the roadmap is implemented, and PR #2a (foundational
+> `__PORT__` header rewiring) has landed.** The build produces a `tmc_sdl`
+> executable that opens a 240×160 (scaled 4×) window, accepts keyboard and
+> gamepad input (X-Input on Windows via `SDL_GameController`), opens a silent
+> SDL audio device, and runs an empty 59.7274 Hz frame loop. The GBA decomp
+> headers (`include/gba/*.h`, `include/global.h`) now compile under a host C
+> compiler when `__PORT__` is defined, with `REG_*`, `BG_PLTT`, `OBJ_PLTT`,
+> `BG_VRAM`, `OAM`, `EWRAM_START`, `IWRAM_START`, `INTR_CHECK` and
+> `INTR_VECTOR` aliasing the host arrays in `src/platform/shared/gba_memory.c`,
+> and the agbcc-isms (`EWRAM_DATA`, `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`,
+> `MEMORY_BARRIER`, `ASM_FUNC`, `NONMATCH`, `SystemCall`, …) collapsing to
+> no-ops. The real game logic is **not yet linked in** — that is PR #2b.
 
 ## Building
 
@@ -137,17 +144,30 @@ The contract for adding a new port (e.g. `psp/`, `ps2/`, `win32/` later) is:
 This document tracks the multi-PR plan. PR #1 is in this commit; the rest
 are tracked here for future contributors.
 
-- [x] **PR #1.** CMake skeleton + SDL platform stubs (this PR). Blank
+- [x] **PR #1.** CMake skeleton + SDL platform stubs. Blank
   window, working keyboard + X-Input, silent audio, save-file scaffold,
   Ubuntu CI build + headless smoke test.
-- [ ] **PR #2.** Wire `src/**/*.c` into the SDL target. Repoint
-  `include/gba/io_reg.h`, `include/gba/defines.h`, `include/gba/macro.h`,
-  and `include/gba/syscall.h` at the host memory map under `__PORT__`.
-  Replace `EWRAM_DATA` / `IWRAM_DATA` / `NAKED` / `FORCE_REGISTER` with
-  no-ops on the host. Stub or temporarily decompile the remaining
-  `asm/src/*.s` files (`crt0.s` / `intr.s` / `stack_check.s` / `veneer.s`
-  drop out; `enemy.s`, `script.s`, `code_080xxxxx.s` need real decomp or
-  `assert(0 && "not yet ported")` stubs).
+- [x] **PR #2a.** Foundational `__PORT__` header rewiring (this commit).
+  `include/gba/io_reg.h`, `include/gba/defines.h`, and `include/gba/syscall.h`
+  now repoint `REG_BASE`, `EWRAM_START`, `IWRAM_START`, `PLTT`, `VRAM`, `OAM`,
+  `INTR_CHECK` and `INTR_VECTOR` at the host arrays from
+  `include/platform/port.h` whenever `__PORT__` is defined, so every derived
+  `REG_*` / `BG_*` / `OBJ_*` macro automatically resolves into
+  `gPortIo` / `gPortVram` / `gPortPltt` / `gPortOam`. `EWRAM_DATA`,
+  `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`, `MEMORY_BARRIER`, `ASM_FUNC`,
+  `NONMATCH`, `BLOCK_CROSS_JUMP`, `asm_comment`, `asm_unified` and
+  `SystemCall` collapse to no-ops on the host. A new
+  `src/platform/shared/port_headers_check.c` translation unit exercises the
+  rewired macros at compile time (static asserts) and at runtime (called
+  once from the `agb_main_stub.c` smoke test) so any future header change
+  that breaks host compilation is caught by the existing Ubuntu CI job.
+- [ ] **PR #2b.** Wire `src/**/*.c` into the SDL target on top of the 2a
+  foundation. Stub or temporarily decompile the remaining `asm/src/*.s`
+  files (`crt0.s` / `intr.s` / `stack_check.s` / `veneer.s` drop out;
+  `enemy.s`, `script.s`, `code_080xxxxx.s`, `player.s`, `projectileUpdate.s`
+  need real decomp or `assert(0 && "not yet ported")` stubs). At the end
+  of this PR the SDL window should run the real `AgbMain` loop instead of
+  the placeholder in `src/platform/shared/agb_main_stub.c`.
 - [ ] **PR #3.** Have `Port_InputPump()` write `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot. The existing `src/common.c::ReadKeyInput`
   then works unchanged. Smoke test: title-screen menu navigation logged

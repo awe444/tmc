@@ -1,7 +1,19 @@
 #ifndef GUARD_GBA_IO_REG_H
 #define GUARD_GBA_IO_REG_H
 
+#ifdef __PORT__
+/* Route REG_BASE (and therefore every REG_ADDR_* / REG_* macro derived from
+ * it) at the host-side I/O scratch buffer owned by the platform layer. The
+ * 0x400-byte gPortIo array exactly mirrors the GBA's 0x04000000 I/O block,
+ * so the existing decompiled game code can read/write registers through the
+ * same `*(vu16*)REG_ADDR_*` pattern with no source changes. See
+ * docs/sdl_port.md (PR #2). */
+#include "platform/port.h"
+#include <stdint.h>
+#define REG_BASE ((uintptr_t)gPortIo)
+#else
 #define REG_BASE 0x4000000 // I/O register base address
+#endif
 
 // I/O register offsets
 

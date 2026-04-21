@@ -16,6 +16,15 @@
 #define SystemCall(x) \
     { asm("svc " #x); }
 
+#ifdef __PORT__
+/* The host has no GBA BIOS, so SVC is meaningless — and inline ARM assembly
+ * won't compile on x86/clang/MSVC anyway. The SDL port reroutes BIOS-call
+ * entry points (VBlankIntrWait, CpuSet, …) through src/platform/shared/, so
+ * any leftover bare SystemCall(x) callsite becomes a no-op. */
+#undef SystemCall
+#define SystemCall(x) ((void)0)
+#endif
+
 extern void SoundBiasReset();
 extern void SoundBiasSet();
 
