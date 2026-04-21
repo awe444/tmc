@@ -2,6 +2,7 @@
 src/*.s
 build/
 cmake-build-*
+build-sdl*/
 *.elf
 *.exe
 *.gba
@@ -12,6 +13,10 @@ cmake-build-*
 sound/**/*.bin
 sound/songs/midi/*.s
 translations/*.bin
+
+# SDL port runtime artifacts
+tmc.sav
+gamecontrollerdb.txt
 
 # doxygen
 docs/doxygen/html/
