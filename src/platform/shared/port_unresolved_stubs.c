@@ -222,8 +222,11 @@ PORT_UNRESOLVED_DATA(gFixedTypeGfxData);
 PORT_UNRESOLVED_DATA(gFrameObjLists);
 PORT_UNRESOLVED_DATA(gFuseInfo);
 PORT_UNRESOLVED_DATA(gGFXSlots);
-PORT_UNRESOLVED_DATA(gGfxGroups);
-PORT_UNRESOLVED_DATA(gGlobalGfxAndPalettes);
+/* gGfxGroups / gGlobalGfxAndPalettes have moved to
+ * src/platform/shared/port_rom_data_stubs.c, which provides strong
+ * host-side stand-ins so that LoadGfxGroup() short-circuits cleanly
+ * during the Nintendo / Capcom logo step instead of NULL-deref'ing on
+ * an empty BSS placeholder. See docs/sdl_port.md (PR #2b.4b). */
 PORT_UNRESOLVED_DATA(gHUD);
 PORT_UNRESOLVED_DATA(gInteractableObjects);
 PORT_UNRESOLVED_DATA(gIntroState);
@@ -243,7 +246,9 @@ PORT_UNRESOLVED_DATA(gMoreSpritePtrs);
 PORT_UNRESOLVED_DATA(gOAMControls);
 PORT_UNRESOLVED_DATA(gOamCmd);
 PORT_UNRESOLVED_DATA(gPaletteBufferBackup);
-PORT_UNRESOLVED_DATA(gPaletteGroups);
+/* gPaletteGroups has moved to src/platform/shared/port_rom_data_stubs.c
+ * for the same reason as gGfxGroups above (LoadPaletteGroup needs a
+ * non-NULL terminator entry to short-circuit). */
 PORT_UNRESOLVED_DATA(gPaletteList);
 PORT_UNRESOLVED_DATA(gPauseMenuOptions);
 PORT_UNRESOLVED_DATA(gPeahatChargeDirectionOffsets);
