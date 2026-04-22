@@ -131,6 +131,21 @@ void Port_RunGameLoop(void (*entry)(void)) {
  * when the real game sources are not being linked; otherwise just
  * forward-declare the symbol and let `src/interrupts.c::VBlankIntr`
  * satisfy the reference.
+ *
+ * After `VBlankIntr()` has pushed the latest `gScreen.lcd.displayControl`
+ * etc. into `REG_DISPCNT` etc. (via `DispCtrlSet`), we own the moment
+ * where the emulated GBA memory regions are bit-for-bit equivalent to
+ * what the hardware would scan out next. That is exactly when to (a)
+ * upload the rasterized framebuffer to the SDL window via
+ * `Port_VideoPresent()`, and (b) drain the SDL event queue and refresh
+ * `REG_KEYINPUT` via `Port_InputPump()`. Doing both here means the real
+ * `AgbMain` path (TMC_LINK_GAME_SOURCES=ON) gets exactly the same
+ * per-frame present + input cadence as the placeholder
+ * `agb_main_stub.c` loop (=OFF) -- without that, the SDL window stays
+ * black for the entire run and the close button is unresponsive,
+ * even though `Port_RenderFrame()` produces correct pixels (which is
+ * still observable via `--frames=N --print-frame-hash` /
+ * `--screenshot=`, both of which call the rasterizer directly).
  */
 #ifdef __PORT__
 #if !defined(TMC_LINK_GAME_SOURCES) || !(TMC_LINK_GAME_SOURCES)
@@ -144,5 +159,17 @@ void VBlankIntr(void);
 void VBlankIntrWait(void) {
     Port_VBlankIntrWait();
     VBlankIntr();
+    /* Per-frame host hooks. Order matters: input first so the keys the
+     * player just released/pressed are visible to whatever the caller
+     * does after we return; present last so the SDL window reflects
+     * the post-VBlankIntr register state we just pushed.
+     *
+     * The TMC_LINK_GAME_SOURCES=OFF placeholder loop in
+     * `src/platform/shared/agb_main_stub.c` calls these itself and
+     * does not route through this shim (it calls the prefixed
+     * `Port_VBlankIntrWait()` directly), so there is no double-pump
+     * in =OFF mode. */
+    Port_InputPump();
+    Port_VideoPresent();
 }
 #endif

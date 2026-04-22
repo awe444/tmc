@@ -35,7 +35,10 @@ void AgbMain(void) {
 
     /* Mirror the structure of the real game loop in src/main.c so that
      * future PRs only have to delete this file rather than restructure
-     * the platform layer. */
+     * the platform layer. With TMC_LINK_GAME_SOURCES=ON (the default)
+     * the real `src/main.c::AgbMain` runs instead and reaches the same
+     * present + input cadence via the host `VBlankIntrWait()` shim in
+     * `src/platform/shared/interrupts.c`. */
     while (!Port_ShouldQuit()) {
         Port_InputPump();
         Port_VideoPresent();

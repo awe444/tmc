@@ -553,6 +553,15 @@ are tracked here for future contributors.
       `VBlankIntr()` handler synchronously after pacing -- the GBA
       relies on the IRQ controller calling it, which sets
       `gMain.interruptFlag = 1` and lets `WaitForNextFrame()` return.
+      The same shim also drives the per-frame `Port_InputPump()` +
+      `Port_VideoPresent()` calls so the SDL window receives the
+      rasterized framebuffer and the event queue gets drained -- the
+      placeholder `agb_main_stub.c` loop did this itself, but the real
+      `src/main.c::AgbMain` only calls `VBlankIntrWait()`, so without
+      this hook the window would stay black and unresponsive even
+      though `Port_RenderFrame()` was producing correct pixels (still
+      observable via `--frames=N --print-frame-hash` /
+      `--screenshot=`, which call the rasterizer directly).
     * Added `src/platform/shared/ram_silent_stubs.c` to provide
       real silent overrides for `ram_*` ARM-assembly helpers reached
       during boot (currently just `ram_MakeFadeBuff256` for
