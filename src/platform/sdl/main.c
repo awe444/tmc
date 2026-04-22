@@ -120,13 +120,18 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
  * still-stubbed code paths it reaches into.
  */
 static uint64_t frame_hash_fnv1a(const uint32_t* fb, size_t pixel_count) {
-    /* FNV-1a 64-bit. Operate on the raw byte stream so the value is
-     * independent of host endianness for the same logical pixels. */
-    const uint8_t* p = (const uint8_t*)fb;
-    size_t bytes = pixel_count * sizeof(uint32_t);
+    /* FNV-1a 64-bit. Hash each ARGB8888 pixel in a defined byte order so
+     * the result is stable across host endianness. */
     uint64_t h = 0xcbf29ce484222325ULL;
-    for (size_t i = 0; i < bytes; ++i) {
-        h ^= (uint64_t)p[i];
+    for (size_t i = 0; i < pixel_count; ++i) {
+        uint32_t px = fb[i];
+        h ^= (uint64_t)((px >> 24) & 0xFF);
+        h *= 0x100000001b3ULL;
+        h ^= (uint64_t)((px >> 16) & 0xFF);
+        h *= 0x100000001b3ULL;
+        h ^= (uint64_t)((px >> 8) & 0xFF);
+        h *= 0x100000001b3ULL;
+        h ^= (uint64_t)(px & 0xFF);
         h *= 0x100000001b3ULL;
     }
     return h;
