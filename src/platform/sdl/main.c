@@ -139,6 +139,7 @@ static int write_ppm_screenshot(const char* path, const uint32_t* fb, int w, int
         return -1;
     }
     if (fprintf(f, "P6\n%d %d\n255\n", w, h) < 0) {
+        fprintf(stderr, "[tmc_sdl] Could not write PPM header to --screenshot=%s: %s\n", path, strerror(errno));
         fclose(f);
         return -1;
     }
@@ -150,11 +151,15 @@ static int write_ppm_screenshot(const char* path, const uint32_t* fb, int w, int
         rgb[1] = (unsigned char)((px >> 8) & 0xFF);
         rgb[2] = (unsigned char)(px & 0xFF);
         if (fwrite(rgb, 1, 3, f) != 3) {
+            fprintf(stderr, "[tmc_sdl] Could not write pixel data to --screenshot=%s: %s\n", path, strerror(errno));
             fclose(f);
             return -1;
         }
     }
-    fclose(f);
+    if (fclose(f) != 0) {
+        fprintf(stderr, "[tmc_sdl] Error closing --screenshot=%s: %s\n", path, strerror(errno));
+        return -1;
+    }
     return 0;
 }
 
