@@ -108,39 +108,56 @@ jobs:
         run: |
           test -x build-link-on/tmc_sdl
 
-      # PR #8 of the SDL-port roadmap: golden-image determinism check.
+      # PR #8 of the SDL-port roadmap: golden-image strict-equality check.
       #
-      # The ON build's title-screen frame hash is not yet pinned (the
-      # surface still touches several `port_unresolved_stubs.c` weak
-      # placeholders that PR #5..#7 are still fleshing out, so the
-      # value moves from PR to PR). What we *can* assert today is
-      # that two consecutive runs produce the same hash — i.e. that
-      # the rasterizer + boot-time game state is deterministic on the
-      # host. Once PR #5..#7 settle, the value itself can be pinned
-      # in `src/platform/shared/golden/` next to the OFF build's
-      # entry and this check upgraded to a strict equality match
-      # against the stored value.
-      - name: Golden-image determinism check (ON build)
+      # The ON build's title-screen frame hash is now pinned in
+      # `src/platform/shared/golden/usa_on_frames30.txt` (PR #5 affine
+      # BG / windows / blending and PR #6 EEPROM save are both complete;
+      # PR #7 m4a is audio-only and does not affect framebuffer pixels).
+      # The hash has been verified stable across `--frames={30, 60, 120,
+      # 240, 600, 1200}`, so locking it in catches both rasterizer
+      # regressions and boot-time game-state divergences in the same
+      # check that already runs against the OFF build above.
+      #
+      # The two-run determinism is preserved as a secondary assertion
+      # so any host-side non-determinism still surfaces with a clear
+      # error (the strict-equality match would also catch it, but the
+      # determinism diagnostic is more specific).
+      - name: Golden-image strict-equality check (ON build)
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: |
           set -euo pipefail
-          mkdir -p build-link-on/golden-tmp
+          mkdir -p build-link-on
+          save_dir_run1=$(mktemp -d build-link-on/golden-tmp-run1.XXXXXX)
+          save_dir_run2=$(mktemp -d build-link-on/golden-tmp-run2.XXXXXX)
+          trap 'rm -rf "$save_dir_run1" "$save_dir_run2"' EXIT
           run1=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
-                     | grep '^frame-hash:')
+                     --save-dir="$save_dir_run1" --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:' || true)
           run2=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
-                     | grep '^frame-hash:')
-          echo "run1: $run1"
-          echo "run2: $run2"
+                     --save-dir="$save_dir_run2" --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:' || true)
+          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_on_frames30.txt || true)
+          echo "run1:     $run1"
+          echo "run2:     $run2"
+          echo "expected: $expected"
+          if [ -z "$run1" ] || [ -z "$run2" ]; then
+            echo "::error::tmc_sdl --print-frame-hash produced no output."
+            exit 1
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::Golden-image baseline src/platform/shared/golden/usa_on_frames30.txt is missing a frame-hash line."
+            exit 1
+          fi
           if [ "$run1" != "$run2" ]; then
             echo "::error::ON build's title-screen frame hash is not deterministic."
             echo "::error::Two consecutive --frames=30 runs disagreed."
             exit 1
           fi
-          if [ -z "$run1" ]; then
-            echo "::error::tmc_sdl --print-frame-hash produced no output."
+          if [ "$run1" != "$expected" ]; then
+            echo "::error::Golden-image hash mismatch for the ON build at --frames=30."
+            echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
             exit 1
           fi
