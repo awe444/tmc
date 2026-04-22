@@ -9,6 +9,8 @@
 
 #include <SDL.h>
 
+#include <errno.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,18 +20,25 @@ typedef struct {
     int fullscreen;
     int mute;
     int frames; /* >0: exit after N frames (CI smoke test) */
+    int print_frame_hash;
     const char* save_dir;
+    const char* screenshot_path;
 } CliOptions;
 
 static void print_usage(const char* argv0) {
     fprintf(stderr,
             "Usage: %s [options]\n"
-            "  --scale=N        Integer window scale (default: 4)\n"
-            "  --fullscreen     Start in fullscreen-desktop mode\n"
-            "  --mute           Disable audio output\n"
-            "  --save-dir=PATH  Directory containing tmc.sav (default: cwd)\n"
-            "  --frames=N       Run for N frames then exit (for CI smoke tests)\n"
-            "  --help           Show this message\n",
+            "  --scale=N            Integer window scale (default: 4)\n"
+            "  --fullscreen         Start in fullscreen-desktop mode\n"
+            "  --mute               Disable audio output\n"
+            "  --save-dir=PATH      Directory containing tmc.sav (default: cwd)\n"
+            "  --frames=N           Run for N frames then exit (for CI smoke tests)\n"
+            "  --screenshot=PATH    After the final frame, write a PPM (P6) screenshot\n"
+            "                       of the framebuffer to PATH (PR #8 of the SDL roadmap)\n"
+            "  --print-frame-hash   After the final frame, print an FNV-1a 64-bit hash\n"
+            "                       of the framebuffer to stdout in the form\n"
+            "                       'frame-hash: 0x<hex>' (PR #8: golden-image CI test)\n"
+            "  --help               Show this message\n",
             argv0);
 }
 
@@ -52,7 +61,9 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
     opts->fullscreen = 0;
     opts->mute = 0;
     opts->frames = 0;
+    opts->print_frame_hash = 0;
     opts->save_dir = NULL;
+    opts->screenshot_path = NULL;
 
     for (int i = 1; i < argc; ++i) {
         const char* a = argv[i];
@@ -68,6 +79,10 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
             opts->mute = 1;
             continue;
         }
+        if (strcmp(a, "--print-frame-hash") == 0) {
+            opts->print_frame_hash = 1;
+            continue;
+        }
         if (parse_int_suffix(a, "--scale=", &opts->scale))
             continue;
         if (parse_int_suffix(a, "--frames=", &opts->frames))
@@ -76,11 +91,95 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
             opts->save_dir = a + 11;
             continue;
         }
+        if (strncmp(a, "--screenshot=", 13) == 0) {
+            opts->screenshot_path = a + 13;
+            continue;
+        }
         fprintf(stderr, "[tmc_sdl] Unknown option: %s\n", a);
         print_usage(argv[0]);
         return -1;
     }
     return 1;
+}
+
+/* PR #8 of the SDL-port roadmap: golden-image CI test infrastructure.
+ *
+ * After the `--frames=N` budget unwinds AgbMain we render one extra
+ * frame straight from the emulated GBA memory regions into a local
+ * buffer and either hash it, write it as a PPM, or both. Hashing uses
+ * FNV-1a 64-bit so a future host-architecture change does not perturb
+ * the value as long as the rasterizer output is identical.
+ *
+ * The hashing path lets the headless CI smoke test detect any
+ * regression in the rasterizer that is observable in the produced
+ * pixels — the OFF build's empty-backdrop output is fully
+ * deterministic, so the CI step pins it to a known constant. The ON
+ * build's title-screen frame is also bit-exact across runs (the
+ * software pipeline is fully synchronous on the host) but pinning it
+ * is deferred until the rest of PR #5..#7 stops churning the
+ * still-stubbed code paths it reaches into.
+ */
+static uint64_t frame_hash_fnv1a(const uint32_t* fb, size_t pixel_count) {
+    /* FNV-1a 64-bit. Operate on the raw byte stream so the value is
+     * independent of host endianness for the same logical pixels. */
+    const uint8_t* p = (const uint8_t*)fb;
+    size_t bytes = pixel_count * sizeof(uint32_t);
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < bytes; ++i) {
+        h ^= (uint64_t)p[i];
+        h *= 0x100000001b3ULL;
+    }
+    return h;
+}
+
+static int write_ppm_screenshot(const char* path, const uint32_t* fb, int w, int h) {
+    FILE* f = fopen(path, "wb");
+    if (f == NULL) {
+        fprintf(stderr, "[tmc_sdl] Could not open --screenshot=%s for writing: %s\n", path, strerror(errno));
+        return -1;
+    }
+    if (fprintf(f, "P6\n%d %d\n255\n", w, h) < 0) {
+        fclose(f);
+        return -1;
+    }
+    /* PPM is RGB; framebuffer is ARGB8888. */
+    for (int i = 0; i < w * h; ++i) {
+        uint32_t px = fb[i];
+        unsigned char rgb[3];
+        rgb[0] = (unsigned char)((px >> 16) & 0xFF);
+        rgb[1] = (unsigned char)((px >> 8) & 0xFF);
+        rgb[2] = (unsigned char)(px & 0xFF);
+        if (fwrite(rgb, 1, 3, f) != 3) {
+            fclose(f);
+            return -1;
+        }
+    }
+    fclose(f);
+    return 0;
+}
+
+static int emit_golden_image_artifacts(const CliOptions* opts) {
+    if (!opts->print_frame_hash && opts->screenshot_path == NULL) {
+        return 0;
+    }
+
+    static uint32_t scratch[PORT_GBA_DISPLAY_WIDTH * PORT_GBA_DISPLAY_HEIGHT];
+    Port_RenderFrame(scratch);
+
+    if (opts->screenshot_path != NULL) {
+        if (write_ppm_screenshot(opts->screenshot_path, scratch, PORT_GBA_DISPLAY_WIDTH, PORT_GBA_DISPLAY_HEIGHT) !=
+            0) {
+            return -1;
+        }
+    }
+    if (opts->print_frame_hash) {
+        uint64_t h = frame_hash_fnv1a(scratch, PORT_GBA_DISPLAY_WIDTH * PORT_GBA_DISPLAY_HEIGHT);
+        /* Stable, parseable form for the CI golden-image check; printed
+         * to stdout so CI can capture it without piping stderr. */
+        printf("frame-hash: 0x%016" PRIx64 "\n", h);
+        fflush(stdout);
+    }
+    return 0;
 }
 
 /* When --frames is set, AgbMain's loop has to stop after N frames. We
@@ -159,6 +258,19 @@ int main(int argc, char** argv) {
      * checkpoint and longjmps from Port_VBlankIntrWait when shutdown
      * (or the --frames=N budget) hits. */
     Port_RunGameLoop(AgbMain);
+
+    /* PR #8: emit golden-image CI artifacts (hash and/or PPM) from the
+     * final emulated framebuffer before tearing down the host state. */
+    if (emit_golden_image_artifacts(&opts) != 0) {
+        Port_SaveFlush();
+#if TMC_ENABLE_AUDIO
+        Port_AudioShutdown();
+#endif
+        Port_InputShutdown();
+        Port_VideoShutdown();
+        SDL_Quit();
+        return 1;
+    }
 
     Port_SaveFlush();
 #if TMC_ENABLE_AUDIO
