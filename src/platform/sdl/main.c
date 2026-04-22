@@ -148,10 +148,17 @@ int main(int argc, char** argv) {
 
     Port_SetFrameBudget(opts.frames);
 
-    /* Hand off to the game. Port_ShouldQuit() returning non-zero exits
-     * the loop in AgbMain (see agb_main_stub.c, and eventually
-     * src/main.c after PR #2). */
-    AgbMain();
+    /* Pre-initialise host globals (entity-list sentinels, etc.) that the
+     * engine expects to be non-zero before any game code runs. */
+    Port_GlobalsInit();
+
+    /* Hand off to the game. Port_ShouldQuit() returning non-zero unwinds
+     * the loop in the agb_main_stub directly; the real AgbMain (linked
+     * under TMC_LINK_GAME_SOURCES=ON, src/main.c) loops forever, so we
+     * route both through Port_RunGameLoop which installs a setjmp
+     * checkpoint and longjmps from Port_VBlankIntrWait when shutdown
+     * (or the --frames=N budget) hits. */
+    Port_RunGameLoop(AgbMain);
 
     Port_SaveFlush();
 #if TMC_ENABLE_AUDIO

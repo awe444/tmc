@@ -3,10 +3,10 @@
  * @brief Keyboard + SDL_GameController input layer.
  *
  * Why SDL_GameController and not SDL_Joystick?
- *   On Windows, SDL's GameController backend transparently uses XInput
- *   for Xbox-compatible controllers (and DirectInput / HIDAPI for the
- *   rest). Using this API gives us "X-Input gamepad support" portably
- *   and consistently with how every modern SDL game does it.
+ *   The GameController API gives us consistent gamepad semantics
+ *   across the supported host platforms (Linux + macOS) -- the SDL
+ *   backend handles HIDAPI / evdev mapping for us. Microsoft
+ *   Windows is not a supported target (see docs/sdl_port.md).
  *
  * Each frame Port_InputPump() reads the SDL event queue, builds an
  * active-high 10-bit GBA-format key bitmask (matching the layout in

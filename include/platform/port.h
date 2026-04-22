@@ -72,6 +72,30 @@ void Port_RequestQuit(void);
  */
 void Port_SetFrameBudget(int frames);
 
+/**
+ * Run the GBA-style entry point under a non-local-jump frame so the
+ * pacer can bail back out when shutdown is requested. The real game's
+ * `AgbMain()` (src/main.c) is an infinite loop with no `Port_ShouldQuit`
+ * polling, so on the host build we wrap it with a setjmp checkpoint
+ * here and have the host VBlank pacer (`Port_VBlankIntrWait`) longjmp
+ * back to this checkpoint when the user has requested shutdown or the
+ * `--frames=N` budget is exhausted. Returns to the caller exactly once
+ * the entry function would otherwise have looped forever.
+ *
+ * Implementation lives in src/platform/shared/interrupts.c and is only
+ * used by the SDL `main()` (see src/platform/sdl/main.c). Safe to call
+ * with a NULL entry pointer (returns immediately).
+ */
+void Port_RunGameLoop(void (*entry)(void));
+
+/**
+ * Idempotent host-side initialiser for globals (entity-list sentinel
+ * heads, etc.) that the GBA build expects to be non-zero before any
+ * game code runs. Implemented in src/platform/shared/port_globals.c.
+ * Must be called once before `AgbMain`.
+ */
+void Port_GlobalsInit(void);
+
 /* ------------------------------------------------------------------------ */
 /* Input.                                                                   */
 /*                                                                          */
@@ -118,9 +142,9 @@ void Port_VideoPresent(void);
 /* The rasterizer is host-portable and lives in `src/platform/shared/        */
 /* render.c`. It has no SDL or OS dependency: it reads exclusively from the  */
 /* host arrays declared above and writes a packed 240 x 160 ARGB8888         */
-/* framebuffer (row-major, no padding). Future ports (PSP, PS2, win32)       */
-/* reuse it by calling `Port_RenderFrame()` and uploading the result to      */
-/* their own swap chain.                                                     */
+/* framebuffer (row-major, no padding). Future ports (PSP, PS2) reuse it */
+/* by calling `Port_RenderFrame()` and uploading the result to their own  */
+/* swap chain.                                                            */
 /* ------------------------------------------------------------------------ */
 #define PORT_GBA_DISPLAY_WIDTH 240
 #define PORT_GBA_DISPLAY_HEIGHT 160

@@ -44,6 +44,82 @@
 void ram_MakeFadeBuff256(void) {
 }
 
+/* Per-frame entity dispatcher. The real (still-unported) ARM
+ * implementation in `asm/src/intr.s::arm_UpdateEntities` walks
+ * `gEntityLists[0..7]` (mode 0) or `gEntityLists[8]` (mode 1, managers)
+ * and, for each entity in the list, dispatches to a per-kind update
+ * function (PlayerUpdate / EnemyUpdate / ProjectileUpdate /
+ * ObjectUpdate / NPCUpdate / ItemUpdate / ManagerUpdate /
+ * DeleteThisEntity), then calls `UpdateCollision` on the survivor.
+ *
+ * A silent no-op is safe during the runtime-flip ramp-up because the
+ * entity lists during the headless `--frames=30` smoke test are still
+ * populated only by code paths whose loaders are themselves stubs (see
+ * `port_rom_data_stubs.c::sPortGfxGroupTerminator` -- `LoadGfxGroup`
+ * short-circuits before any entity is spawned). With no entities live,
+ * the real iterator's body would also be a no-op, so skipping the walk
+ * matches the engine's observable state and prevents the SIGABRT that
+ * the previous weak `Port_UnresolvedTrap` placeholder produced. When
+ * the real C decomp of `arm_UpdateEntities` lands (or a future PR
+ * starts spawning entities through real loaders), this stub must be
+ * removed in the same commit so the strong real definition wins. */
+void ram_UpdateEntities(unsigned int mode) {
+    (void)mode;
+}
+
+/* Longjmp-style "abort the current entity update and resume the
+ * iteration loop" helper. The real ARM implementation in
+ * `asm/src/intr.s::arm_ClearAndUpdateEntities` reuses
+ * `arm_UpdateEntities`'s saved register frame (stashed in
+ * `gUpdateContext.restore_sp`) to skip past the dispatch's call site
+ * straight to the per-entity post-update bookkeeping. It is reached
+ * from `entity.c::DeleteThisEntity`, which is itself only called from
+ * inside the entity update path -- and that path is short-circuited
+ * by the no-op `ram_UpdateEntities` above. A silent no-op here is
+ * therefore reachable only by future code paths that we have not yet
+ * exercised; if such a path lands before the real decomp does, this
+ * stub is preferable to an abort because it does not deadlock the
+ * frame loop. The same removal contract as `ram_UpdateEntities`
+ * applies. */
+void ram_ClearAndUpdateEntities(void) {
+}
+
+/* Per-frame OAM compositor for entities. The real ARM implementation
+ * in `asm/src/code_080A1A30.s::arm_DrawEntities` walks the entity
+ * lists again (this time for rendering only) and pushes per-entity
+ * `OAMCommand`s into `gOamBuffer`. Because the host has no live
+ * entities (see `ram_UpdateEntities` notes above), there is nothing
+ * to draw; the host renderer (`render.c`) reads OAM directly from
+ * `gPortOam` and composites whatever the rest of the engine has
+ * already written there. Same removal contract as
+ * `ram_UpdateEntities`. */
+void ram_DrawEntities(void) {
+}
+
+/* Single-shot OAM helper (`affine.c::DrawDirect` -> ram_DrawDirect).
+ * Invoked from item / player paths that are themselves gated behind
+ * the entity update loop, so this is unreachable while
+ * `ram_UpdateEntities` is a no-op. The stub keeps the link / call
+ * convention correct if a non-entity caller is added later. */
+void ram_DrawDirect(void* cmd, unsigned int spriteIndex, unsigned int frameIndex) {
+    (void)cmd;
+    (void)spriteIndex;
+    (void)frameIndex;
+}
+
+/* `affine.c::sub_080ADA04` -> ram_sub_080ADA04. Same reachability
+ * argument as `ram_DrawDirect`. */
+void ram_sub_080ADA04(void* cmd, void* dst) {
+    (void)cmd;
+    (void)dst;
+}
+
+/* `collision.c::CollisionMain` -> ram_CollideAll. Walks the entity
+ * collision list (also empty during the smoke test). With nothing to
+ * collide, a no-op is faithful. Same removal contract. */
+void ram_CollideAll(void) {
+}
+
 #ifdef __GNUC__
 #pragma GCC diagnostic pop
 #endif

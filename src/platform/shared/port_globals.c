@@ -24,10 +24,14 @@
  * `include/global.h` for exactly this reason (PR #2b.3 wave 1).
  */
 #include "common.h"
+#include "entity.h"
 #include "main.h"
 #include "message.h"
+#include "player.h"
 #include "room.h"
 #include "screen.h"
+
+#include <stddef.h>
 
 /* Main system state. */
 Main gMain;
@@ -69,3 +73,105 @@ u16 gPaletteBuffer[512];
 /* IWRAM-resident byte arrays. `gUnk_03003DE4` is a 12-byte mailbox used
  * by the VBlank-DMA helpers in src/main.c::SetVBlankDMA(). */
 u8 gUnk_03003DE4[0xC];
+
+/* Entity arena layout. The GBA build places `gPlayerEntity`,
+ * `gAuxPlayerEntities`, and `gEntities` contiguously in EWRAM via
+ * `linker.ld`, and a number of subsystems exploit that adjacency --
+ * notably `src/entity.c::EraseAllEntities`, which calls
+ * `MemClear(&gPlayerEntity.base, 10880)` and walks past the end of
+ * `gPlayerEntity` into the auxiliary and pooled entities. On the
+ * host build the three globals would otherwise be scattered in BSS
+ * (each previously a 256-byte weak placeholder), so the oversized
+ * clear would punch through unrelated globals (e.g. `gIntroState`)
+ * and wedge boot in a loop.
+ *
+ * Pin them into a single struct in declaration order and expose the
+ * three engine names as symbol aliases (via inline assembly `.set`
+ * directives) that point at the matching struct fields. Sizes on the
+ * host are larger than on the GBA (8-byte pointers instead of 4),
+ * so the engine's `10880` byte clear is *short* of what it would
+ * need to wipe the whole host-sized arena -- but that matches the
+ * ROM build's observable behaviour and we deliberately preserve it. */
+struct port_entity_arena {
+    PlayerEntity player;
+    GenericEntity aux[MAX_AUX_PLAYER_ENTITIES];
+    GenericEntity ents[MAX_ENTITIES];
+};
+
+struct port_entity_arena sPortEntityArena __attribute__((aligned(16), used));
+
+/* Hard-code the host offsets and sanity-check them with static asserts
+ * so the asm() directives below remain compile-time constants. The
+ * numbers reflect:
+ *   offsetof(player) = 0
+ *   offsetof(aux)    = sizeof(PlayerEntity)
+ *   offsetof(ents)   = sizeof(PlayerEntity) + 7 * sizeof(GenericEntity)
+ * with sizeof(PlayerEntity)=184 and sizeof(GenericEntity)=176 on a
+ * 64-bit host (entity.h struct layout assertions are no-ops here, so
+ * we re-assert the relevant offsets explicitly). */
+#define PORT_ARENA_OFF_AUX 184
+#define PORT_ARENA_OFF_ENTS (184 + 1232)
+
+_Static_assert(offsetof(struct port_entity_arena, aux) == PORT_ARENA_OFF_AUX,
+               "host PlayerEntity size drifted; update PORT_ARENA_OFF_AUX");
+_Static_assert(offsetof(struct port_entity_arena, ents) == PORT_ARENA_OFF_ENTS,
+               "host GenericEntity size drifted; update PORT_ARENA_OFF_ENTS");
+
+#define PORT_STR(x) #x
+#define PORT_XSTR(x) PORT_STR(x)
+/* Publish the three engine names as symbol aliases pointing at the
+ * matching fields of `sPortEntityArena`. Uses GNU `.set` directive
+ * syntax via `__asm__`; this is GCC / Clang only. Microsoft Windows
+ * (MSVC) builds are not supported by this port -- see
+ * docs/sdl_port.md -- so no MSVC fallback is needed here. */
+__asm__(".globl gPlayerEntity\n"
+        ".set   gPlayerEntity, sPortEntityArena\n"
+        ".globl gAuxPlayerEntities\n"
+        ".set   gAuxPlayerEntities, sPortEntityArena+" PORT_XSTR(
+            PORT_ARENA_OFF_AUX) "\n"
+                                ".globl gEntities\n"
+                                ".set   gEntities, sPortEntityArena+" PORT_XSTR(PORT_ARENA_OFF_ENTS) "\n");
+
+/* Entity-list heads. The empty-list convention is `head->first ==
+ * head->last == head` (a one-element circular list whose only node is
+ * the sentinel head itself); any other value -- including the all-
+ * zero BSS state -- causes the sentinel-walk loops in
+ * `src/entity.c::DeleteAllEntities` / `EraseAllEntities` to deref
+ * NULL on the very first iteration. The matching ROM build relies on
+ * `src/entity.c::sub_0805E98C()` running before the first list
+ * traversal to install that pattern, but the host build's call graph
+ * reaches `EraseAllEntities` *before* its own `sub_0805E98C` line,
+ * and the (previously weak) BSS-only definition of `gEntityLists`
+ * came up zero-filled. Promoting the array to a strong host
+ * definition and having `Port_GlobalsInit()` pre-install the
+ * self-loop pattern before `AgbMain` makes the boot path immediately
+ * match the engine's "freshly initialised" expectation, regardless
+ * of which entry point runs first. The same treatment applies to
+ * `gEntityListsBackup`, which `sub_0805E958` / `sub_0805E974`
+ * `MemCopy` against and which any later traversal would otherwise
+ * also walk through NULL. */
+LinkedList gEntityLists[9];
+LinkedList gEntityListsBackup[9];
+
+static void port_init_entity_lists(LinkedList* lists) {
+    int i;
+    for (i = 0; i < 9; i++) {
+        lists[i].first = (Entity*)&lists[i];
+        lists[i].last = (Entity*)&lists[i];
+    }
+}
+
+/* Idempotent host-side initializer for globals that the engine assumes
+ * are non-zero before any game code runs. Called explicitly from
+ * `src/platform/sdl/main.c` before `AgbMain` so we do not rely on
+ * compiler-specific constructor ordering. Safe to call multiple
+ * times. */
+void Port_GlobalsInit(void) {
+    static int initialised = 0;
+    if (initialised) {
+        return;
+    }
+    initialised = 1;
+    port_init_entity_lists(gEntityLists);
+    port_init_entity_lists(gEntityListsBackup);
+}

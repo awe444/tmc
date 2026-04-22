@@ -40,16 +40,12 @@
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #endif
 
-/* `noreturn` attribute spelled portably across GCC/Clang/MSVC. The stubs
- * must never return -- callers may have non-void prototypes, so silently
- * falling through with an undefined return value would corrupt state. */
-#if defined(__GNUC__) || defined(__clang__)
+/* `noreturn` attribute. The stubs must never return -- callers may have
+ * non-void prototypes, so silently falling through with an undefined
+ * return value would corrupt state. Only GCC / Clang are supported
+ * (Microsoft Windows / MSVC builds are out of scope -- see
+ * docs/sdl_port.md). */
 #define PORT_ASM_STUB_NORETURN __attribute__((noreturn))
-#elif defined(_MSC_VER)
-#define PORT_ASM_STUB_NORETURN __declspec(noreturn)
-#else
-#define PORT_ASM_STUB_NORETURN
-#endif
 
 /* Centralised trap: log which unported asm function was called and
  * abort.  Kept out of line so the per-symbol stubs stay tiny.  Uses
