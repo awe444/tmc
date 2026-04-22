@@ -121,16 +121,20 @@ void Port_RequestQuit(void) {
  * once per frame; that handler is what flips `gMain.interruptFlag` and
  * lets the main loop in `src/main.c` make forward progress. On the host
  * there is no IRQ, so under TMC_LINK_GAME_SOURCES=ON we run that handler
- * synchronously immediately after the pacer returns. The forward
- * declaration intentionally has weak linkage so the host build still
- * links cleanly when the game sources are NOT linked in (the CI matrix
- * builds both shapes); when the game *is* linked in, the real
- * `src/interrupts.c::VBlankIntr` overrides the placeholder.
+ * synchronously immediately after the pacer returns. To keep the host
+ * build portable across compilers, only provide the no-op placeholder
+ * when the real game sources are not being linked; otherwise just
+ * forward-declare the symbol and let `src/interrupts.c::VBlankIntr`
+ * satisfy the reference.
  */
 #ifdef __PORT__
-__attribute__((weak)) void VBlankIntr(void) {
+#if !defined(TMC_LINK_GAME_SOURCES) || !(TMC_LINK_GAME_SOURCES)
+void VBlankIntr(void) {
     /* Placeholder used when TMC_LINK_GAME_SOURCES=OFF. */
 }
+#else
+void VBlankIntr(void);
+#endif
 
 void VBlankIntrWait(void) {
     Port_VBlankIntrWait();
