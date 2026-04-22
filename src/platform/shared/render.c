@@ -494,8 +494,8 @@ typedef struct {
 /* Sample one pixel from an OBJ tile sheet, given the row/col within the
  * sprite and the OBJ tile-mapping mode.  Returns the raw 4 bpp / 8 bpp
  * palette index (0 = transparent). */
-static uint8_t obj_sample_pixel(int row_in_sprite, int col_in_sprite, int sprite_w_tiles, int base_tile,
-                                int is_8bpp, int obj_1d_mapping) {
+static uint8_t obj_sample_pixel(int row_in_sprite, int col_in_sprite, int sprite_w_tiles, int base_tile, int is_8bpp,
+                                int obj_1d_mapping) {
     int row_tile = row_in_sprite / 8;
     int row_within_tile = row_in_sprite & 7;
     int col_tile = col_in_sprite / 8;
@@ -662,8 +662,7 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
                     continue;
                 }
 
-                uint8_t pix = obj_sample_pixel(tex_y, tex_x, sprite_w_tiles, base_tile, is_8bpp,
-                                               obj_1d_mapping);
+                uint8_t pix = obj_sample_pixel(tex_y, tex_x, sprite_w_tiles, base_tile, is_8bpp, obj_1d_mapping);
                 if (pix == 0) {
                     continue;
                 }
@@ -706,13 +705,15 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
                 if (mosaic_on) {
                     int snapped_x = (screen_x / obj_h) * obj_h;
                     eff_col = snapped_x - sx;
-                    if (eff_col < 0) eff_col = 0;
-                    if (eff_col >= sw) eff_col = sw - 1;
+                    if (eff_col < 0)
+                        eff_col = 0;
+                    if (eff_col >= sw)
+                        eff_col = sw - 1;
                 }
                 int col_in_sprite = hflip ? (sw - 1 - eff_col) : eff_col;
 
-                uint8_t pix = obj_sample_pixel(row_in_sprite, col_in_sprite, sprite_w_tiles,
-                                               base_tile, is_8bpp, obj_1d_mapping);
+                uint8_t pix =
+                    obj_sample_pixel(row_in_sprite, col_in_sprite, sprite_w_tiles, base_tile, is_8bpp, obj_1d_mapping);
                 if (pix == 0) {
                     continue;
                 }
@@ -742,7 +743,8 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
  * pixel within block N (covering [N*Mh, N*Mh + Mh)) takes the value at
  * its block's leftmost on-screen pixel. */
 static void apply_h_mosaic_bg(BgScanline* s, int mh) {
-    if (mh <= 1) return;
+    if (mh <= 1)
+        return;
     for (int x = 0; x < DISP_W; ++x) {
         int anchor = (x / mh) * mh;
         if (anchor != x) {
@@ -771,14 +773,6 @@ static uint8_t window_byte_to_mask(uint8_t b) {
 }
 
 /* Test whether the scanline `y` falls inside WINx's vertical span,
- * honouring the GBA quirks: y2 <= y1 means "wraparound to bottom of
- * frame", and y2 > 160 clamps to 160. */
-static int win_v_in_range(uint16_t winv, int y) {
-    int y1 = (winv >> 8) & 0xFF;
-    int y2 = winv & 0xFF;
-
-    if (y1 > DISP_H) {
-        y1 = DISP_H;
  * honouring the GBA quirks: y2 <= y1 means the window wraps, covering
  * [y1, DISP_H) || [0, y2), and y1 == y2 therefore means full height.
  * Endpoints beyond the display height clamp to DISP_H. */
@@ -796,7 +790,6 @@ static int win_v_in_range(uint16_t winv, int y) {
     if (y2 > y1) {
         return (y >= y1) && (y < y2);
     }
-
     return (y >= y1) || (y < y2);
 }
 
@@ -859,9 +852,9 @@ static void compute_window_mask(int y, uint16_t dispcnt, const ObjScanline* obj,
     }
 
     for (int x = 0; x < DISP_W; ++x) {
-        if (win0_on && win0_v_in && x >= win0_h_x1 && x < win0_h_x2) {
+        if (win0_on && win0_v_in && win_h_in_range(x, win0_h_x1, win0_h_x2)) {
             out->enable[x] = mask_in0;
-        } else if (win1_on && win1_v_in && x >= win1_h_x1 && x < win1_h_x2) {
+        } else if (win1_on && win1_v_in && win_h_in_range(x, win1_h_x1, win1_h_x2)) {
             out->enable[x] = mask_in1;
         } else if (winobj_on && obj->obj_window[x]) {
             out->enable[x] = mask_objwin;
@@ -902,23 +895,29 @@ static int bg_is_affine_in_mode(int mode, int bg_index) {
 /* Blend two BGR555 colours using EVA/EVB in 0..16.  The arithmetic
  * matches the GBA: per-channel `min(31, (top*EVA + bot*EVB) >> 4)`. */
 static uint16_t blend_alpha(uint16_t top, uint16_t bot, int eva, int evb) {
-    if (eva > 16) eva = 16;
-    if (evb > 16) evb = 16;
+    if (eva > 16)
+        eva = 16;
+    if (evb > 16)
+        evb = 16;
     int rt = top & 0x1F, gt = (top >> 5) & 0x1F, bt = (top >> 10) & 0x1F;
     int rb = bot & 0x1F, gb = (bot >> 5) & 0x1F, bb = (bot >> 10) & 0x1F;
     int r = (rt * eva + rb * evb) >> 4;
     int g = (gt * eva + gb * evb) >> 4;
     int b = (bt * eva + bb * evb) >> 4;
-    if (r > 31) r = 31;
-    if (g > 31) g = 31;
-    if (b > 31) b = 31;
+    if (r > 31)
+        r = 31;
+    if (g > 31)
+        g = 31;
+    if (b > 31)
+        b = 31;
     return (uint16_t)(r | (g << 5) | (b << 10));
 }
 
 /* Brightness fade: `top + (max - top) * EVY / 16` for fade-to-white,
  * `top - top * EVY / 16` for fade-to-black, per channel. */
 static uint16_t blend_brighter(uint16_t top, int evy) {
-    if (evy > 16) evy = 16;
+    if (evy > 16)
+        evy = 16;
     int r = top & 0x1F, g = (top >> 5) & 0x1F, b = (top >> 10) & 0x1F;
     r = r + ((31 - r) * evy >> 4);
     g = g + ((31 - g) * evy >> 4);
@@ -926,7 +925,8 @@ static uint16_t blend_brighter(uint16_t top, int evy) {
     return (uint16_t)(r | (g << 5) | (b << 10));
 }
 static uint16_t blend_darker(uint16_t top, int evy) {
-    if (evy > 16) evy = 16;
+    if (evy > 16)
+        evy = 16;
     int r = top & 0x1F, g = (top >> 5) & 0x1F, b = (top >> 10) & 0x1F;
     r = r - (r * evy >> 4);
     g = g - (g * evy >> 4);
@@ -942,9 +942,8 @@ static uint16_t blend_darker(uint16_t top, int evy) {
  * sit *under* `start_layer` (used to find the 2nd-target pixel for
  * alpha blending).  Returns LAYER_NONE if nothing opaque is found
  * (caller falls back to backdrop). */
-static int find_top_layer(const BgScanline bg[4], const ObjScanline* obj, int x, uint8_t enable_mask,
-                          int start_layer, int start_priority, uint16_t* color_out, int* prio_out,
-                          int* semi_out) {
+static int find_top_layer(const BgScanline bg[4], const ObjScanline* obj, int x, uint8_t enable_mask, int start_layer,
+                          int start_priority, uint16_t* color_out, int* prio_out, int* semi_out) {
     /* Walk by priority, then by per-priority order: OBJ first (since
      * OBJ sits on top of BG of equal priority), then BG0..BG3.  When
      * `start_layer` is LAYER_NONE the whole table is in scope; otherwise
@@ -965,7 +964,8 @@ static int find_top_layer(const BgScanline bg[4], const ObjScanline* obj, int x,
             if (obj->opaque[prio][x]) {
                 *color_out = obj->colors[prio][x];
                 *prio_out = prio;
-                if (semi_out) *semi_out = obj->semi[prio][x];
+                if (semi_out)
+                    *semi_out = obj->semi[prio][x];
                 return LAYER_OBJ;
             }
         }
@@ -979,13 +979,17 @@ static int find_top_layer(const BgScanline bg[4], const ObjScanline* obj, int x,
                 }
                 continue;
             }
-            if (!bg[layer].active) continue;
-            if (bg[layer].priority != prio) continue;
-            if (!(enable_mask & LAYER_BIT(layer))) continue;
+            if (!bg[layer].active)
+                continue;
+            if (bg[layer].priority != prio)
+                continue;
+            if (!(enable_mask & LAYER_BIT(layer)))
+                continue;
             if (bg[layer].opaque[x]) {
                 *color_out = bg[layer].colors[x];
                 *prio_out = prio;
-                if (semi_out) *semi_out = 0;
+                if (semi_out)
+                    *semi_out = 0;
                 return layer;
             }
         }
@@ -1015,7 +1019,8 @@ static void composite_scanline(uint32_t* out_row, int y, uint16_t dispcnt) {
     BgScanline bg[4];
     memset(bg, 0, sizeof(bg));
     for (int b = 0; b < 4; ++b) {
-        if (!(dispcnt & (DISPCNT_BG0_ON << b))) continue;
+        if (!(dispcnt & (DISPCNT_BG0_ON << b)))
+            continue;
         uint16_t bgcnt = io_read16(IO_BG0CNT + b * 2);
         int mosaic_on = (bgcnt & BGCNT_MOSAIC) != 0;
         int sample_y = y;
@@ -1061,8 +1066,7 @@ static void composite_scanline(uint32_t* out_row, int y, uint16_t dispcnt) {
         uint16_t top_color = backdrop;
         int top_prio = 4;
         int top_semi = 0;
-        int top_layer = find_top_layer(bg, &obj, x, enable, LAYER_NONE, 0, &top_color, &top_prio,
-                                       &top_semi);
+        int top_layer = find_top_layer(bg, &obj, x, enable, LAYER_NONE, 0, &top_color, &top_prio, &top_semi);
         if (top_layer == LAYER_NONE) {
             top_layer = LAYER_BD;
             top_color = backdrop;
@@ -1080,17 +1084,19 @@ static void composite_scanline(uint32_t* out_row, int y, uint16_t dispcnt) {
         if (top_layer == LAYER_OBJ && top_semi && blend_allowed) {
             do_alpha = 1;
         } else if (blend_allowed && (first_target & LAYER_BIT(top_layer))) {
-            if (blend_mode == 1) do_alpha = 1;
-            else if (blend_mode == 2) do_brighter = 1;
-            else if (blend_mode == 3) do_darker = 1;
+            if (blend_mode == 1)
+                do_alpha = 1;
+            else if (blend_mode == 2)
+                do_brighter = 1;
+            else if (blend_mode == 3)
+                do_darker = 1;
         }
 
         if (do_alpha) {
             /* Find the 2nd-target pixel directly below the top pixel. */
             uint16_t bot_color = backdrop;
             int bot_prio = 4;
-            int bot_layer = find_top_layer(bg, &obj, x, enable, top_layer, top_prio, &bot_color,
-                                           &bot_prio, NULL);
+            int bot_layer = find_top_layer(bg, &obj, x, enable, top_layer, top_prio, &bot_color, &bot_prio, NULL);
             if (bot_layer == LAYER_NONE) {
                 bot_layer = LAYER_BD;
                 bot_color = backdrop;
@@ -1144,8 +1150,8 @@ void Port_RenderFrame(uint32_t* framebuffer) {
 typedef struct {
     uint8_t io[0x60];
     uint8_t pltt[PORT_PLTT_SIZE];
-    uint8_t vram_lo[0x4000];      /* BG char + screen bases used here */
-    uint8_t vram_obj[0x4000];     /* OBJ tile sheet */
+    uint8_t vram_lo[0x4000];  /* BG char + screen bases used here */
+    uint8_t vram_obj[0x4000]; /* OBJ tile sheet */
     uint8_t oam[PORT_OAM_SIZE];
 } RendererSnapshot;
 
@@ -1260,9 +1266,9 @@ int Port_RendererSelfCheck(void) {
     self_check_reset();
     pltt_write16(0, 0x0000);
     pltt_write16(1, 0x03E0);
-    pltt_write16(3, 0x03FF);            /* yellow */
-    memset(&gPortVram[0], 0x11, 32);    /* tile 0 = idx 1 */
-    memset(&gPortVram[32], 0x33, 32);   /* tile 1 = idx 3 */
+    pltt_write16(3, 0x03FF);          /* yellow */
+    memset(&gPortVram[0], 0x11, 32);  /* tile 0 = idx 1 */
+    memset(&gPortVram[32], 0x33, 32); /* tile 1 = idx 3 */
     memset(&gPortVram[0x800], 0, 0x800);
     vram_write16(0x800 + 0, 0x0000);
     vram_write16(0x800 + 2, 0x0001);
@@ -1311,13 +1317,13 @@ int Port_RendererSelfCheck(void) {
      * pixel should sample tile 0 / palette idx 1.  Outside the map
      * area we test both `wrap` and `transparent`. */
     self_check_reset();
-    pltt_write16(0, 0x0000);     /* black backdrop */
-    pltt_write16(1, 0x03E0);     /* green */
+    pltt_write16(0, 0x0000); /* black backdrop */
+    pltt_write16(1, 0x03E0); /* green */
     /* Affine BG2: char base 0, screen base at offset 0x800 (= screen
      * base block 1).  16x16 tilemap.  Tile 0 = solid palette idx 1. */
-    memset(&gPortVram[0], 1, 64);            /* tile 0: every byte = 1 */
-    memset(&gPortVram[64], 0, 64);           /* tile 1: all transparent */
-    memset(&gPortVram[0x800], 0, 256);       /* clear 16x16 map: tile 0 everywhere */
+    memset(&gPortVram[0], 1, 64);      /* tile 0: every byte = 1 */
+    memset(&gPortVram[64], 0, 64);     /* tile 1: all transparent */
+    memset(&gPortVram[0x800], 0, 256); /* clear 16x16 map: tile 0 everywhere */
     /* PA = PD = 0x100 (1.0), PB = PC = 0; ref (0,0). */
     io_write16(IO_BG2PA, 0x0100);
     io_write16(IO_BG2PB, 0x0000);
@@ -1343,23 +1349,23 @@ int Port_RendererSelfCheck(void) {
     /* WIN0 covers the rectangle [16, 32) x [4, 8); inside it BG0 is
      * enabled, outside everything is disabled. */
     self_check_reset();
-    pltt_write16(0, 0x0000);            /* black backdrop */
-    pltt_write16(1, 0x03E0);            /* green */
+    pltt_write16(0, 0x0000); /* black backdrop */
+    pltt_write16(1, 0x03E0); /* green */
     memset(&gPortVram[0], 0x11, 32);
     memset(&gPortVram[0x800], 0, 0x800);
     vram_write16(0x800, 0x0000);
     io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
-    io_write16(IO_WIN0H, (16 << 8) | 32);    /* x in [16, 32) */
-    io_write16(IO_WIN0V, (4 << 8) | 8);      /* y in [4, 8) */
-    io_write16(IO_WININ, 0x0001);            /* inside WIN0: only BG0 */
-    io_write16(IO_WINOUT, 0x0000);           /* outside: nothing */
+    io_write16(IO_WIN0H, (16 << 8) | 32); /* x in [16, 32) */
+    io_write16(IO_WIN0V, (4 << 8) | 8);   /* y in [4, 8) */
+    io_write16(IO_WININ, 0x0001);         /* inside WIN0: only BG0 */
+    io_write16(IO_WINOUT, 0x0000);        /* outside: nothing */
     io_write16(IO_DISPCNT, DISPCNT_BG0_ON | DISPCNT_WIN0_ON);
     Port_RenderFrame(fb);
     /* (16, 4) is inside the window -> green.  (0, 0) is outside ->
      * backdrop (black). */
     ok = ok && (fb[16 + 4 * DISP_W] == green_argb);
     ok = ok && (fb[0 + 0 * DISP_W] == 0xFF000000u);
-    ok = ok && (fb[31 + 7 * DISP_W] == green_argb); /* still inside */
+    ok = ok && (fb[31 + 7 * DISP_W] == green_argb);  /* still inside */
     ok = ok && (fb[32 + 4 * DISP_W] == 0xFF000000u); /* just outside */
 
     /* ---------- 9. Alpha blend (mode 1).  BG0 over backdrop. ------ */
@@ -1367,8 +1373,8 @@ int Port_RendererSelfCheck(void) {
      * EVA = 8, EVB = 8 -> per-channel `(top*8 + bot*8) >> 4` =
      * (top + bot) / 2. */
     self_check_reset();
-    pltt_write16(0, 0x001F);          /* red backdrop */
-    pltt_write16(1, 0x03E0);          /* green BG */
+    pltt_write16(0, 0x001F); /* red backdrop */
+    pltt_write16(1, 0x03E0); /* green BG */
     memset(&gPortVram[0], 0x11, 32);
     memset(&gPortVram[0x800], 0, 0x800);
     vram_write16(0x800, 0x0000);
@@ -1440,11 +1446,11 @@ int Port_RendererSelfCheck(void) {
      * forces an alpha blend using EVA / EVB. */
     self_check_reset();
     pltt_write16(0, 0x0000);
-    pltt_write16(1, 0x03E0);          /* BG green */
-    pltt_write16(256 + 1, 0x7FFF);    /* OBJ white */
+    pltt_write16(1, 0x03E0);       /* BG green */
+    pltt_write16(256 + 1, 0x7FFF); /* OBJ white */
     memset(&gPortVram[VRAM_OBJ_BASE], 0x11, 32);
     /* OBJ 0: 8x8 at (0,0), mode = 1 (semi-transparent). */
-    oam_write16(0, 0x0400);    /* mode bits = 1 */
+    oam_write16(0, 0x0400); /* mode bits = 1 */
     oam_write16(2, 0x0000);
     oam_write16(4, 0x0000);
     /* BG0 covers the area in green. */
@@ -1472,9 +1478,9 @@ int Port_RendererSelfCheck(void) {
     oam_write16(22, 0x0000);
     oam_write16(30, 0x0100);
     /* OBJ 0: 8x8 affine sprite at (0,0), group 0, no double-size. */
-    oam_write16(0, OBJ_ATTR0_AFFINE);     /* affine, mode=0, 4bpp, shape=0 */
-    oam_write16(2, 0x0000);                /* x=0, group 0, size 0 */
-    oam_write16(4, 0x0000);                /* tile 0, prio 0 */
+    oam_write16(0, OBJ_ATTR0_AFFINE); /* affine, mode=0, 4bpp, shape=0 */
+    oam_write16(2, 0x0000);           /* x=0, group 0, size 0 */
+    oam_write16(4, 0x0000);           /* tile 0, prio 0 */
     io_write16(IO_BLDCNT, 0);
     io_write16(IO_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     Port_RenderFrame(fb);
