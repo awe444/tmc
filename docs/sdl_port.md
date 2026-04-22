@@ -448,16 +448,17 @@ are tracked here for future contributors.
       pinning the host-side `sizeof(PlayerEntity)` /
       `sizeof(GenericEntity)` literals.
     * Added a strong host definition for `gEntityLists` /
-      `gEntityListsBackup` (also in `port_globals.c`) plus a
-      `__attribute__((constructor))` that pre-installs the
+      `gEntityListsBackup` (also in `port_globals.c`); their
       sentinel-self-loop pattern `head->first == head->last == head`
-      that `entity.c::DeleteAllEntities` requires before its first
-      traversal. The matching ROM build relies on
-      `entity.c::sub_0805E98C` to install that pattern, but its
-      first invocation happens *inside* `EraseAllEntities` *after*
-      `DeleteAllEntities`, so on the host (whose BSS comes up zero-
-      filled instead of pre-init'd by the boot ROM image) the very
-      first `DeleteAllEntities` would dereference a NULL list head.
+      is now installed by `Port_GlobalsInit()`, called during SDL
+      startup from `src/platform/sdl/main.c`, before
+      `entity.c::DeleteAllEntities` can make its first traversal.
+      The matching ROM build relies on `entity.c::sub_0805E98C` to
+      install that pattern, but its first invocation happens
+      *inside* `EraseAllEntities` *after* `DeleteAllEntities`, so on
+      the host (whose BSS comes up zero-filled instead of pre-init'd
+      by the boot ROM image) the very first `DeleteAllEntities`
+      would dereference a NULL list head.
     * Added `Port_RunGameLoop()` in
       `src/platform/shared/interrupts.c` -- a `setjmp`/`longjmp`
       wrapper around the entry function so `Port_VBlankIntrWait` can
