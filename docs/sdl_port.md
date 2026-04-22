@@ -15,11 +15,15 @@ goal here is the equivalent `tmc.sdl`.
 > SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed,
 > PR #4 (software rasterizer for BG mode 0 + OBJ regular sprites,
 > 4 bpp + 8 bpp) now drives `Port_VideoPresent()` from the emulated
-> VRAM/OAM/PLTT/IO arrays, and PR #5 has extended the rasterizer to
+> VRAM/OAM/PLTT/IO arrays, PR #5 has extended the rasterizer to
 > cover affine BGs (modes 1/2), affine sprites, windows 0/1/OBJ/outside,
 > alpha blending (BLDCNT/BLDALPHA), brightness fade up/down (BLDY) and
-> mosaic — the only renderer features still deferred are the bitmap
-> modes (3/4/5) and HBlank-driven mid-scanline raster effects.** Every `src/**/*.c` TU that
+> mosaic, and PR #6 (EEPROM-backed save persistence) routes
+> `EEPROMRead` / `EEPROMWrite` through `Port_SaveReadByte` /
+> `Port_SaveWriteByte` so file-select data survives a process exit —
+> the only renderer features still deferred are the bitmap modes
+> (3/4/5) and HBlank-driven mid-scanline raster effects.** Every
+> `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
 > behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
@@ -523,9 +527,31 @@ are tracked here for future contributors.
   BG2Y from I/O on every scanline, so games that lean on the
   per-line counter advance see a flat affine instead of a per-line
   one — the decomp does not appear to use that effect).
-- [ ] **PR #6.** Wire `Port_SaveReadByte` / `Port_SaveWriteByte` into
-  `src/eeprom.c` and the Flash routines so the file-select screen
-  persists across runs.
+- [x] **PR #6.** Wire `Port_SaveReadByte` / `Port_SaveWriteByte` into
+  `src/eeprom.c` so the file-select screen persists across runs. Under
+  `__PORT__`, `EEPROMRead` and `EEPROMWrite` skip the GBA bit-stream
+  protocol entirely and read/write the 8-byte payload directly against
+  the `tmc.sav`-backed buffer in `src/platform/shared/save_file.c`
+  (using EEPROM-row addresses scaled by 8, which mirrors the
+  `address /= 8` rescale in `src/save.c::DataRead` / `DataWrite` /
+  `DataCompare`). Each successful `EEPROMWrite` calls `Port_SaveFlush`
+  so saves land on disk without requiring a clean shutdown. The
+  short-circuit makes the previous boot-time neutralisations
+  unnecessary: the `__PORT__` `DMA3Transfer` body is reduced to a
+  no-op safety net (it is no longer reached on the host) and the
+  `REG_EEPROM` host stub (the constant `1` that satisfied the
+  busy-wait) is gone — the host `EEPROMWrite` returns from its
+  short-circuit before ever sampling the status register or
+  `REG_VCOUNT`. Flash-backed save (the `include/gba/flash_internal.h`
+  routines) is not used by TMC: the game configures EEPROM via
+  `EEPROMConfigure(0x40)` for an 8 KiB chip, and the entire save
+  surface fits inside the existing 64 KiB `PORT_SAVE_SIZE` buffer.
+  The matching ROM build is unchanged. Verified by an off-tree
+  round-trip harness: `EEPROMConfigure(0x40)` → `EEPROMWrite(addr,
+  buf, 0)` → `EEPROMRead(addr, out)` round-trips byte-for-byte;
+  `Port_SaveLoad` reload from the freshly-written `tmc.sav` returns
+  the same payload; out-of-range addresses still return
+  `EEPROM_OUT_OF_RANGE`.
 - [ ] **PR #7.** Bring `src/gba/m4a.c` into the SDL build, hook the
   emulated sound FIFOs into `src/platform/sdl/audio.c` so songs play.
 - [ ] **PR #8.** Golden-image CI test: snapshot the title-screen

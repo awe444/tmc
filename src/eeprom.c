@@ -1,6 +1,11 @@
 #include "global.h"
 #include "gba/eeprom.h"
 
+#ifdef __PORT__
+#include "platform/port.h"
+#include <stdio.h>
+#endif
+
 #if defined(DEMO_USA) || defined(DEMO_JP)
 const u8 unk[] = { 0xff, 0xff, 0xff, 0xff };
 const u8 padding[0x18] = {};
@@ -39,28 +44,11 @@ u16 EEPROMConfigure(u16 unk_1) {
 
 static void DMA3Transfer(const void* src, void* dest, u16 count) {
 #ifdef __PORT__
-    /* The real implementation pokes the GBA DMA registers and busy-waits
-     * for the DMA controller to clear DMA_ENABLE; on the host that bit
-     * never clears (no hardware), so the wait spins forever and blocks
-     * `InitSaveData` during boot. EEPROM-backed save persistence is the
-     * scope of PR #6 (see docs/sdl_port.md); until then, neutralise the
-     * transfer so `InitSaveData` simply observes uninitialised EEPROM
-     * (`DataCompare` rejects, signature is "rewritten", the function
-     * returns success). Reads from the EEPROM mapping return zeros so
-     * the SaveFile validation paths behave deterministically rather than
-     * acting on stack garbage. The matching ROM build is unchanged. */
-    if ((uintptr_t)src == 0x0d000000u) {
-        /* read from EEPROM -> deliver a zero-filled buffer. The GBA EEPROM
-         * DMA is configured for 16-bit transfers (`DMA_16BIT`), so `count`
-         * counts u16 words, matching the caller's destination buffer
-         * sizing in `EEPROMRead`. */
-        u8* d = (u8*)dest;
-        u32 i;
-        for (i = 0; i < (u32)count * 2u; ++i) {
-            d[i] = 0;
-        }
-    }
-    /* writes to EEPROM are dropped on the floor. */
+    /* Under the SDL host port the EEPROM bit-stream protocol is
+     * short-circuited at the EEPROMRead/EEPROMWrite entry points (which
+     * route through Port_SaveReadByte / Port_SaveWriteByte directly), so
+     * `DMA3Transfer` is never actually called on the host. Keep the
+     * definition harmless in case a future code path stumbles into it. */
     (void)src;
     (void)dest;
     (void)count;
@@ -99,15 +87,31 @@ u16 EEPROMRead(u16 address, u16* data) {
     if (address >= gEEPROMConfig->size) {
         return EEPROM_OUT_OF_RANGE;
     } else {
+#ifdef __PORT__
+        /* Host port (PR #6): the GBA EEPROM bit-stream protocol is
+         * bypassed entirely; we read 8 bytes directly out of the
+         * tmc.sav-backed buffer in src/platform/shared/save_file.c.
+         * `address` counts EEPROM rows of 8 bytes, matching the
+         * `address /= 8` rescale in src/save.c::DataRead. The output
+         * `data` slot is u16[4] in the same byte order EEPROMWrite
+         * produces, so a Read after Write round-trips byte-for-byte. */
+        {
+            u32 byte_off = (u32)address * 8u;
+            u8* d = (u8*)data;
+            for (t1 = 0; t1 < 8; ++t1) {
+                d[t1] = Port_SaveReadByte(byte_off + t1);
+            }
+            (void)buffer;
+            (void)ptr;
+            (void)t2;
+            (void)value;
+            return 0;
+        }
+#else
         ptr = buffer;
         // setup address
-#ifdef __PORT__
-        /* cast-as-lvalue is unsupported by modern compilers */
-        ptr = (u16*)((u8*)ptr + (gEEPROMConfig->address_width << 1) + 2);
-#else
         (u8*)ptr += (gEEPROMConfig->address_width << 1) + 1;
         ((u8*)ptr)++;
-#endif
         for (t1 = 0; t1 < gEEPROMConfig->address_width; t1++) {
             *(ptr--) = address;
             address >>= 1;
@@ -132,6 +136,7 @@ u16 EEPROMRead(u16 address, u16* data) {
             *(data--) = value;
         }
         return 0;
+#endif
     }
 }
 
@@ -140,18 +145,7 @@ u16 EEPROMWrite1(u16 address, const u16* data) {
 }
 
 // reading from EEPROM like a status register
-#ifdef __PORT__
-/* On real hardware, the EEPROM signals "done" by setting bit 0 of the
- * memory-mapped status register at 0x0d000000 once the prior write has
- * landed. On the host that address is unmapped (segfault on read) and
- * even if it were mapped the EEPROM controller doesn't exist to flip
- * the bit. Returning a constant 1 satisfies the busy-wait in
- * `EEPROMWrite` so it exits via `timeout_flag` immediately. EEPROM-
- * backed save persistence is the scope of PR #6. */
-#define REG_EEPROM ((u16)1)
-#else
 #define REG_EEPROM (*(vu16*)0xd000000)
-#endif
 
 u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
     u16 buffer[0x52]; // this is one too large?
@@ -169,6 +163,66 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
 
     if (address >= gEEPROMConfig->size)
         return EEPROM_OUT_OF_RANGE;
+
+#ifdef __PORT__
+    /* Host port: mirror the 8-byte payload into the save buffer, but
+     * avoid flushing the full backing file on every 8-byte EEPROM block.
+     * Consecutive block writes are batched and flushed only when a write
+     * sequence ends (detected by a non-consecutive address) or when the
+     * final EEPROM block is written. The byte order matches EEPROMRead's
+     * host short-circuit so a Read after Write round-trips exactly.
+     *
+     * Port_SaveFlush() can fail (e.g. read-only save dir, disk full).
+     * When it does, log to stderr and surface a non-zero error code to
+     * the caller so the higher-level retry logic in src/save.c
+     * (DataWrite -> EEPROMWrite0_8k_Check -> 3x retry + dummy-data
+     * scrub) treats the row as failed instead of silently losing the
+     * write. We reuse `0xc001` to match the timeout return path of the
+     * ROM build's `EEPROMWrite`. */
+    {
+        static bool32 sPortSaveDirty = FALSE;
+        static u16 sPortLastAddress;
+        u32 byte_off = (u32)address * 8u;
+        const u8* d = (const u8*)data;
+        u16 ret_port = 0;
+
+        if (sPortSaveDirty && address != (u16)(sPortLastAddress + 1)) {
+            if (Port_SaveFlush() != 0) {
+                fprintf(stderr, "[tmc_sdl] EEPROMWrite: Port_SaveFlush failed; save data may be lost.\n");
+                sPortSaveDirty = FALSE;
+                ret_port = 0xc001;
+            } else {
+                sPortSaveDirty = FALSE;
+            }
+        }
+
+        for (i = 0; i < 8; ++i) {
+            Port_SaveWriteByte(byte_off + i, d[i]);
+        }
+
+        sPortSaveDirty = TRUE;
+        sPortLastAddress = address;
+
+        if (ret_port == 0 && (u32)address + 1u >= gEEPROMConfig->size) {
+            if (Port_SaveFlush() != 0) {
+                fprintf(stderr, "[tmc_sdl] EEPROMWrite: Port_SaveFlush failed; save data may be lost.\n");
+                ret_port = 0xc001;
+            }
+            sPortSaveDirty = FALSE;
+        }
+        (void)buffer;
+        (void)timeout_flag;
+        (void)prev_vcount;
+        (void)current_vcount;
+        (void)passed_scanlines;
+        (void)temp2;
+        (void)r2;
+        (void)j;
+        (void)ptr;
+        (void)unk_3;
+        return ret_port;
+    }
+#else
 
     ptr = (u16*)(0x42 + (uintptr_t)&buffer + (uintptr_t)(gEEPROMConfig->address_width * 2) + 0x42);
     *ptr-- = 0;
@@ -228,6 +282,7 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
     }
 
     return ret;
+#endif
 }
 
 u16 EEPROMCompare(u16 address, const u16* data) {
