@@ -67,9 +67,19 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: |
           set -euo pipefail
-          actual=$(./build/tmc_sdl --frames=30 --mute --save-dir=. --print-frame-hash 2>/dev/null \
-                       | grep '^frame-hash:')
-          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_off_frames30.txt)
+          output=$(./build/tmc_sdl --frames=30 --mute --save-dir=. --print-frame-hash 2>&1)
+          actual=$(printf '%s\n' "$output" | grep '^frame-hash:' || true)
+          if [ -z "$actual" ]; then
+            echo "::error::Golden-image hash check for the OFF build did not produce a frame-hash line at --frames=30."
+            echo "::error::Command output follows:"
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_off_frames30.txt || true)
+          if [ -z "$expected" ]; then
+            echo "::error::Golden-image baseline src/platform/shared/golden/usa_off_frames30.txt is missing a frame-hash line."
+            exit 1
+          fi
           echo "actual:   $actual"
           echo "expected: $expected"
           if [ "$actual" != "$expected" ]; then
