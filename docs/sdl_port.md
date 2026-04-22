@@ -408,12 +408,32 @@ are tracked here for future contributors.
       during boot (currently just `ram_MakeFadeBuff256` for
       `FadeVBlank()`); the ROM build is unaffected because these TUs
       are `__PORT__`-only.
+    * Added `src/platform/shared/port_rom_data_stubs.c` with strong
+      host stand-ins for the gfx-table data symbols `gGfxGroups[]`
+      (133 entries, all pointing at a single shared `GfxItem` whose
+      control byte is `0x0D` so `LoadGfxGroup` returns immediately
+      instead of NULL-deref'ing the previous BSS placeholder),
+      `gPaletteGroups[]` (208 entries, all pointing at a single
+      `PaletteGroup` whose `numPalettes` high bit is clear so
+      `LoadPaletteGroup` exits after one iteration; the iteration
+      writes a 32-byte zero copy into palette 0, which is harmless),
+      and a 4 KiB zero buffer for `gGlobalGfxAndPalettes[]`.
+      `port_unresolved_stubs.c` no longer emits weak BSS for those
+      three names. With this in place `AgbMain` advances past
+      `HandleNintendoCapcomLogos` into `HandleTitlescreen`, where the
+      next blocker is `ram_UpdateEntities` (an unported ARM-asm
+      function reached from `entity.c::UpdateEntities`) -- a
+      different category of work (asm decompilation rather than
+      ROM-data wiring) that is tracked separately from this
+      checkbox.
 
-    The next blocker is the unresolved `gGfxGroups` /
-    `gGlobalGfxAndPalettes` data tables (referenced from
-    `LoadGfxGroup` during `TitleTask`'s Nintendo / Capcom logo step),
-    which belongs to the still-pending ROM-data wiring step rather
-    than the runtime flip itself.
+    The next blocker is `ram_UpdateEntities` (and its sibling `ram_*`
+    entity-update helpers), reached from `HandleTitlescreen` once the
+    Nintendo / Capcom logo step completes. Adding a meaningful host
+    implementation requires either decompiling the ARM source or
+    adding a tailored silent override (the existing
+    `ram_silent_stubs.c` pattern), which belongs to the still-open
+    asm-decomp track rather than to this PR's ROM-data step.
 - [x] **PR #3.** `Port_InputPump()` now writes `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot (`gPortIo + 0x130`) every frame, and
   `Port_InputInit()` primes the slot to `0x3FF` (no keys pressed) before
