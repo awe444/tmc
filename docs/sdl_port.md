@@ -13,10 +13,13 @@ goal here is the equivalent `tmc.sdl`.
 > at the link level (2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, and the
 > link-resolution half of 2b.4b are done), PR #3 (mirroring the
 > SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed,
-> and PR #4 (software rasterizer for BG mode 0 + OBJ regular sprites,
+> PR #4 (software rasterizer for BG mode 0 + OBJ regular sprites,
 > 4 bpp + 8 bpp) now drives `Port_VideoPresent()` from the emulated
-> VRAM/OAM/PLTT/IO arrays — affine BGs, windows and blending stay
-> deferred to PR #5.** Every `src/**/*.c` TU that
+> VRAM/OAM/PLTT/IO arrays, and PR #5 has extended the rasterizer to
+> cover affine BGs (modes 1/2), affine sprites, windows 0/1/OBJ/outside,
+> alpha blending (BLDCNT/BLDALPHA), brightness fade up/down (BLDY) and
+> mosaic — the only renderer features still deferred are the bitmap
+> modes (3/4/5) and HBlank-driven mid-scanline raster effects.** Every `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
 > behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
@@ -462,8 +465,64 @@ are tracked here for future contributors.
   cleanly for those (affine sprites are skipped; bitmap modes draw
   the backdrop) so the screen stays in a defined state until those
   features land.
-- [ ] **PR #5.** Affine BGs (modes 1/2), windows 0/1/OBJ/outside, alpha
-  blending (BLDCNT/BLDALPHA/BLDY), brightness fade, mosaic.
+- [x] **PR #5.** Affine BGs (modes 1/2), affine sprites,
+  windows 0/1/OBJ/outside, alpha blending (BLDCNT/BLDALPHA/BLDY),
+  brightness fade, mosaic. Implemented in
+  `src/platform/shared/render.c` on top of the PR #4 layered
+  scanline pipeline:
+  * **Affine BGs.** `render_affine_bg_scanline()` reads BG2/3 PA, PB,
+    PC, PD (s8.8) and BG2/3 X, Y (s19.8) per scanline and walks the
+    transformed sample point across the line. The four affine
+    screen-size codes (128 / 256 / 512 / 1024 px square) and the
+    BGCNT bit 13 wrap-vs-transparent behaviour are honoured. Each
+    affine tilemap entry is a single byte (8 bpp tile id, no flip /
+    palette bank — matching real hardware). Mode 1 routes BG2 here
+    while BG0 / BG1 stay in the text path; mode 2 routes BG2 + BG3.
+  * **Affine sprites.** OAM attr0 AFFINE bit takes the sprite through
+    `obj_read_affine_params()` (which decodes the 5-bit affine-group
+    index in attr1[9..13] to the four PA/PB/PC/PD slots interleaved
+    across an OAM rotation entry) and the centred-affine 2x2
+    transform. The DOUBLE_SIZE flag doubles the on-screen bounding
+    box (`box_w = 2*sw`, `box_h = 2*sh`) so the rotated sprite has
+    room to fit; texture sampling still uses `sw x sh`.
+  * **Windows.** `compute_window_mask()` produces a per-pixel
+    layer-enable byte (BG0..BG3 / OBJ / colour-special-effect).
+    Priority is WIN0 > WIN1 > OBJ window > outside, matching the GBA.
+    OBJ-window source pixels come from sprites in attr0 mode 2:
+    those sprites do not paint colour, only an OBJ-window mask
+    consumed by `WINOUT[15..8]`.
+  * **Blending.** Per pixel the compositor finds the topmost opaque
+    layer (`find_top_layer()`), and — when alpha is selected via
+    BLDCNT mode 1 with the layer in the 1st-target mask, *or* the
+    layer is OBJ semi-transparent (attr0 mode 1) — searches again
+    for the layer immediately below (`start_layer` parameter) to use
+    as the 2nd target. `blend_alpha()` uses the GBA's
+    `min(31, (top*EVA + bot*EVB) >> 4)` per channel. Brightness fade
+    up / down (modes 2 / 3) uses BLDY via `blend_brighter()` and
+    `blend_darker()`. The compositor never blends the backdrop into
+    itself and never applies fades to OBJ pixels that are
+    semi-transparent.
+  * **Mosaic.** `mosaic_sizes()` decodes the MOSAIC register; BGs
+    with BGCNT bit 6 set sample at `((y / Mv) * Mv)` and run a
+    horizontal post-pass that snaps each pixel to its mosaic block's
+    leftmost on-screen column. OBJ mosaic is applied per-sprite by
+    snapping both the sampled row (`y -> (y / Mv) * Mv`) and the
+    sampled column (`screen_x -> (screen_x / Mh) * Mh`).
+
+  `Port_RendererSelfCheck()` grew six new test groups (affine BG with
+  wrap on / off, WIN0 rectangle masking, alpha blend with EVA = EVB
+  = 8, BLDY fade-to-white at EVY = 16, BLDY fade-to-black at EVY =
+  16, OBJ mode-1 forcing alpha, BG horizontal mosaic at H = 4, and
+  an identity-affine OBJ that must match a regular OBJ pixel-for-
+  pixel) so any regression surfaces in CI's headless `--frames=30`
+  smoke test.
+
+  Out of scope (deferred to PR #9 stretch): bitmap modes 3 / 4 / 5
+  and the BG2/3 internal-counter latching that the PPU performs
+  every scanline based on PB / PD (the renderer resamples BG2X /
+  BG2Y from I/O on every scanline, so games that lean on the
+  per-line counter advance see a flat affine instead of a per-line
+  one — the decomp does not appear to use that effect).
 - [ ] **PR #6.** Wire `Port_SaveReadByte` / `Port_SaveWriteByte` into
   `src/eeprom.c` and the Flash routines so the file-select screen
   persists across runs.

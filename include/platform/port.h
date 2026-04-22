@@ -102,11 +102,13 @@ int Port_VideoInit(int scale, int fullscreen);
 void Port_VideoShutdown(void);
 
 /**
- * Present the current emulated framebuffer. As of PR #4 this drives a
- * software rasterizer that reads VRAM, OAM, PLTT, and the BG/OBJ I/O
- * registers from `gPortVram` / `gPortOam` / `gPortPltt` / `gPortIo`.
- * Affine BGs, windows and BLDCNT/BLDALPHA/BLDY blending are deferred to
- * PR #5; until they land, those features are ignored.
+ * Present the current emulated framebuffer. The software rasterizer
+ * (`Port_RenderFrame()` in `src/platform/shared/render.c`) reads
+ * VRAM, OAM, PLTT, and the BG/OBJ I/O registers from `gPortVram` /
+ * `gPortOam` / `gPortPltt` / `gPortIo`. As of PR #5 it covers the
+ * full text + affine BG pipeline (modes 0/1/2), regular + affine
+ * sprites, windows 0/1/OBJ/outside, BLDCNT/BLDALPHA/BLDY blending
+ * and mosaic. Bitmap modes (3/4/5) are still deferred.
  */
 void Port_VideoPresent(void);
 
@@ -126,14 +128,26 @@ void Port_VideoPresent(void);
 /**
  * Render one frame's worth of GBA video output into `framebuffer`.
  *
- * Scope of PR #4: BG mode 0 (4 text BGs) + the OBJ layer (regular, i.e.
- * non-affine, sprites in 4 bpp and 8 bpp, 1D and 2D OBJ tile mapping,
- * all 12 shape x size combinations, hflip / vflip, per-priority
- * compositing). The OBJ "semi-transparent" / "OBJ window" modes,
- * windows 0/1, BLDCNT/BLDALPHA/BLDY blending, brightness fade, mosaic,
- * and bitmap modes 3/4/5 are deferred to later PRs and currently
- * draw as opaque normal pixels (or, for unimplemented modes, a solid
- * fill of the backdrop color).
+ * Scope (PRs #4 + #5):
+ *   - BG mode 0 (4 text BGs) and the text BGs of mode 1 (BG0/BG1).
+ *   - Affine BGs in modes 1 (BG2) and 2 (BG2/BG3), with the
+ *     four screen sizes (128/256/512/1024 px square) and the
+ *     BGCNT bit 13 wrap-vs-transparent toggle.
+ *   - Regular OBJ sprites (4 bpp + 8 bpp, 1D + 2D mapping, all 12
+ *     shape x size combinations, hflip / vflip, attr0 disable).
+ *   - Affine OBJ sprites (32 affine groups, DOUBLE_SIZE bounding box).
+ *   - Windows 0 / 1 / OBJ window / outside (WIN0H/V, WIN1H/V,
+ *     WININ, WINOUT, OBJ-window source pixels via attr0 mode 2).
+ *   - Alpha blending (BLDCNT mode 1, BLDALPHA), brightness fade up
+ *     (mode 2, BLDY) and fade down (mode 3, BLDY); OBJ semi-
+ *     transparent (attr0 mode 1) forces alpha regardless of BLDCNT
+ *     mode.
+ *   - Mosaic (MOSAIC, BGCNT bit 6 for BGs, OBJ attr0 mosaic for
+ *     OBJs).
+ *
+ * Still deferred: bitmap modes 3/4/5 (the renderer falls through to
+ * a backdrop fill so the screen stays in a defined state), and
+ * mid-scanline raster effects driven from HBlank IRQs.
  *
  * `framebuffer` must point at a buffer of at least
  * `PORT_GBA_DISPLAY_WIDTH * PORT_GBA_DISPLAY_HEIGHT` 32-bit pixels.
@@ -142,11 +156,13 @@ void Port_VideoPresent(void);
 void Port_RenderFrame(uint32_t* framebuffer);
 
 /**
- * Headless self-check for the rasterizer (PR #4). Programs a known
- * tilemap + sprite into gPortVram / gPortPltt / gPortOam / gPortIo,
- * runs `Port_RenderFrame()`, and verifies the produced pixels.
- * Returns 0 on success, non-zero on any mismatch. Called from the
- * platform layer's headless smoke test alongside `Port_HeadersSelfCheck()`.
+ * Headless self-check for the rasterizer (PRs #4 + #5). Programs a
+ * battery of known tilemap / sprite / palette / blend / window /
+ * mosaic / affine inputs into gPortVram / gPortPltt / gPortOam /
+ * gPortIo, runs `Port_RenderFrame()`, and verifies the produced
+ * pixels. Returns 0 on success, non-zero on any mismatch. Called
+ * from the platform layer's headless smoke test alongside
+ * `Port_HeadersSelfCheck()`.
  *
  * The function saves and restores the affected I/O register / palette /
  * VRAM / OAM bytes so it can be invoked at any time without side
