@@ -357,9 +357,9 @@ are tracked here for future contributors.
     additionally **links** the `tmc_game_sources` library into the
     `tmc_sdl` executable (replacing the stub) instead of merely building
     it — and the stub TU is opt-out: it only enters the executable
-    when `TMC_LINK_GAME_SOURCES=OFF`. Three pieces of host-side
-    infrastructure make the link possible for the call graph rooted at
-    `AgbMain`:
+    when `TMC_LINK_GAME_SOURCES=OFF` (the preserved non-default
+    compatibility mode). Three pieces of host-side infrastructure make
+    the link possible for the call graph rooted at `AgbMain`:
     1. `src/platform/shared/port_globals.c` allocates host BSS for the
        linker-script globals that `linker.ld` would otherwise fix at
        hard-coded EWRAM/IWRAM offsets — `gMain`, `gInput`, `gScreen`,
