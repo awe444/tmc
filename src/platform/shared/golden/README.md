@@ -11,9 +11,10 @@ Each `*.txt` file contains a single line of the form
 
     frame-hash: 0x<16 hex digits>
 
-— bit-for-bit what `--print-frame-hash` writes to stdout. The CI
-step therefore reduces to a `grep -F -x` against the binary's output,
-which gives a useful diff in the failure message.
+— bit-for-bit what `--print-frame-hash` writes to stdout. In CI, the
+workflow extracts the `frame-hash:` line from the binary's stdout and
+compares the resulting `actual` value against the matching file's
+`expected` contents in shell.
 
 ## Files
 
