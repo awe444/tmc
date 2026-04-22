@@ -51,6 +51,43 @@ jobs:
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
 
+      # PR #8 of the SDL-port roadmap: golden-image CI test.
+      #
+      # Asserts the rasterizer's framebuffer hash for the default
+      # (TMC_LINK_GAME_SOURCES=OFF) build at frame 30 matches the value
+      # pinned in `src/platform/shared/golden/usa_off_frames30.txt`.
+      # The OFF build exercises the empty-loop `agb_main_stub.c`, so
+      # the framebuffer is exactly the rasterizer's empty-VRAM /
+      # empty-OAM / empty-PLTT default — any rasterizer regression
+      # observable through that surface fails CI here with a clear
+      # diff between the produced and expected hash.
+      - name: Golden-image hash check (OFF build)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          output=$(./build/tmc_sdl --frames=30 --mute --save-dir=. --print-frame-hash 2>&1)
+          actual=$(printf '%s\n' "$output" | grep '^frame-hash:' || true)
+          if [ -z "$actual" ]; then
+            echo "::error::Golden-image hash check for the OFF build did not produce a frame-hash line at --frames=30."
+            echo "::error::Command output follows:"
+            printf '%s\n' "$output"
+            exit 1
+          fi
+          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_off_frames30.txt || true)
+          if [ -z "$expected" ]; then
+            echo "::error::Golden-image baseline src/platform/shared/golden/usa_off_frames30.txt is missing a frame-hash line."
+            exit 1
+          fi
+          echo "actual:   $actual"
+          echo "expected: $expected"
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::Golden-image hash mismatch for the OFF build at --frames=30."
+            echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
+            exit 1
+          fi
+
       # PR #2b.4b of the SDL-port roadmap: the link step now succeeds
       # with `TMC_LINK_GAME_SOURCES=ON` thanks to the weak-stub coverage
       # in `src/platform/shared/port_unresolved_stubs.c`. Build (but do
@@ -70,3 +107,40 @@ jobs:
       - name: Verify link-on tmc_sdl was produced
         run: |
           test -x build-link-on/tmc_sdl
+
+      # PR #8 of the SDL-port roadmap: golden-image determinism check.
+      #
+      # The ON build's title-screen frame hash is not yet pinned (the
+      # surface still touches several `port_unresolved_stubs.c` weak
+      # placeholders that PR #5..#7 are still fleshing out, so the
+      # value moves from PR to PR). What we *can* assert today is
+      # that two consecutive runs produce the same hash — i.e. that
+      # the rasterizer + boot-time game state is deterministic on the
+      # host. Once PR #5..#7 settle, the value itself can be pinned
+      # in `src/platform/shared/golden/` next to the OFF build's
+      # entry and this check upgraded to a strict equality match
+      # against the stored value.
+      - name: Golden-image determinism check (ON build)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          mkdir -p build-link-on/golden-tmp
+          run1=$(./build-link-on/tmc_sdl --frames=30 --mute \
+                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:')
+          run2=$(./build-link-on/tmc_sdl --frames=30 --mute \
+                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:')
+          echo "run1: $run1"
+          echo "run2: $run2"
+          if [ "$run1" != "$run2" ]; then
+            echo "::error::ON build's title-screen frame hash is not deterministic."
+            echo "::error::Two consecutive --frames=30 runs disagreed."
+            exit 1
+          fi
+          if [ -z "$run1" ]; then
+            echo "::error::tmc_sdl --print-frame-hash produced no output."
+            exit 1
+          fi

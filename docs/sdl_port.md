@@ -18,10 +18,17 @@ goal here is the equivalent `tmc.sdl`.
 > VRAM/OAM/PLTT/IO arrays, PR #5 has extended the rasterizer to
 > cover affine BGs (modes 1/2), affine sprites, windows 0/1/OBJ/outside,
 > alpha blending (BLDCNT/BLDALPHA), brightness fade up/down (BLDY) and
-> mosaic, and PR #6 (EEPROM-backed save persistence) routes
+> mosaic, PR #6 (EEPROM-backed save persistence) routes
 > `EEPROMRead` / `EEPROMWrite` through `Port_SaveReadByte` /
-> `Port_SaveWriteByte` so file-select data survives a process exit —
-> the only renderer features still deferred are the bitmap modes
+> `Port_SaveWriteByte` so file-select data survives a process exit,
+> and PR #8 (golden-image CI mechanism) has landed: `tmc_sdl
+> --print-frame-hash` emits a stable FNV-1a 64-bit hash of the
+> rasterizer's framebuffer, the OFF build's hash is pinned in
+> `src/platform/shared/golden/usa_off_frames30.txt` and CI asserts
+> it on every run, and the ON build is asserted to be at least
+> deterministic across two consecutive runs (the value itself is
+> not pinned yet — see PR #8 below) — the only renderer features
+> still deferred are the bitmap modes
 > (3/4/5) and HBlank-driven mid-scanline raster effects.** Every
 > `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
@@ -99,11 +106,19 @@ cmake --build --preset sdl-release
 
 ```
 tmc_sdl [options]
-  --scale=N        Integer window scale (default 4 → 960×640).
-  --fullscreen     Start in fullscreen-desktop mode.
-  --mute           Disable audio output.
-  --save-dir=PATH  Where to read/write tmc.sav (default: working dir).
-  --frames=N       Run for N frames then exit (used by CI smoke tests).
+  --scale=N            Integer window scale (default 4 → 960×640).
+  --fullscreen         Start in fullscreen-desktop mode.
+  --mute               Disable audio output.
+  --save-dir=PATH      Where to read/write tmc.sav (default: working dir).
+  --frames=N           Run for N frames then exit (used by CI smoke tests).
+  --screenshot=PATH    After the final frame, write a PPM (P6) screenshot
+                       of the rasterizer's framebuffer to PATH (PR #8 of
+                       the SDL roadmap; useful for local debugging).
+  --print-frame-hash   After the final frame, print an FNV-1a 64-bit hash
+                       of the framebuffer to stdout in the form
+                       `frame-hash: 0x<16 hex>`. The CI golden-image
+                       check (PR #8) consumes this; see
+                       `src/platform/shared/golden/README.md`.
 ```
 
 ## Controls
@@ -610,8 +625,40 @@ are tracked here for future contributors.
   `EEPROM_OUT_OF_RANGE`.
 - [ ] **PR #7.** Bring `src/gba/m4a.c` into the SDL build, hook the
   emulated sound FIFOs into `src/platform/sdl/audio.c` so songs play.
-- [ ] **PR #8.** Golden-image CI test: snapshot the title-screen
-  framebuffer and assert against a stored hash.
+- [x] **PR #8.** (mechanism) Golden-image CI test: snapshot the
+  rasterizer's framebuffer at the end of `--frames=N` and assert the
+  result against a stored hash. `src/platform/sdl/main.c` grew two
+  CLI options:
+  * `--print-frame-hash` renders one extra frame after the
+    `--frames=N` budget unwinds `AgbMain`, hashes the resulting
+    240×160 ARGB8888 buffer with FNV-1a 64-bit, and prints the value
+    to stdout as `frame-hash: 0x<16 hex>`. The hash currently operates
+    on the native in-memory byte stream of the `uint32_t` pixels, so
+    it is stable for a given host layout but is not guaranteed to
+    match across little- and big-endian hosts.
+  * `--screenshot=PATH` writes the same buffer as a PPM (P6) so
+    rendering regressions are debuggable locally without rebuilding.
+
+  The default-build (`TMC_LINK_GAME_SOURCES=OFF`, empty
+  `agb_main_stub.c` loop) hash for `--frames=30` is pinned in
+  `src/platform/shared/golden/usa_off_frames30.txt` and the Ubuntu
+  CI now asserts the binary's stdout matches the file (any
+  rasterizer regression observable through the empty-VRAM / OAM /
+  PLTT default surface fails with a clear actual-vs-expected diff).
+  The `=ON` build's title-screen hash is *not* pinned yet — the
+  surface still touches several `port_unresolved_stubs.c` weak
+  placeholders that PR #5..#7 are still fleshing out, so the value
+  moves from PR to PR — but CI now asserts it is at least
+  deterministic across two consecutive runs (catches any host-side
+  non-determinism without locking in a fragile value). Pinning the
+  ON-build hash is the deferred follow-up under this checkbox; once
+  PR #5..#7 settle the value, the determinism check upgrades to a
+  strict equality match against a stored value next to the OFF
+  entry.
+
+  See `src/platform/shared/golden/README.md` for how to regenerate
+  a hash and the policy for when it is and is not appropriate to
+  do so.
 - [ ] **PR #9.** (Stretch) Threaded renderer; widescreen mode under
   `TMC_WIDESCREEN`; Win32-OpenGL backend; PSP / PS2 ports following
   the same `src/platform/<name>/` pattern.
