@@ -118,10 +118,11 @@ const PortGfxItem* const gGfxGroups[133] = {
 /* Strong host definition for the asset blob. 4 KiB is large enough
  * to absorb the few stray address-of dereferences in unrelated
  * subtasks without bloating the binary; the bytes themselves are
- * always zero. The symbol is intentionally non-`const` here even
- * though the public declaration is `const u8 gGlobalGfxAndPalettes[]`
- * -- C linkage only matches the name, and writing into this region
- * is never legal under either the ROM or the host contract anyway. */
+ * always zero. This host definition is `const`, matching the public
+ * declaration `const u8 gGlobalGfxAndPalettes[]`. Declarations and
+ * definitions for this symbol must agree in type and qualifiers
+ * across translation units; writing into this region is never legal
+ * under either the ROM or the host contract anyway. */
 const uint8_t gGlobalGfxAndPalettes[4096];
 
 /* ----------------------------------------------------------------------- *
