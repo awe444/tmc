@@ -116,9 +116,24 @@ void Port_RequestQuit(void) {
  * resolved by asm/lib/libagbsyscall.s on the GBA). Forward to the host
  * pacer so the game loop blocks on the same ~59.7274 Hz boundary. Only
  * defined under `__PORT__` so the matching ROM build is unaffected.
+ *
+ * On the GBA the IRQ controller invokes `src/interrupts.c::VBlankIntr`
+ * once per frame; that handler is what flips `gMain.interruptFlag` and
+ * lets the main loop in `src/main.c` make forward progress. On the host
+ * there is no IRQ, so under TMC_LINK_GAME_SOURCES=ON we run that handler
+ * synchronously immediately after the pacer returns. The forward
+ * declaration intentionally has weak linkage so the host build still
+ * links cleanly when the game sources are NOT linked in (the CI matrix
+ * builds both shapes); when the game *is* linked in, the real
+ * `src/interrupts.c::VBlankIntr` overrides the placeholder.
  */
 #ifdef __PORT__
+__attribute__((weak)) void VBlankIntr(void) {
+    /* Placeholder used when TMC_LINK_GAME_SOURCES=OFF. */
+}
+
 void VBlankIntrWait(void) {
     Port_VBlankIntrWait();
+    VBlankIntr();
 }
 #endif

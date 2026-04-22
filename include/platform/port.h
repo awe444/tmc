@@ -165,6 +165,25 @@ int Port_AudioInit(void);
 void Port_AudioShutdown(void);
 
 /* ------------------------------------------------------------------------ */
+/* Synchronous DMA helpers.                                                 */
+/*                                                                          */
+/* The GBA `Dma*` macros in include/gba/macro.h write to memory-mapped DMA  */
+/* registers and rely on the DMA hardware to perform the transfer and to   */
+/* clear the enable bit when done. On the host neither happens — so the    */
+/* transfer never runs and any subsequent `DmaWait` spins forever. Under   */
+/* `__PORT__` the macros in macro.h forward into these synchronous host    */
+/* implementations (memcpy/memset) so the transfer happens immediately and */
+/* the matching wait is a no-op.                                           */
+/* ------------------------------------------------------------------------ */
+void Port_DmaCopy16(int channel, const void* src, void* dst, uint32_t size);
+void Port_DmaCopy32(int channel, const void* src, void* dst, uint32_t size);
+void Port_DmaFill16(int channel, uint16_t value, void* dst, uint32_t size);
+void Port_DmaFill32(int channel, uint32_t value, void* dst, uint32_t size);
+void Port_DmaStop(int channel);
+void Port_DmaWait(int channel);
+void Port_DmaSet(int channel, const void* src, void* dst, uint32_t control);
+
+/* ------------------------------------------------------------------------ */
 /* Save backend.                                                            */
 /* ------------------------------------------------------------------------ */
 

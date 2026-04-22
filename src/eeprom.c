@@ -38,6 +38,33 @@ u16 EEPROMConfigure(u16 unk_1) {
 }
 
 static void DMA3Transfer(const void* src, void* dest, u16 count) {
+#ifdef __PORT__
+    /* The real implementation pokes the GBA DMA registers and busy-waits
+     * for the DMA controller to clear DMA_ENABLE; on the host that bit
+     * never clears (no hardware), so the wait spins forever and blocks
+     * `InitSaveData` during boot. EEPROM-backed save persistence is the
+     * scope of PR #6 (see docs/sdl_port.md); until then, neutralise the
+     * transfer so `InitSaveData` simply observes uninitialised EEPROM
+     * (`DataCompare` rejects, signature is "rewritten", the function
+     * returns success). Reads from the EEPROM mapping return zeros so
+     * the SaveFile validation paths behave deterministically rather than
+     * acting on stack garbage. The matching ROM build is unchanged. */
+    if ((uintptr_t)src == 0x0d000000u) {
+        /* read from EEPROM -> deliver a zero-filled buffer. The GBA EEPROM
+         * DMA is configured for 16-bit transfers (`DMA_16BIT`), so `count`
+         * counts u16 words, matching the caller's destination buffer
+         * sizing in `EEPROMRead`. */
+        u8* d = (u8*)dest;
+        u32 i;
+        for (i = 0; i < (u32)count * 2u; ++i) {
+            d[i] = 0;
+        }
+    }
+    /* writes to EEPROM are dropped on the floor. */
+    (void)src;
+    (void)dest;
+    (void)count;
+#else
     u32 temp;
 
     u16 IME_save;
@@ -52,6 +79,7 @@ static void DMA3Transfer(const void* src, void* dest, u16 count) {
     REG_DMA3CNT = count | 0x80000000;        // enable dma
     while ((REG_DMA3CNT_H & 0x8000) != 0) {} // wait for dma to finish
     REG_IME = IME_save;
+#endif
 }
 
 /**
@@ -112,7 +140,18 @@ u16 EEPROMWrite1(u16 address, const u16* data) {
 }
 
 // reading from EEPROM like a status register
+#ifdef __PORT__
+/* On real hardware, the EEPROM signals "done" by setting bit 0 of the
+ * memory-mapped status register at 0x0d000000 once the prior write has
+ * landed. On the host that address is unmapped (segfault on read) and
+ * even if it were mapped the EEPROM controller doesn't exist to flip
+ * the bit. Returning a constant 1 satisfies the busy-wait in
+ * `EEPROMWrite` so it exits via `timeout_flag` immediately. EEPROM-
+ * backed save persistence is the scope of PR #6. */
+#define REG_EEPROM ((u16)1)
+#else
 #define REG_EEPROM (*(vu16*)0xd000000)
+#endif
 
 u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
     u16 buffer[0x52]; // this is one too large?

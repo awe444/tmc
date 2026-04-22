@@ -484,14 +484,22 @@ void DispReset(bool32 refresh) {
     REG_DISPCNT = 0;
     ClearOAM();
     ResetScreenRegs();
+#ifdef __PORT__
+    MemClear(PORT_HW_ADDR(0x600C000), 0x20);
+#else
     MemClear((void*)0x600C000, 0x20);
+#endif
     MemClear(gBG0Buffer, sizeof(gBG0Buffer));
     gScreen.bg0.updated = refresh;
 }
 
 void ClearOAM(void) {
     u8* d = (u8*)gOAMControls.oam;
+#ifdef __PORT__
+    u8* mem = (u8*)PORT_HW_ADDR(0x07000000);
+#else
     u8* mem = (u8*)0x07000000;
+#endif
     u32 i;
     for (i = 128; i != 0; --i) {
         *(u16*)d = 0x2A0;

@@ -164,6 +164,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/dma.c
     src/platform/shared/bios.c
     src/platform/shared/m4a_stub.c
+    src/platform/shared/ram_silent_stubs.c
     src/platform/shared/save_file.c
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c

@@ -128,6 +128,37 @@ struct PortBiosScratch {
 #endif
 #define OAM_SIZE 0x400
 
+#ifdef __PORT__
+/* A handful of `src/...` translation units write to GBA hardware
+ * regions through a literal integer constant (e.g. `(u8*)0x07000000`,
+ * `(void*)0x600C000`) rather than the named macros above. On real
+ * hardware those literals are valid; on the host they would dereference
+ * an unmapped low-memory page and SIGSEGV. `PORT_HW_ADDR(x)` translates
+ * the literal to the corresponding offset inside the matching host
+ * array (`gPortVram`, `gPortOam`, `gPortPltt`, `gPortEwram`,
+ * `gPortIwram`, `gPortIo`); addresses outside the recognised regions
+ * are returned unchanged so the call site keeps its original
+ * (likely-faulty) semantics rather than silently misdirecting to a
+ * different region. Intended use site is `#ifdef __PORT__` patches in
+ * the GBA decomp; see docs/sdl_port.md (PR #2b.4b). */
+static inline void* Port_HwAddr(uintptr_t a) {
+    if (a >= 0x06000000u && a < 0x06000000u + PORT_VRAM_SIZE)
+        return (void*)((uintptr_t)gPortVram + (a - 0x06000000u));
+    if (a >= 0x07000000u && a < 0x07000000u + PORT_OAM_SIZE)
+        return (void*)((uintptr_t)gPortOam + (a - 0x07000000u));
+    if (a >= 0x05000000u && a < 0x05000000u + PORT_PLTT_SIZE)
+        return (void*)((uintptr_t)gPortPltt + (a - 0x05000000u));
+    if (a >= 0x02000000u && a < 0x02000000u + PORT_EWRAM_SIZE)
+        return (void*)((uintptr_t)gPortEwram + (a - 0x02000000u));
+    if (a >= 0x03000000u && a < 0x03000000u + PORT_IWRAM_SIZE)
+        return (void*)((uintptr_t)gPortIwram + (a - 0x03000000u));
+    if (a >= 0x04000000u && a < 0x04000000u + PORT_IO_SIZE)
+        return (void*)((uintptr_t)gPortIo + (a - 0x04000000u));
+    return (void*)a;
+}
+#define PORT_HW_ADDR(a) Port_HwAddr((uintptr_t)(a))
+#endif
+
 #define ROM_HEADER_SIZE 0xC0
 
 #define DISPLAY_WIDTH 240
