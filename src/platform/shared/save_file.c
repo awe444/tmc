@@ -4,10 +4,12 @@
  *        (64 KiB, mirroring the on-cart Flash chip) so save data persists
  *        across runs.
  *
- * PR #6 of the roadmap will route the calls in src/save.c (and
- * include/gba/flash_internal.h) through Port_SaveReadByte /
- * Port_SaveWriteByte. For now this module is self-contained and tested
- * via the SDL `main`'s startup/shutdown calls.
+ * Wired into `src/eeprom.c` as of PR #6 of the roadmap: `EEPROMRead` and
+ * `EEPROMWrite` short-circuit under `__PORT__` and call
+ * `Port_SaveReadByte` / `Port_SaveWriteByte` directly against the buffer
+ * below; each successful write triggers a `Port_SaveFlush` so changes
+ * survive a process exit. The 64 KiB layout is more than enough for
+ * TMC's 8 KiB EEPROM (`EEPROMConfigure(0x40)`).
  */
 #include "platform/port.h"
 
