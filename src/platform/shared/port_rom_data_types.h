@@ -52,23 +52,15 @@ typedef struct {
 /* Layout-compatibility guards. Any future change to these structs
  * (or to the file-local copies in `src/common.c`) that breaks size
  * or field offsets will fail at compile time instead of at runtime. */
-_Static_assert(sizeof(PaletteGroup) == 4,
-               "PaletteGroup must be u16 + u8 + u8 = 4 bytes");
-_Static_assert(offsetof(PaletteGroup, paletteId) == 0,
-               "PaletteGroup.paletteId must be at offset 0");
-_Static_assert(offsetof(PaletteGroup, destPaletteNum) == 2,
-               "PaletteGroup.destPaletteNum must be at offset 2");
-_Static_assert(offsetof(PaletteGroup, numPalettes) == 3,
-               "PaletteGroup.numPalettes must be at offset 3");
+_Static_assert(sizeof(PaletteGroup) == 4, "PaletteGroup must be u16 + u8 + u8 = 4 bytes");
+_Static_assert(offsetof(PaletteGroup, paletteId) == 0, "PaletteGroup.paletteId must be at offset 0");
+_Static_assert(offsetof(PaletteGroup, destPaletteNum) == 2, "PaletteGroup.destPaletteNum must be at offset 2");
+_Static_assert(offsetof(PaletteGroup, numPalettes) == 3, "PaletteGroup.numPalettes must be at offset 3");
 
-_Static_assert(sizeof(GfxItem) == 12,
-               "GfxItem must be 4 + 4 + 4 = 12 bytes");
-_Static_assert(offsetof(GfxItem, unk0) == 0,
-               "GfxItem.unk0 must be at offset 0");
-_Static_assert(offsetof(GfxItem, dest) == 4,
-               "GfxItem.dest must be at offset 4");
-_Static_assert(offsetof(GfxItem, unk8) == 8,
-               "GfxItem.unk8 must be at offset 8");
+_Static_assert(sizeof(GfxItem) == 12, "GfxItem must be 4 + 4 + 4 = 12 bytes");
+_Static_assert(offsetof(GfxItem, unk0) == 0, "GfxItem.unk0 must be at offset 0");
+_Static_assert(offsetof(GfxItem, dest) == 4, "GfxItem.dest must be at offset 4");
+_Static_assert(offsetof(GfxItem, unk8) == 8, "GfxItem.unk8 must be at offset 8");
 
 #endif /* __PORT__ */
 

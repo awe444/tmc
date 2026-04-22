@@ -83,15 +83,12 @@ static const GfxItem sPortGfxGroupTerminator = {
 /* Helper macros to spell out 133 identical pointer initializers
  * portably (no GNU `[lo ... hi] =` designated-range extension, so
  * MSVC stays happy). 128 + 4 + 1 = 133 entries. */
-#define PORT_TERM_8                                                          \
-    &sPortGfxGroupTerminator, &sPortGfxGroupTerminator,                      \
-        &sPortGfxGroupTerminator, &sPortGfxGroupTerminator,                  \
-        &sPortGfxGroupTerminator, &sPortGfxGroupTerminator,                  \
-        &sPortGfxGroupTerminator, &sPortGfxGroupTerminator
+#define PORT_TERM_8                                                                                         \
+    &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, \
+        &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator
 #define PORT_TERM_16 PORT_TERM_8, PORT_TERM_8
-#define PORT_TERM_128                                                        \
-    PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16,    \
-        PORT_TERM_16, PORT_TERM_16, PORT_TERM_16
+#define PORT_TERM_128 \
+    PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16, PORT_TERM_16
 
 /* Strong host definition (replaces the weak BSS stub in
  * port_unresolved_stubs.c). The size matches the ROM table:
@@ -150,9 +147,7 @@ const uint8_t gGlobalGfxAndPalettes[4096];
  * ----------------------------------------------------------------------- */
 
 static const PaletteGroup sPortPaletteGroupTerminator = {
-    .paletteId = 0,
-    .destPaletteNum = 0,
-    .numPalettes = 1, /* high bit clear -> loop exits after first iteration */
+    .paletteId = 0, .destPaletteNum = 0, .numPalettes = 1, /* high bit clear -> loop exits after first iteration */
 };
 
 /* gPaletteGroups[] in `data/gfx/palette_groups.s` is 208 pointer slots
@@ -161,18 +156,16 @@ static const PaletteGroup sPortPaletteGroupTerminator = {
  * for the smaller build because no in-range index is ever NULL.
  * Element type matches `extern const PaletteGroup* gPaletteGroups[]`
  * in `src/common.c` exactly (no extra trailing `const`). */
-#define PORT_PALG_8                                                          \
-    &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,              \
-        &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,          \
-        &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,          \
+#define PORT_PALG_8                                                                               \
+    &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,     \
+        &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator, \
         &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator
 #define PORT_PALG_16 PORT_PALG_8, PORT_PALG_8
 #define PORT_PALG_64 PORT_PALG_16, PORT_PALG_16, PORT_PALG_16, PORT_PALG_16
 #define PORT_PALG_192 PORT_PALG_64, PORT_PALG_64, PORT_PALG_64
 
 const PaletteGroup* gPaletteGroups[208] = {
-    PORT_PALG_192,
-    PORT_PALG_8, PORT_PALG_8,    /* 16  -> 208 */
+    PORT_PALG_192, PORT_PALG_8, PORT_PALG_8, /* 16  -> 208 */
 };
 
 #endif /* __PORT__ */
