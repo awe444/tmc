@@ -139,12 +139,13 @@ __asm__(
  * reaches `EraseAllEntities` *before* its own `sub_0805E98C` line,
  * and the (previously weak) BSS-only definition of `gEntityLists`
  * came up zero-filled. Promoting the array to a strong host
- * definition with a constructor that pre-installs the self-loop
- * pattern makes the boot path immediately match the engine's
- * "freshly initialised" expectation, regardless of which entry point
- * runs first. The same treatment applies to `gEntityListsBackup`,
- * which `sub_0805E958` / `sub_0805E974` `MemCopy` against and which
- * any later traversal would otherwise also walk through NULL. */
+ * definition and having `Port_GlobalsInit()` pre-install the
+ * self-loop pattern before `AgbMain` makes the boot path immediately
+ * match the engine's "freshly initialised" expectation, regardless
+ * of which entry point runs first. The same treatment applies to
+ * `gEntityListsBackup`, which `sub_0805E958` / `sub_0805E974`
+ * `MemCopy` against and which any later traversal would otherwise
+ * also walk through NULL. */
 LinkedList gEntityLists[9];
 LinkedList gEntityListsBackup[9];
 
