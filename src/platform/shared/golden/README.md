@@ -20,8 +20,8 @@ compares the resulting `actual` value against the matching file's
 
 | File                              | Build configuration       | What it pins                                                           |
 |-----------------------------------|---------------------------|------------------------------------------------------------------------|
-| `usa_off_frames30.txt`            | `TMC_LINK_GAME_SOURCES=OFF` (default) | The empty `agb_main_stub.c` loop's framebuffer after 30 frames. |
-| `usa_on_frames30.txt`             | `TMC_LINK_GAME_SOURCES=ON`            | The real `src/main.c::AgbMain`'s framebuffer after 30 frames — i.e. the title-screen idle reached after `HandleNintendoCapcomLogos` -> `HandleTitlescreen`. The hash has been verified stable across `--frames={30, 60, 120, 240, 600, 1200}`, so locking it in catches both rasterizer regressions and boot-time game-state divergences. |
+| `usa_off_frames30.txt`            | `TMC_LINK_GAME_SOURCES=OFF`           | The empty `agb_main_stub.c` loop's framebuffer after 30 frames. |
+| `usa_on_frames30.txt`             | `TMC_LINK_GAME_SOURCES=ON` (default)  | The real `src/main.c::AgbMain`'s framebuffer after 30 frames — i.e. the title-screen idle reached after `HandleNintendoCapcomLogos` -> `HandleTitlescreen`. The hash has been verified stable across `--frames={30, 60, 120, 240, 600, 1200}`, so locking it in catches both rasterizer regressions and boot-time game-state divergences. |
 
 ## Updating a hash
 

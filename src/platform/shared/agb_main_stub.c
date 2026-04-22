@@ -3,13 +3,14 @@
  * @brief Placeholder definition of `AgbMain`.
  *
  * The real `AgbMain` lives in src/main.c and is the entry point of the
- * decompiled game. PR #2 of the SDL-port roadmap will add the existing
- * src C sources to the SDL CMake target, at which point this stub
- * will be excluded and the real `AgbMain` will take over.
- *
- * Until then we provide an empty frame loop so the SDL platform layer
- * can be built and exercised on its own (a blank window paced at the
- * GBA's 59.7274 Hz with working keyboard + gamepad input).
+ * decompiled game. With the default `TMC_LINK_GAME_SOURCES=ON` (PR #2b.4b
+ * of the SDL-port roadmap) the real `AgbMain` is what runs; this TU only
+ * enters the executable when `TMC_LINK_GAME_SOURCES=OFF` is passed
+ * explicitly, in which case it provides an empty frame loop so the SDL
+ * platform layer can be built and exercised on its own (a blank window
+ * paced at the GBA's 59.7274 Hz with working keyboard + gamepad input).
+ * That `=OFF` mode is preserved as an early-bring-up scaffold for future
+ * ports (PSP / PS2 / ...) and as a platform-layer isolation harness.
  */
 #include "platform/port.h"
 
@@ -21,9 +22,9 @@
 int Port_HeadersSelfCheck(void);
 
 void AgbMain(void) {
-    fprintf(stderr, "[tmc_sdl] AgbMain stub running. The real game source has not "
-                    "yet been linked into the SDL build (see docs/sdl_port.md, "
-                    "roadmap PR #2). The window will stay blank until then.\n");
+    fprintf(stderr, "[tmc_sdl] AgbMain stub running (TMC_LINK_GAME_SOURCES=OFF). "
+                    "The real game source is not linked into this build, so the "
+                    "window will stay blank. See docs/sdl_port.md.\n");
 
     if (Port_HeadersSelfCheck() != 0) {
         fprintf(stderr, "[tmc_sdl] FATAL: GBA header rewiring self-check failed. "
