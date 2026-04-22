@@ -17,11 +17,12 @@
  * fades, sprite drawing, etc.), it is safe to install a real (non-weak)
  * silent stub during the runtime-flip ramp-up: the game state stays
  * consistent and the smoke test no longer aborts. When the real C port
- * lands later in the roadmap (or the original `.s` file is wired in)
- * it provides a strong definition with the same name and the linker
- * picks the real one over this stub. The matching ROM build is
- * unchanged because none of these `__PORT__`-only TUs participate in
- * the GBA Makefile.
+ * lands later in the roadmap (or the original `.s` file is wired into
+ * the same host binary), this stub must be removed or compiled out:
+ * both it and the real implementation are strong definitions, so
+ * keeping both would cause a multiple-definition link error. The
+ * matching ROM build is unchanged because none of these `__PORT__`-only
+ * TUs participate in the GBA Makefile.
  *
  * Each stub is intentionally declared with a `void(void)` prototype --
  * the linker resolves by name only, so callers compiled against the
