@@ -129,12 +129,15 @@ jobs:
           SDL_AUDIODRIVER: dummy
         run: |
           set -euo pipefail
-          mkdir -p build-link-on/golden-tmp
+          mkdir -p build-link-on
+          save_dir_run1=$(mktemp -d build-link-on/golden-tmp-run1.XXXXXX)
+          save_dir_run2=$(mktemp -d build-link-on/golden-tmp-run2.XXXXXX)
+          trap 'rm -rf "$save_dir_run1" "$save_dir_run2"' EXIT
           run1=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
+                     --save-dir="$save_dir_run1" --print-frame-hash 2>/dev/null \
                      | grep '^frame-hash:' || true)
           run2=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir=build-link-on/golden-tmp --print-frame-hash 2>/dev/null \
+                     --save-dir="$save_dir_run2" --print-frame-hash 2>/dev/null \
                      | grep '^frame-hash:' || true)
           expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_on_frames30.txt || true)
           echo "run1:     $run1"
