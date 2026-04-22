@@ -776,8 +776,16 @@ static uint8_t window_byte_to_mask(uint8_t b) {
 static int win_v_in_range(uint16_t winv, int y) {
     int y1 = (winv >> 8) & 0xFF;
     int y2 = winv & 0xFF;
-    if (y2 > DISP_H || y2 < y1) {
+
+    if (y1 > DISP_H) {
+        y1 = DISP_H;
+    }
+    if (y2 > DISP_H) {
         y2 = DISP_H;
+    }
+
+    if (y2 <= y1) {
+        return (y >= y1) || (y < y2);
     }
     return (y >= y1) && (y < y2);
 }
@@ -785,13 +793,26 @@ static int win_v_in_range(uint16_t winv, int y) {
 static void win_h_range(uint16_t winh, int* x1_out, int* x2_out) {
     int x1 = (winh >> 8) & 0xFF;
     int x2 = winh & 0xFF;
-    if (x2 > DISP_W || x2 < x1) {
+
+    if (x1 > DISP_W) {
+        x1 = DISP_W;
+    }
+    if (x2 > DISP_W) {
         x2 = DISP_W;
     }
+
+    /* Preserve x2 <= x1 so callers can distinguish wrapped windows:
+     * [x1, DISP_W) || [0, x2). */
     *x1_out = x1;
     *x2_out = x2;
 }
 
+static int win_h_in_range(int x, int x1, int x2) {
+    if (x2 <= x1) {
+        return (x >= x1) || (x < x2);
+    }
+    return (x >= x1) && (x < x2);
+}
 static void compute_window_mask(int y, uint16_t dispcnt, const ObjScanline* obj, WindowMask* out) {
     int win0_on = (dispcnt & DISPCNT_WIN0_ON) != 0;
     int win1_on = (dispcnt & DISPCNT_WIN1_ON) != 0;
