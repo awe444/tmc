@@ -34,3 +34,47 @@ void Port_m4aSoundClear(void) { /* silent */
 void Port_SoundReq(int song) {
     (void)song;
 }
+
+/* Unprefixed silent stubs for the m4a entry points that the game calls
+ * directly (see include/gba/m4a.h). With TMC_LINK_GAME_SOURCES=ON
+ * `src/sound.c` and friends pull these symbols in during boot. The
+ * weak abort-trap in `port_unresolved_stubs.c` made AgbMain SIGABRT on
+ * the first sound init; providing real (non-weak) silent stubs here
+ * lets boot proceed past `InitSound`, while the matching ROM build
+ * keeps using the real `src/gba/m4a.c`. PR #7 will replace this whole
+ * file with the actual ported m4a engine. See docs/sdl_port.md
+ * (PR #2b.4b runtime flip / PR #7). */
+struct MusicPlayerInfo;
+void m4aSoundInit(void) { /* silent */
+}
+void m4aSoundMain(void) { /* silent */
+}
+void m4aSoundVSync(void) { /* silent */
+}
+void m4aSoundVSyncOn(void) { /* silent */
+}
+void m4aSoundVSyncOff(void) { /* silent */
+}
+void m4aMPlayAllStop(void) { /* silent */
+}
+void m4aSongNumStart(unsigned short n) {
+    (void)n;
+}
+void m4aSongNumStartOrContinue(unsigned short n) {
+    (void)n;
+}
+void m4aSongNumStop(unsigned short n) {
+    (void)n;
+}
+void m4aMPlayImmInit(struct MusicPlayerInfo* mp) {
+    (void)mp;
+}
+void m4aMPlayTempoControl(struct MusicPlayerInfo* mp, unsigned short tempo) {
+    (void)mp;
+    (void)tempo;
+}
+void m4aMPlayVolumeControl(struct MusicPlayerInfo* mp, unsigned short trackBits, unsigned short volume) {
+    (void)mp;
+    (void)trackBits;
+    (void)volume;
+}

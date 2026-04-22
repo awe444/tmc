@@ -17,7 +17,17 @@ typedef struct {
     u8 invalid;
     u8 initialized;
 } SaveHeader;
+#ifdef __PORT__
+/* `EWRAM_START` resolves to `(uintptr_t)gPortEwram` under __PORT__,
+ * so `gSaveHeader` lands at the start of the host EWRAM array. The
+ * matching ROM build keeps the original literal `0x2000000` so agbcc
+ * emits the same instruction stream. See docs/sdl_port.md (PR #2b.4b
+ * runtime flip). */
+#include "gba/defines.h"
+#define gSaveHeader ((SaveHeader*)EWRAM_START)
+#else
 #define gSaveHeader ((SaveHeader*)(0x2000000))
+#endif
 
 typedef enum {
     SAVE_BUSY = 0,

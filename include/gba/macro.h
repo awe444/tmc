@@ -184,4 +184,40 @@
         REG_IME = imeTemp; \
     }
 
+#ifdef __PORT__
+/* The macros above poke the GBA's memory-mapped DMA registers and trust
+ * the hardware to actually run the transfer and clear DMA_ENABLE when
+ * done. On the host the registers are just bytes in `gPortIo` -- writes
+ * have no side effect and DMA_ENABLE never clears, so a subsequent
+ * `DmaWait()` spins forever (this is what blocks `InitDMA()` during
+ * boot under TMC_LINK_GAME_SOURCES=ON). Override the macros to forward
+ * into the synchronous host implementations in src/platform/shared/dma.c.
+ * The matching ROM build keeps the original definitions above. See
+ * docs/sdl_port.md (PR #2b.4b runtime flip). */
+#include "platform/port.h"
+#undef DmaSet
+#undef DMA_FILL
+#undef DmaFill16
+#undef DmaFill32
+#undef DMA_COPY
+#undef DmaCopy16
+#undef DmaCopy32
+#undef DmaStop
+#undef DmaWait
+#define DmaSet(dmaNum, src, dest, control) Port_DmaSet((dmaNum), (const void*)(src), (void*)(dest), (u32)(control))
+#define DMA_FILL(dmaNum, value, dest, size, bit)                     \
+    {                                                                \
+        u##bit _v = (u##bit)(value);                                 \
+        Port_DmaFill##bit((dmaNum), _v, (void*)(dest), (u32)(size)); \
+    }
+#define DmaFill16(dmaNum, value, dest, size) Port_DmaFill16((dmaNum), (u16)(value), (void*)(dest), (u32)(size))
+#define DmaFill32(dmaNum, value, dest, size) Port_DmaFill32((dmaNum), (u32)(value), (void*)(dest), (u32)(size))
+#define DMA_COPY(dmaNum, src, dest, size, bit) \
+    Port_DmaCopy##bit((dmaNum), (const void*)(src), (void*)(dest), (u32)(size))
+#define DmaCopy16(dmaNum, src, dest, size) Port_DmaCopy16((dmaNum), (const void*)(src), (void*)(dest), (u32)(size))
+#define DmaCopy32(dmaNum, src, dest, size) Port_DmaCopy32((dmaNum), (const void*)(src), (void*)(dest), (u32)(size))
+#define DmaStop(dmaNum) Port_DmaStop((dmaNum))
+#define DmaWait(DmaNo) Port_DmaWait((DmaNo))
+#endif
+
 #endif // MACRO_H

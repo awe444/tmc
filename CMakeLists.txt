@@ -164,6 +164,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/dma.c
     src/platform/shared/bios.c
     src/platform/shared/m4a_stub.c
+    src/platform/shared/ram_silent_stubs.c
     src/platform/shared/save_file.c
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
@@ -212,6 +213,17 @@ else()
 endif()
 if(TMC_WIDESCREEN)
     target_compile_definitions(tmc_sdl PRIVATE TMC_WIDESCREEN=1)
+endif()
+# Mirror the CMake option into a preprocessor define so platform/shared
+# TUs (e.g. src/platform/shared/interrupts.c) can compile out their
+# placeholder definitions of symbols (like VBlankIntr) that the real
+# game library will provide when linked. Without this, the placeholder
+# is always defined and collides with src/interrupts.c::VBlankIntr at
+# link time. Defined as 1/0 so `#if TMC_LINK_GAME_SOURCES` works too.
+if(TMC_LINK_GAME_SOURCES)
+    target_compile_definitions(tmc_sdl PRIVATE TMC_LINK_GAME_SOURCES=1)
+else()
+    target_compile_definitions(tmc_sdl PRIVATE TMC_LINK_GAME_SOURCES=0)
 endif()
 
 # Compiler flags. The decompiled game code relies heavily on type-punning,

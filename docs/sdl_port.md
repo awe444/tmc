@@ -360,6 +360,53 @@ are tracked here for future contributors.
     single big step here; once those ports reduce the stub surface
     enough that `AgbMain` survives the smoke-test budget, the default
     can flip.
+
+    *Progress so far (incremental landings under this checkbox):*
+    The first few "literal hardware address" SIGSEGVs along the boot
+    path have been removed so `AgbMain` now reaches its main
+    `WaitForNextFrame()` loop and runs the title-screen task before
+    SIGSEGV-ing on the (still-unresolved) `gGfxGroups` /
+    `gGlobalGfxAndPalettes` data tables. Specifically:
+    * Added `PORT_HW_ADDR(addr)` in `include/gba/defines.h` -- a host
+      translator from a literal GBA hardware address (`0x07000000`,
+      `0x06000000`, ...) to the matching offset inside the emulated
+      `gPort{Vram,Oam,Pltt,Ewram,Iwram,Io}` array. Routed
+      `src/common.c::ClearOAM` / `DispReset` through it (the very first
+      `*(u16*)0x07000000 = 0x2A0` was the original SIGSEGV).
+    * Under `__PORT__`, redefined the `Dma{Set,Copy,Fill,Stop,Wait}`
+      macros in `include/gba/macro.h` to forward into the existing
+      synchronous `Port_Dma*` host helpers in
+      `src/platform/shared/dma.c`. The unmodified macros poke
+      memory-mapped DMA registers and busy-wait for the controller to
+      clear `DMA_ENABLE`; on the host that bit never clears and
+      `InitDMA()` would spin forever.
+    * Added unprefixed silent `m4a*` stubs (`m4aSoundInit`,
+      `m4aMPlayAllStop`, ...) to `src/platform/shared/m4a_stub.c` so
+      `InitSound()` no longer SIGABRTs on the weak `Port_UnresolvedTrap`.
+      The real m4a engine is PR #7.
+    * Neutralized `src/eeprom.c::DMA3Transfer` and the bare
+      `REG_EEPROM` poll under `__PORT__` (EEPROM-backed save persistence
+      is PR #6) so `InitSaveData` runs to completion against an
+      empty-EEPROM model.
+    * Rewired `gSaveHeader` in `include/save.h` to point at the start
+      of the host EWRAM array under `__PORT__` (the literal
+      `0x02000000` pointer SIGSEGV'd inside `CheckHeaderValid()`).
+    * Wired the host `VBlankIntrWait` in
+      `src/platform/shared/interrupts.c` to invoke the game's
+      `VBlankIntr()` handler synchronously after pacing -- the GBA
+      relies on the IRQ controller calling it, which sets
+      `gMain.interruptFlag = 1` and lets `WaitForNextFrame()` return.
+    * Added `src/platform/shared/ram_silent_stubs.c` to provide
+      real silent overrides for `ram_*` ARM-assembly helpers reached
+      during boot (currently just `ram_MakeFadeBuff256` for
+      `FadeVBlank()`); the ROM build is unaffected because these TUs
+      are `__PORT__`-only.
+
+    The next blocker is the unresolved `gGfxGroups` /
+    `gGlobalGfxAndPalettes` data tables (referenced from
+    `LoadGfxGroup` during `TitleTask`'s Nintendo / Capcom logo step),
+    which belongs to the still-pending ROM-data wiring step rather
+    than the runtime flip itself.
 - [x] **PR #3.** `Port_InputPump()` now writes `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot (`gPortIo + 0x130`) every frame, and
   `Port_InputInit()` primes the slot to `0x3FF` (no keys pressed) before
