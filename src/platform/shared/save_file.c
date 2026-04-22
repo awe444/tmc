@@ -28,13 +28,11 @@ static void build_save_path(const char* save_dir) {
     if (save_dir == NULL || save_dir[0] == '\0') {
         snprintf(s_save_path, sizeof(s_save_path), "%s", PORT_SAVE_FILENAME);
     } else {
-#if defined(_WIN32)
-        const char sep = '\\';
-#else
+        /* POSIX-only path joining; Microsoft Windows builds are not
+         * supported (see docs/sdl_port.md). */
         const char sep = '/';
-#endif
         size_t len = strlen(save_dir);
-        if (len > 0 && (save_dir[len - 1] == '/' || save_dir[len - 1] == '\\')) {
+        if (len > 0 && save_dir[len - 1] == '/') {
             snprintf(s_save_path, sizeof(s_save_path), "%s%s", save_dir, PORT_SAVE_FILENAME);
         } else {
             snprintf(s_save_path, sizeof(s_save_path), "%s%c%s", save_dir, sep, PORT_SAVE_FILENAME);

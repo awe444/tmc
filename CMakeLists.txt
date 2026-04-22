@@ -23,16 +23,20 @@ project(tmc_sdl
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
+# Supported host platforms: Linux and macOS only. Windows builds (MSVC,
+# MinGW) are explicitly NOT supported by this port; do not add `win32`
+# back to the option list without removing that statement from
+# docs/sdl_port.md.
 set(TMC_PORT_PLATFORM "sdl" CACHE STRING
-    "Target port platform. Reserved values: sdl, win32, psp, ps2.")
-set_property(CACHE TMC_PORT_PLATFORM PROPERTY STRINGS sdl win32 psp ps2)
+    "Target port platform. Reserved values: sdl, psp, ps2.")
+set_property(CACHE TMC_PORT_PLATFORM PROPERTY STRINGS sdl psp ps2)
 
 set(TMC_GAME_VERSION "USA" CACHE STRING
     "Game version to build. One of: USA, EU, JP, DEMO_USA, DEMO_JP.")
 set_property(CACHE TMC_GAME_VERSION PROPERTY STRINGS USA EU JP DEMO_USA DEMO_JP)
 
 option(TMC_ENABLE_AUDIO   "Open SDL audio device (silent stub mixer for now)." ON)
-option(TMC_ENABLE_GAMEPAD "Enable SDL_GameController / XInput gamepad support." ON)
+option(TMC_ENABLE_GAMEPAD "Enable SDL_GameController gamepad support." ON)
 option(TMC_WIDESCREEN     "Reserve hooks for the future widescreen renderer."   OFF)
 option(TMC_USE_FETCHCONTENT_SDL
     "Fall back to FetchContent for SDL2 if it isn't found on the system." OFF)
@@ -132,10 +136,8 @@ if(NOT _TMC_SDL_TARGET)
     endif()
 endif()
 
-# Optional SDL2main (Windows entry-point shim).
-if(TARGET SDL2::SDL2main)
-    set(_TMC_SDL_MAIN SDL2::SDL2main)
-endif()
+# SDL2main is a Windows-only entry-point shim and is not used by this
+# port (Windows builds are unsupported).
 
 # ---------------------------------------------------------------------------
 # Source list
@@ -229,26 +231,21 @@ endif()
 
 # Compiler flags. The decompiled game code relies heavily on type-punning,
 # so strict-aliasing must stay off for any future PR that links it. We
-# enable the same flag here so the platform layer matches.
-if(MSVC)
-    target_compile_options(tmc_sdl PRIVATE /W3 /wd4146 /wd4244 /wd4305)
-else()
-    target_compile_options(tmc_sdl PRIVATE
-        -O2 -g
-        -Wall
-        -Wno-multichar
-        -Wno-parentheses
-        -Wno-unused-parameter
-        -Wno-unused-function
-        -Wno-unused-variable
-        -fno-strict-aliasing
-    )
-endif()
+# enable the same flag here so the platform layer matches. Only GCC /
+# Clang are supported (Windows / MSVC builds are out of scope -- see
+# docs/sdl_port.md).
+target_compile_options(tmc_sdl PRIVATE
+    -O2 -g
+    -Wall
+    -Wno-multichar
+    -Wno-parentheses
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-unused-variable
+    -fno-strict-aliasing
+)
 
 target_link_libraries(tmc_sdl PRIVATE ${_TMC_SDL_TARGET})
-if(_TMC_SDL_MAIN)
-    target_link_libraries(tmc_sdl PRIVATE ${_TMC_SDL_MAIN})
-endif()
 
 if(UNIX AND NOT APPLE)
     target_link_libraries(tmc_sdl PRIVATE m)
@@ -934,21 +931,17 @@ target_compile_definitions(tmc_game_sources PRIVATE
     PORT_SDL
     ${TMC_VERSION_DEFINES}
 )
-if(MSVC)
-    target_compile_options(tmc_game_sources PRIVATE /W3 /wd4146 /wd4244 /wd4305)
-else()
-    target_compile_options(tmc_game_sources PRIVATE
-        -O2 -g
-        -Wall
-        -Wno-multichar
-        -Wno-parentheses
-        -Wno-unused-parameter
-        -Wno-unused-function
-        -Wno-unused-variable
-        -Wno-missing-braces
-        -fno-strict-aliasing
-    )
-endif()
+target_compile_options(tmc_game_sources PRIVATE
+    -O2 -g
+    -Wall
+    -Wno-multichar
+    -Wno-parentheses
+    -Wno-unused-parameter
+    -Wno-unused-function
+    -Wno-unused-variable
+    -Wno-missing-braces
+    -fno-strict-aliasing
+)
 # Always build the library alongside tmc_sdl so CI catches regressions
 # in the leaf set on every PR. Only LINK it into the executable when
 # `TMC_LINK_GAME_SOURCES=ON`; with the default OFF, the build still
@@ -978,14 +971,10 @@ target_compile_definitions(tmc_unresolved_stubs PRIVATE
     PORT_SDL
     ${TMC_VERSION_DEFINES}
 )
-if(MSVC)
-    target_compile_options(tmc_unresolved_stubs PRIVATE /W3)
-else()
-    target_compile_options(tmc_unresolved_stubs PRIVATE
-        -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function
-        -fno-strict-aliasing
-    )
-endif()
+target_compile_options(tmc_unresolved_stubs PRIVATE
+    -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function
+    -fno-strict-aliasing
+)
 add_dependencies(tmc_sdl tmc_unresolved_stubs)
 
 if(TMC_LINK_GAME_SOURCES)

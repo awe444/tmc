@@ -119,6 +119,11 @@ _Static_assert(offsetof(struct port_entity_arena, ents) == PORT_ARENA_OFF_ENTS,
 
 #define PORT_STR(x) #x
 #define PORT_XSTR(x) PORT_STR(x)
+/* Publish the three engine names as symbol aliases pointing at the
+ * matching fields of `sPortEntityArena`. Uses GNU `.set` directive
+ * syntax via `__asm__`; this is GCC / Clang only. Microsoft Windows
+ * (MSVC) builds are not supported by this port -- see
+ * docs/sdl_port.md -- so no MSVC fallback is needed here. */
 __asm__(
     ".globl gPlayerEntity\n"
     ".set   gPlayerEntity, sPortEntityArena\n"

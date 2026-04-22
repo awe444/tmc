@@ -142,9 +142,9 @@ void Port_VideoPresent(void);
 /* The rasterizer is host-portable and lives in `src/platform/shared/        */
 /* render.c`. It has no SDL or OS dependency: it reads exclusively from the  */
 /* host arrays declared above and writes a packed 240 x 160 ARGB8888         */
-/* framebuffer (row-major, no padding). Future ports (PSP, PS2, win32)       */
-/* reuse it by calling `Port_RenderFrame()` and uploading the result to      */
-/* their own swap chain.                                                     */
+/* framebuffer (row-major, no padding). Future ports (PSP, PS2) reuse it */
+/* by calling `Port_RenderFrame()` and uploading the result to their own  */
+/* swap chain.                                                            */
 /* ------------------------------------------------------------------------ */
 #define PORT_GBA_DISPLAY_WIDTH 240
 #define PORT_GBA_DISPLAY_HEIGHT 160

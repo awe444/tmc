@@ -36,8 +36,8 @@ goal here is the equivalent `tmc.sdl`.
 > reaches enough unresolved stubs during early init that it SIGSEGVs,
 > and fleshing those paths out is the scope of PRs #5 – #7.** The
 > default build produces a `tmc_sdl` executable that opens a 240×160
-> (scaled 4×) window, accepts keyboard and gamepad input (X-Input on
-> Windows via `SDL_GameController`), opens a silent SDL audio device,
+> (scaled 4×) window, accepts keyboard and gamepad input (via
+> `SDL_GameController`), opens a silent SDL audio device,
 > presents the emulated GBA framebuffer composited from the
 > background tilemaps and OBJ layer, and runs at 59.7274 Hz. The
 > GBA decomp headers
@@ -54,10 +54,15 @@ goal here is the equivalent `tmc.sdl`.
 
 ## Building
 
+> **Supported host platforms: Linux and macOS only.** Microsoft
+> Windows builds (MSVC, MinGW, vcpkg, cross-compile, etc.) are
+> explicitly **not** supported by this port. Patches that re-add
+> Windows-specific code paths will be rejected.
+
 Prerequisites:
 
 - CMake 3.16+
-- A C compiler (GCC ≥ 9, Clang ≥ 10, or MSVC 2019+)
+- GCC ≥ 9 or Clang ≥ 10
 - SDL2 ≥ 2.0.18 (`SDL_GameController` + `SDL_RenderSetIntegerScale` are used)
 
 ### Linux
@@ -78,31 +83,14 @@ cmake --build --preset sdl-release
 ./build/sdl-release/tmc_sdl
 ```
 
-### Windows (MSVC + vcpkg)
-
-```pwsh
-vcpkg install sdl2:x64-windows
-cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake
-cmake --build build --config Release
-build\Release\tmc_sdl.exe
-```
-
-### Windows (MinGW / cross-compile from Linux)
-
-```sh
-sudo apt install mingw-w64 ninja-build
-cmake --preset sdl-mingw      # downloads & static-links SDL2 via FetchContent
-cmake --build --preset sdl-mingw
-```
-
 ### CMake options
 
 | Option                       | Default | Description                                              |
 |------------------------------|---------|----------------------------------------------------------|
-| `TMC_PORT_PLATFORM`          | `sdl`   | Reserved for future ports (`win32`, `psp`, `ps2`).       |
+| `TMC_PORT_PLATFORM`          | `sdl`   | Reserved for future ports (`psp`, `ps2`).                |
 | `TMC_GAME_VERSION`           | `USA`   | One of `USA`, `EU`, `JP`, `DEMO_USA`, `DEMO_JP`.         |
 | `TMC_ENABLE_AUDIO`           | `ON`    | Open the SDL audio device (silent until PR #9).          |
-| `TMC_ENABLE_GAMEPAD`         | `ON`    | Initialise `SDL_GameController` for X-Input pads.        |
+| `TMC_ENABLE_GAMEPAD`         | `ON`    | Initialise `SDL_GameController` for gamepad input.       |
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
 | `TMC_LINK_GAME_SOURCES`      | `OFF`   | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4a). The library is always **built** as a dependency; this option controls whether it is also **linked**. Turning it ON requires the 2b.4b stubs for the symbols still reaching into `src/enemy/`, `src/manager/`, etc. |
@@ -120,7 +108,7 @@ tmc_sdl [options]
 
 ## Controls
 
-| GBA button | Keyboard       | Gamepad (`SDL_GameController` / XInput on Windows) |
+| GBA button | Keyboard       | Gamepad (`SDL_GameController`)                     |
 |------------|----------------|----------------------------------------------------|
 | A          | X              | A button                                           |
 | B          | Z              | B button                                           |
@@ -166,7 +154,7 @@ src/                           ← unchanged GBA-decomp game source
 include/                       ← unchanged GBA-decomp headers
 ```
 
-The contract for adding a new port (e.g. `psp/`, `ps2/`, `win32/` later) is:
+The contract for adding a new port (e.g. `psp/`, `ps2/` later) is:
 
 1. Provide an implementation of every function in `include/platform/port.h`.
 2. List your sources in `CMakeLists.txt` under a new `if(TMC_PORT_PLATFORM
@@ -501,7 +489,7 @@ are tracked here for future contributors.
   `gPortPltt` / `gPortOam` arrays and writes a packed 240x160 ARGB8888
   framebuffer. `src/platform/sdl/video.c::Port_VideoPresent()` calls
   the renderer instead of the previous opaque-black fill, so future
-  ports (PSP, PS2, win32) can reuse the renderer verbatim.
+  ports (PSP, PS2) can reuse the renderer verbatim.
   Implemented:
   * `DISPCNT` mode + bg/obj enable bits + forced-blank (white screen).
   * BG mode 0 -- all four text BGs, each with `BGxCNT` priority,
@@ -646,7 +634,7 @@ that hashes against `tmc.sha1`, and Jenkins continues to verify it.
   picks one of those two strategies per file.
 - **agbcc-isms.** `FORCE_REGISTER`, naked interrupt handlers, packed
   struct layout assumptions, and inline assembly in `include/asm.h` will
-  not compile on clang/gcc/MSVC unmodified. PR #2 conditionally
+  not compile on clang / gcc unmodified. PR #2 conditionally
   replaces them with no-ops under `#ifdef __PORT__`.
 - **Mid-scanline raster effects.** TMC may use HBlank-driven palette or
   scroll changes (`src/scroll.c`, `src/fade.c`). The PR #4 renderer

@@ -81,8 +81,8 @@ static const GfxItem sPortGfxGroupTerminator = {
 };
 
 /* Helper macros to spell out 133 identical pointer initializers
- * portably (no GNU `[lo ... hi] =` designated-range extension, so
- * MSVC stays happy). 128 + 4 + 1 = 133 entries. */
+ * portably (no GNU `[lo ... hi] =` designated-range extension).
+ * 128 + 4 + 1 = 133 entries. */
 #define PORT_TERM_8                                                                                         \
     &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, \
         &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator, &sPortGfxGroupTerminator

@@ -8,16 +8,16 @@
  * sleeping until the next 1/59.7274 s boundary and then ticking
  * Port_OnVBlank(). PR #2 will redirect the game's `VBlankIntrWait` macro
  * here.
+ *
+ * Supported host platforms: Linux and macOS only (POSIX
+ * `clock_gettime` / `nanosleep`). Microsoft Windows / MSVC builds are
+ * not supported -- see docs/sdl_port.md.
  */
 #include "platform/port.h"
 
 #include <setjmp.h>
 #include <stdint.h>
 #include <time.h>
-
-#if defined(_WIN32)
-#include <windows.h>
-#endif
 
 static volatile int s_quit_requested = 0;
 static volatile int s_frame_budget = 0;
@@ -31,46 +31,21 @@ static jmp_buf s_game_loop_jmp;
 static int s_game_loop_active = 0;
 
 static uint64_t now_ns(void) {
-#if defined(_WIN32)
-    static LARGE_INTEGER s_freq;
-    LARGE_INTEGER counter;
-    if (s_freq.QuadPart == 0) {
-        QueryPerformanceFrequency(&s_freq);
-    }
-    QueryPerformanceCounter(&counter);
-    /* Convert to nanoseconds without overflowing for typical perf-counter
-     * frequencies. */
-    return (uint64_t)((counter.QuadPart * 1000000000ULL) / (uint64_t)s_freq.QuadPart);
-#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000000000ULL + (uint64_t)ts.tv_nsec;
-#endif
 }
 
 static void sleep_ns(uint64_t ns) {
     if (ns == 0) {
         return;
     }
-#if defined(_WIN32)
-    /* Sleep() granularity is typically 15.6 ms. For sub-frame waits we
-     * fall back to a short busy-loop after a coarse Sleep. */
-    DWORD ms = (DWORD)(ns / 1000000ULL);
-    if (ms > 1) {
-        Sleep(ms - 1);
-    }
-    uint64_t target = now_ns() + (ns % 1000000ULL);
-    while (now_ns() < target) {
-        /* spin */
-    }
-#else
     struct timespec ts;
     ts.tv_sec = (time_t)(ns / 1000000000ULL);
     ts.tv_nsec = (long)(ns % 1000000000ULL);
     while (nanosleep(&ts, &ts) == -1) {
         /* loop until we have actually waited the full duration */
     }
-#endif
 }
 
 void Port_VBlankIntrWait(void) {

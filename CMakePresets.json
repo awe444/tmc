@@ -29,26 +29,10 @@
                 "TMC_PORT_PLATFORM": "sdl",
                 "TMC_GAME_VERSION": "USA"
             }
-        },
-        {
-            "name": "sdl-mingw",
-            "displayName": "SDL port (MinGW cross-build)",
-            "description": "Cross-compile the SDL port for Windows using MinGW-w64.",
-            "binaryDir": "${sourceDir}/build/sdl-mingw",
-            "generator": "Ninja",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_SYSTEM_NAME": "Windows",
-                "CMAKE_C_COMPILER": "x86_64-w64-mingw32-gcc",
-                "TMC_PORT_PLATFORM": "sdl",
-                "TMC_GAME_VERSION": "USA",
-                "TMC_USE_FETCHCONTENT_SDL": "ON"
-            }
         }
     ],
     "buildPresets": [
         { "name": "sdl-debug",   "configurePreset": "sdl-debug" },
-        { "name": "sdl-release", "configurePreset": "sdl-release" },
-        { "name": "sdl-mingw",   "configurePreset": "sdl-mingw" }
+        { "name": "sdl-release", "configurePreset": "sdl-release" }
     ]
 }
