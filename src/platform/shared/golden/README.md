@@ -34,20 +34,20 @@ compiler change that should not be hidden by stale tests.
 To regenerate one of the files:
 
 ```sh
-# OFF build (default):
+# ON build (default — `sdl-release` inherits TMC_LINK_GAME_SOURCES=ON):
 cmake --preset sdl-release
 cmake --build --preset sdl-release
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-    ./build/sdl-release/tmc_sdl --frames=30 --print-frame-hash \
-    > src/platform/shared/golden/usa_off_frames30.txt
-
-# ON build:
-cmake -S . -B build/sdl-on -G Ninja \
-    -DCMAKE_BUILD_TYPE=Release -DTMC_LINK_GAME_SOURCES=ON
-cmake --build build/sdl-on
-SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-    ./build/sdl-on/tmc_sdl --frames=30 --mute --print-frame-hash \
+    ./build/sdl-release/tmc_sdl --frames=30 --mute --print-frame-hash \
     > src/platform/shared/golden/usa_on_frames30.txt
+
+# OFF build (preserved compatibility mode — must opt out explicitly):
+cmake -S . -B build/sdl-off -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DTMC_LINK_GAME_SOURCES=OFF
+cmake --build build/sdl-off
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+    ./build/sdl-off/tmc_sdl --frames=30 --print-frame-hash \
+    > src/platform/shared/golden/usa_off_frames30.txt
 ```
 
 Then commit the change with a message that explains why the hash
