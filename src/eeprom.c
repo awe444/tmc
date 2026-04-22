@@ -3,6 +3,7 @@
 
 #ifdef __PORT__
 #include "platform/port.h"
+#include <stdio.h>
 #endif
 
 #if defined(DEMO_USA) || defined(DEMO_JP)
@@ -169,16 +170,30 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
      * Consecutive block writes are batched and flushed only when a write
      * sequence ends (detected by a non-consecutive address) or when the
      * final EEPROM block is written. The byte order matches EEPROMRead's
-     * host short-circuit so a Read after Write round-trips exactly. */
+     * host short-circuit so a Read after Write round-trips exactly.
+     *
+     * Port_SaveFlush() can fail (e.g. read-only save dir, disk full).
+     * When it does, log to stderr and surface a non-zero error code to
+     * the caller so the higher-level retry logic in src/save.c
+     * (DataWrite -> EEPROMWrite0_8k_Check -> 3x retry + dummy-data
+     * scrub) treats the row as failed instead of silently losing the
+     * write. We reuse `0xc001` to match the timeout return path of the
+     * ROM build's `EEPROMWrite`. */
     {
         static bool32 sPortSaveDirty = FALSE;
         static u16 sPortLastAddress;
         u32 byte_off = (u32)address * 8u;
         const u8* d = (const u8*)data;
+        u16 ret_port = 0;
 
         if (sPortSaveDirty && address != (u16)(sPortLastAddress + 1)) {
-            Port_SaveFlush();
-            sPortSaveDirty = FALSE;
+            if (Port_SaveFlush() != 0) {
+                fprintf(stderr, "[tmc_sdl] EEPROMWrite: Port_SaveFlush failed; save data may be lost.\n");
+                sPortSaveDirty = FALSE;
+                ret_port = 0xc001;
+            } else {
+                sPortSaveDirty = FALSE;
+            }
         }
 
         for (i = 0; i < 8; ++i) {
@@ -188,8 +203,11 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
         sPortSaveDirty = TRUE;
         sPortLastAddress = address;
 
-        if ((u32)address + 1u >= gEEPROMConfig->size) {
-            Port_SaveFlush();
+        if (ret_port == 0 && (u32)address + 1u >= gEEPROMConfig->size) {
+            if (Port_SaveFlush() != 0) {
+                fprintf(stderr, "[tmc_sdl] EEPROMWrite: Port_SaveFlush failed; save data may be lost.\n");
+                ret_port = 0xc001;
+            }
             sPortSaveDirty = FALSE;
         }
         (void)buffer;
@@ -202,7 +220,7 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
         (void)j;
         (void)ptr;
         (void)unk_3;
-        return 0;
+        return ret_port;
     }
 #else
 
