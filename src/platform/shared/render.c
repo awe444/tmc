@@ -1,49 +1,68 @@
 /**
  * @file render.c
- * @brief Software rasterizer for the GBA's mode-0 BG layer + OBJ layer.
+ * @brief Software rasterizer for the GBA's BG + OBJ pipeline.
  *
- * This translation unit implements PR #4 of the SDL-port roadmap (see
- * docs/sdl_port.md). It is intentionally cross-port: it has no SDL,
+ * This translation unit implements PR #4 + PR #5 of the SDL-port roadmap
+ * (see docs/sdl_port.md). It is intentionally cross-port: it has no SDL,
  * OS, or threading dependency and reads exclusively from the emulated
  * GBA memory regions exposed in `include/platform/port.h`
  * (`gPortIo`, `gPortVram`, `gPortPltt`, `gPortOam`). A future PSP /
- * PS2 / Win32 port can reuse it verbatim and only has to provide its
- * own framebuffer upload path.
+ * PS2 / Win32 port reuses it verbatim and only has to provide its own
+ * framebuffer upload path.
  *
  * Scope (per the roadmap):
- *   - BG mode 0 (4 text BGs).
- *     * BGxCNT priority, char base block, screen base block,
- *       16-color (4 bpp) vs 256-color (8 bpp), and screen size
- *       (256x256 / 512x256 / 256x512 / 512x512 with the standard
- *       SC0..SC3 sub-screen wrapping).
- *     * BGxHOFS / BGxVOFS scrolling (text BGs wrap unconditionally).
- *     * Tilemap entries decode tile id (10 bits), hflip, vflip,
- *       palette bank (4-bit only used in 4 bpp mode).
- *   - OBJ layer.
- *     * Regular (non-affine) sprites only -- affine attribute is
- *       respected to the extent of skipping the sprite when the
- *       "double size / disable" bit means "disable" on a non-affine
- *       sprite, but transformed sprites are not yet rendered and
- *       are skipped (PR #5).
- *     * 4 bpp + 8 bpp tile data.
- *     * 1D mapping (DISPCNT_OBJ_1D_MAP) and 2D mapping (32-tile-wide
- *       OBJ char sheet).
- *     * All 12 shape x size combinations (8x8 .. 64x64).
- *     * Per-priority composition: OBJs of priority p sit on top of
- *       BGs of priority p; lower BG number / lower OAM index wins
- *       within an equal-priority tier.
  *
- * Out of scope for PR #4 (deferred to PR #5+):
- *   - Affine BGs (modes 1/2 partial, mode 2).
- *   - Bitmap modes 3/4/5.
- *   - Windows 0/1/OBJ/outside.
- *   - BLDCNT / BLDALPHA / BLDY blending and brightness fade.
- *   - Mosaic.
- *   - The OBJ "semi-transparent" and "OBJ window" modes.
+ *   PR #4 (already shipped):
+ *     - BG mode 0 (4 text BGs) with all four screen-size codes,
+ *       per-axis HOFS / VOFS scrolling, 4 bpp + 8 bpp tiles.
+ *     - Regular OBJ sprites, 4 bpp + 8 bpp, 1D + 2D tile mapping,
+ *       all 12 shape x size combinations, hflip / vflip, attr0 disable
+ *       bit, per-priority composition with the standard GBA tie-break
+ *       (OBJ on top of BG of equal priority; lower BG number / lower
+ *       OAM index wins within a tier).
  *
- * The dropped features fall through to "draw as opaque normal" so the
- * frame is at least readable; PR #5 will add the real implementations
- * behind the existing register reads.
+ *   PR #5 (this file):
+ *     - Affine BGs in modes 1 / 2.  BG2 affine in mode 1 (BG0 / BG1
+ *       remain text), BG2 + BG3 affine in mode 2.  BGCNT bit 13
+ *       (display-area overflow) selects "transparent" vs "wrap"
+ *       behaviour outside the map area.  Sampling uses BG2/3 PA, PB,
+ *       PC, PD (s8.8) and BG2/3 X, Y (s19.8 reference points loaded
+ *       per frame).
+ *     - Affine sprites.  The four PA / PB / PC / PD slots interleaved
+ *       across an affine group (5-bit index in OAM attr1 bits 9..13)
+ *       drive a centred-affine 2x2 transform.  The DOUBLE_SIZE bit
+ *       gives the sprite a doubled bounding box on screen so the
+ *       rotation has room to fit.
+ *     - Windows: WIN0 / WIN1 (rectangles from WIN0H/V + WIN1H/V),
+ *       OBJ window (pixels where an OBJ in mode 2 is opaque), and
+ *       the "outside" region (everywhere else when any window is
+ *       enabled in DISPCNT).  Per-region layer enables come from
+ *       WININ / WINOUT and gate both the BG/OBJ visibility and the
+ *       blend-effect enable bit.
+ *     - Alpha blending (BLDCNT mode 1, BLDALPHA EVA / EVB), brightness
+ *       fade up (mode 2, BLDY) and brightness fade down (mode 3, BLDY).
+ *       OBJ semi-transparent (attr0 mode 1) acts as a per-pixel
+ *       "force alpha blend" override regardless of BLDCNT (the OBJ
+ *       layer is treated as 1st target; the layer behind it must be a
+ *       2nd target for the blend to fire).
+ *     - Mosaic (MOSAIC register, BGCNT bit 6 for BGs, OBJ attr0 bit 12
+ *       for OBJs).  BG mosaic snaps both axes; OBJ mosaic is applied
+ *       per-priority horizontally and the OBJ rasterizer snaps the
+ *       sampled row to the mosaic V grid for affected sprites.
+ *
+ * Out of scope (still deferred):
+ *   - Bitmap modes 3 / 4 / 5 (the renderer falls through to a backdrop
+ *     fill so the screen stays in a defined state).
+ *   - Mid-scanline raster effects (HBlank palette / scroll changes).
+ *     The renderer samples each I/O register exactly once at the start
+ *     of every scanline, so the GBA's per-line tricks are visible at
+ *     full-frame granularity only.
+ *   - The BG2/3 reference-point internal-counter increment that the
+ *     real PPU performs every scanline based on PB / PD.  We resample
+ *     BG2X / BG2Y / BG3X / BG3Y on every scanline, so a game that
+ *     relies on the internal counter latching mid-frame will see a
+ *     flat affine instead of a per-line one.  The decomp does not
+ *     appear to use that effect.
  */
 
 #include "platform/port.h"
@@ -52,21 +71,45 @@
 #include <string.h>
 
 /* ------------------------------------------------------------------------ */
-/* Local helpers.                                                           */
+/* Local helpers and register offsets.                                      */
 /* ------------------------------------------------------------------------ */
 
 #define DISP_W PORT_GBA_DISPLAY_WIDTH
 #define DISP_H PORT_GBA_DISPLAY_HEIGHT
 
-/* Selected REG_* offsets we need. Duplicated here (rather than pulling in
+/* Selected REG_* offsets we need.  Duplicated here (rather than pulling in
  * `gba/io_reg.h`) so this TU stays free of GBA-decomp headers and remains
- * trivially reusable from another port. The matching constants in
- * `include/gba/io_reg.h` are validated against these via Port_HeadersSelfCheck
- * in port_headers_check.c. */
+ * trivially reusable from another port.  The matching constants in
+ * `include/gba/io_reg.h` are validated against these via
+ * `Port_HeadersSelfCheck` in `port_headers_check.c`. */
 #define IO_DISPCNT 0x000
 #define IO_BG0CNT 0x008
+#define IO_BG2CNT 0x00C
+#define IO_BG3CNT 0x00E
 #define IO_BG0HOFS 0x010
 #define IO_BG0VOFS 0x012
+#define IO_BG2PA 0x020
+#define IO_BG2PB 0x022
+#define IO_BG2PC 0x024
+#define IO_BG2PD 0x026
+#define IO_BG2X 0x028
+#define IO_BG2Y 0x02C
+#define IO_BG3PA 0x030
+#define IO_BG3PB 0x032
+#define IO_BG3PC 0x034
+#define IO_BG3PD 0x036
+#define IO_BG3X 0x038
+#define IO_BG3Y 0x03C
+#define IO_WIN0H 0x040
+#define IO_WIN1H 0x042
+#define IO_WIN0V 0x044
+#define IO_WIN1V 0x046
+#define IO_WININ 0x048
+#define IO_WINOUT 0x04A
+#define IO_MOSAIC 0x04C
+#define IO_BLDCNT 0x050
+#define IO_BLDALPHA 0x052
+#define IO_BLDY 0x054
 
 /* DISPCNT bits we use. */
 #define DISPCNT_MODE_MASK 0x0007
@@ -74,31 +117,38 @@
 #define DISPCNT_FORCED_BLANK 0x0080
 #define DISPCNT_BG0_ON 0x0100
 #define DISPCNT_OBJ_ON 0x1000
+#define DISPCNT_WIN0_ON 0x2000
+#define DISPCNT_WIN1_ON 0x4000
+#define DISPCNT_WINOBJ_ON 0x8000
 
-/* BGCNT bits. */
+/* BGCNT bits (text + affine). */
 #define BGCNT_PRIORITY_MASK 0x0003
 #define BGCNT_CHARBASE_SHIFT 2
-#define BGCNT_CHARBASE_MASK 0x000C /* bits 2-3 */
+#define BGCNT_CHARBASE_MASK 0x000C
+#define BGCNT_MOSAIC 0x0040
 #define BGCNT_256COLOR 0x0080
-#define BGCNT_SCREENBASE_MASK 0x1F00 /* bits 8-12 */
+#define BGCNT_SCREENBASE_MASK 0x1F00
 #define BGCNT_SCREENBASE_SHIFT 8
-#define BGCNT_SCREENSIZE_MASK 0xC000 /* bits 14-15 */
+#define BGCNT_AFFINE_WRAP 0x2000
+#define BGCNT_SCREENSIZE_MASK 0xC000
 #define BGCNT_SCREENSIZE_SHIFT 14
 
 /* OBJ attribute 0. */
 #define OBJ_ATTR0_Y_MASK 0x00FF
 #define OBJ_ATTR0_AFFINE 0x0100
-#define OBJ_ATTR0_DISABLE 0x0200     /* only meaningful when AFFINE = 0 */
-#define OBJ_ATTR0_DOUBLE_SIZE 0x0200 /* meaningful when AFFINE = 1 */
-#define OBJ_ATTR0_MODE_MASK 0x0C00   /* 0=normal, 1=semi, 2=window, 3=prohibited */
+#define OBJ_ATTR0_DISABLE 0x0200
+#define OBJ_ATTR0_DOUBLE_SIZE 0x0200
+#define OBJ_ATTR0_MODE_MASK 0x0C00
 #define OBJ_ATTR0_MOSAIC 0x1000
 #define OBJ_ATTR0_256COLOR 0x2000
 #define OBJ_ATTR0_SHAPE_MASK 0xC000
 #define OBJ_ATTR0_SHAPE_SHIFT 14
 
 /* OBJ attribute 1. */
-#define OBJ_ATTR1_X_MASK 0x01FF /* 9-bit signed */
+#define OBJ_ATTR1_X_MASK 0x01FF
 #define OBJ_ATTR1_X_SIGN 0x0100
+#define OBJ_ATTR1_AFFINE_GROUP_MASK 0x3E00
+#define OBJ_ATTR1_AFFINE_GROUP_SHIFT 9
 #define OBJ_ATTR1_HFLIP 0x1000
 #define OBJ_ATTR1_VFLIP 0x2000
 #define OBJ_ATTR1_SIZE_MASK 0xC000
@@ -112,11 +162,23 @@
 #define OBJ_ATTR2_PALETTE_SHIFT 12
 
 /* GBA video memory layout (offsets into gPortVram). */
-#define VRAM_BG_END 0x10000 /* first 64 KiB of VRAM is BG */
+#define VRAM_BG_END 0x10000
 #define VRAM_OBJ_BASE 0x10000
 
-/* PR #2a self-check guarantees these match the macros in
- * include/gba/io_reg.h, so we can hard-code them. */
+/* Layer ids used by the compositor for blending / window enables.
+ * The numbering matches BLDCNT / WININ / WINOUT bit layouts. */
+#define LAYER_BG0 0
+#define LAYER_BG1 1
+#define LAYER_BG2 2
+#define LAYER_BG3 3
+#define LAYER_OBJ 4
+#define LAYER_BD 5
+#define LAYER_NONE 6
+
+/* Layer-enable bit value for the colour-special-effects flag.
+ * Both WININ and WINOUT use bit 5 of each byte for "special effect
+ * enable in this region", which matches LAYER_BD. */
+#define LAYER_BIT(id) ((uint8_t)(1u << (id)))
 
 /* ------------------------------------------------------------------------ */
 /* Color conversion: BGR555 (GBA) -> ARGB8888 (host).                       */
@@ -138,10 +200,15 @@ static inline uint32_t bgr555_to_argb8888(uint16_t bgr) {
 static inline uint16_t io_read16(uint32_t off) {
     /* All host-supported targets are little-endian (see docs/sdl_port.md
      * "Risks"), so a direct unaligned 16-bit read is fine. Use memcpy
-     * to be safe with -fstrict-aliasing-flipped builds and any future
-     * platform that disables -fno-strict-aliasing for this TU. */
+     * to be safe with -fstrict-aliasing builds. */
     uint16_t v;
     memcpy(&v, &gPortIo[off & 0x3FE], sizeof(v));
+    return v;
+}
+
+static inline uint32_t io_read32(uint32_t off) {
+    uint32_t v;
+    memcpy(&v, &gPortIo[off & 0x3FC], sizeof(v));
     return v;
 }
 
@@ -161,55 +228,47 @@ static inline uint16_t vram_read16(uint32_t off) {
     return v;
 }
 
+/* Sign-extend an N-bit field stored in the low bits of `v`. */
+static inline int32_t sign_extend(uint32_t v, int bits) {
+    uint32_t mask = (uint32_t)1u << (bits - 1);
+    return (int32_t)((v ^ mask) - mask);
+}
+
 /* ------------------------------------------------------------------------ */
-/* BG mode-0 (text) scanline rendering.                                     */
+/* BG scanline output (shared between text + affine BGs).                   */
 /* ------------------------------------------------------------------------ */
 
-/* Per-scanline output for a single BG: one palette index per pixel,
- * 0 = transparent (or the BG palette's own entry 0, which the GBA also
- * treats as transparent for non-backdrop BG layers). The companion
- * `colors[]` array holds the resolved BGR555 value for non-transparent
- * pixels so the compositor doesn't have to re-read the palette per
- * pixel. */
+/* One palette index per pixel (0 = transparent), plus the resolved BGR555
+ * colour for non-transparent pixels.  Storing both lets the compositor
+ * blend without re-reading the palette. */
 typedef struct {
-    uint8_t opaque[DISP_W];  /* 1 = drawn, 0 = transparent */
-    uint16_t colors[DISP_W]; /* BGR555 when opaque[x] != 0 */
-    int priority;            /* 0..3 from BGCNT */
-    int active;              /* 1 if this BG produced any output this frame */
+    uint8_t opaque[DISP_W];
+    uint16_t colors[DISP_W];
+    int priority;
+    int active;
 } BgScanline;
 
-/* Map the BGCNT screen-size code (0..3) to per-axis size in tiles
- * (each tile is 8 px). The four sub-screens (SC0..SC3) inside a 512-px
- * map are stored as consecutive 32x32-tile (2 KiB) blocks. */
+/* ------------------------------------------------------------------------ */
+/* Text BG scanline rendering (modes 0 / 1).                                */
+/* ------------------------------------------------------------------------ */
+
 static void text_bg_dimensions_tiles(uint16_t bgcnt, int* w_tiles_out, int* h_tiles_out) {
     int code = (bgcnt & BGCNT_SCREENSIZE_MASK) >> BGCNT_SCREENSIZE_SHIFT;
-    /* 0: 32x32 (256x256 px), 1: 64x32, 2: 32x64, 3: 64x64. */
     int w_tiles = (code & 1) ? 64 : 32;
     int h_tiles = (code & 2) ? 64 : 32;
     *w_tiles_out = w_tiles;
     *h_tiles_out = h_tiles;
 }
 
-/* Resolve a tilemap entry's address inside VRAM, given the BG's screen
- * base (in 2 KiB blocks) and per-axis tile coordinates inside the
- * BG's full tile-map. Handles the GBA's SC0..SC3 sub-screen layout for
- * 512-px-wide / 512-px-tall maps. */
 static uint32_t text_tilemap_addr(uint16_t bgcnt, int tile_x, int tile_y, int w_tiles, int h_tiles) {
     int screen_base = (bgcnt & BGCNT_SCREENBASE_MASK) >> BGCNT_SCREENBASE_SHIFT;
-    uint32_t base = (uint32_t)screen_base * 0x800; /* 2 KiB per screen-base block */
+    uint32_t base = (uint32_t)screen_base * 0x800;
 
-    /* Each sub-screen is 32x32 tiles (= 2 KiB of 16-bit entries). For
-     * wider/taller maps, walk to the right sub-screen first. */
     int sub_x = tile_x / 32;
     int sub_y = tile_y / 32;
     int local_x = tile_x % 32;
     int local_y = tile_y % 32;
 
-    /* Sub-screen ordering inside a 64x64 map:
-     *   SC0 SC1
-     *   SC2 SC3
-     * For 64x32 only SC0+SC1 are used (in that order). For 32x64,
-     * SC0+SC1 are stacked (SC0 on top, SC1 below). */
     int sub_index;
     if (w_tiles == 64 && h_tiles == 64) {
         sub_index = sub_y * 2 + sub_x;
@@ -224,22 +283,14 @@ static uint32_t text_tilemap_addr(uint16_t bgcnt, int tile_x, int tile_y, int w_
     return base + (uint32_t)sub_index * 0x800 + (uint32_t)(local_y * 32 + local_x) * 2;
 }
 
-/* Sample one pixel from a BG tile. `char_base_addr` is the BG character
- * data base (offset into VRAM); `tile_id` is the tilemap entry's tile
- * index; `(px,py)` are 0..7 within the tile, post-flip. Returns 0 for
- * transparent (palette entry 0) or the BG palette index 1..255. The
- * caller must combine with the palette bank for 4 bpp tiles. */
 static uint8_t bg_sample_tile_pixel(uint32_t char_base_addr, int tile_id, int px, int py, int is_8bpp) {
     if (is_8bpp) {
-        /* Each 8 bpp tile is 64 bytes. */
         uint32_t off = char_base_addr + (uint32_t)tile_id * 64 + (uint32_t)(py * 8 + px);
         if (off >= VRAM_BG_END) {
             return 0;
         }
         return gPortVram[off];
     } else {
-        /* Each 4 bpp tile is 32 bytes; two pixels per byte (low nibble
-         * is the lower x). */
         uint32_t off = char_base_addr + (uint32_t)tile_id * 32 + (uint32_t)(py * 4 + (px >> 1));
         if (off >= VRAM_BG_END) {
             return 0;
@@ -260,7 +311,7 @@ static void render_text_bg_scanline(int bg_index, int y, BgScanline* out) {
     int map_h_px = h_tiles * 8;
 
     int char_base = (bgcnt & BGCNT_CHARBASE_MASK) >> BGCNT_CHARBASE_SHIFT;
-    uint32_t char_base_addr = (uint32_t)char_base * 0x4000; /* 16 KiB blocks */
+    uint32_t char_base_addr = (uint32_t)char_base * 0x4000;
     int is_8bpp = (bgcnt & BGCNT_256COLOR) != 0;
 
     out->priority = bgcnt & BGCNT_PRIORITY_MASK;
@@ -273,10 +324,6 @@ static void render_text_bg_scanline(int bg_index, int y, BgScanline* out) {
     int tile_y = vy / 8;
     int py = vy & 7;
 
-    /* Precompute the start x in the virtual map; iterate one pixel at a
-     * time. A tighter implementation would step through whole tiles, but
-     * the GBA framebuffer is 240 px wide so this is already <40k inner
-     * iterations per frame at 60 Hz. */
     int vx_start = (int)hofs;
     for (int x = 0; x < DISP_W; ++x) {
         int vx = (vx_start + x) % map_w_px;
@@ -307,7 +354,103 @@ static void render_text_bg_scanline(int bg_index, int y, BgScanline* out) {
 }
 
 /* ------------------------------------------------------------------------ */
-/* OBJ layer scanline rendering.                                            */
+/* Affine BG scanline rendering (modes 1 / 2).                              */
+/* ------------------------------------------------------------------------ */
+
+/* Affine BG screen-size code -> map size in pixels.  Each tile is 8 px;
+ * each tilemap entry is 1 byte (an 8 bpp tile id, no flip / palette
+ * bank). */
+static int affine_bg_size_px(uint16_t bgcnt) {
+    int code = (bgcnt & BGCNT_SCREENSIZE_MASK) >> BGCNT_SCREENSIZE_SHIFT;
+    static const int kSizes[4] = { 128, 256, 512, 1024 };
+    return kSizes[code];
+}
+
+/* Read the BG2X / BG2Y / BG3X / BG3Y reference point as an s27.8
+ * fixed-point integer.  Hardware exposes a 28-bit field; we sign-extend
+ * the top bit into the host int32_t. */
+static int32_t affine_ref_point(uint32_t off) {
+    uint32_t v = io_read32(off);
+    return sign_extend(v & 0x0FFFFFFFu, 28);
+}
+
+static void render_affine_bg_scanline(int bg_index, int y, BgScanline* out) {
+    uint32_t cnt_off = (bg_index == 2) ? IO_BG2CNT : IO_BG3CNT;
+    uint32_t pa_off = (bg_index == 2) ? IO_BG2PA : IO_BG3PA;
+    uint32_t x_off = (bg_index == 2) ? IO_BG2X : IO_BG3X;
+    uint32_t y_off = (bg_index == 2) ? IO_BG2Y : IO_BG3Y;
+
+    uint16_t bgcnt = io_read16(cnt_off);
+    int32_t pa = sign_extend((uint32_t)io_read16(pa_off + 0), 16);
+    int32_t pb = sign_extend((uint32_t)io_read16(pa_off + 2), 16);
+    int32_t pc = sign_extend((uint32_t)io_read16(pa_off + 4), 16);
+    int32_t pd = sign_extend((uint32_t)io_read16(pa_off + 6), 16);
+    int32_t ref_x = affine_ref_point(x_off);
+    int32_t ref_y = affine_ref_point(y_off);
+
+    int char_base = (bgcnt & BGCNT_CHARBASE_MASK) >> BGCNT_CHARBASE_SHIFT;
+    uint32_t char_base_addr = (uint32_t)char_base * 0x4000;
+    int screen_base = (bgcnt & BGCNT_SCREENBASE_MASK) >> BGCNT_SCREENBASE_SHIFT;
+    uint32_t map_base_addr = (uint32_t)screen_base * 0x800;
+    int wrap = (bgcnt & BGCNT_AFFINE_WRAP) != 0;
+    int size_px = affine_bg_size_px(bgcnt);
+    int size_tiles = size_px / 8;
+
+    out->priority = bgcnt & BGCNT_PRIORITY_MASK;
+    out->active = 1;
+
+    /* The PPU's per-scanline reference is `(ref + PB*y, ref + PD*y)`
+     * because the X/Y registers encode the *frame's* reference, and the
+     * internal counter advances by (PB, PD) per scanline.  We resample
+     * the BG2X/Y register every scanline (see "Out of scope" in the
+     * file header), so we use those values directly without a separate
+     * y-step. */
+    int32_t cur_x = ref_x + pb * y;
+    int32_t cur_y = ref_y + pd * y;
+
+    for (int x = 0; x < DISP_W; ++x) {
+        int32_t tex_x_fp = cur_x + pa * x;
+        int32_t tex_y_fp = cur_y + pc * x;
+        int32_t tex_x = tex_x_fp >> 8;
+        int32_t tex_y = tex_y_fp >> 8;
+
+        if (wrap) {
+            tex_x &= (size_px - 1);
+            tex_y &= (size_px - 1);
+        } else if (tex_x < 0 || tex_x >= size_px || tex_y < 0 || tex_y >= size_px) {
+            out->opaque[x] = 0;
+            continue;
+        }
+
+        int tile_x = (int)(tex_x >> 3);
+        int tile_y = (int)(tex_y >> 3);
+        int px = (int)(tex_x & 7);
+        int py = (int)(tex_y & 7);
+
+        uint32_t entry_addr = map_base_addr + (uint32_t)(tile_y * size_tiles + tile_x);
+        if (entry_addr >= VRAM_BG_END) {
+            out->opaque[x] = 0;
+            continue;
+        }
+        int tile_id = gPortVram[entry_addr];
+
+        uint32_t pix_off = char_base_addr + (uint32_t)tile_id * 64 + (uint32_t)(py * 8 + px);
+        if (pix_off >= VRAM_BG_END) {
+            out->opaque[x] = 0;
+            continue;
+        }
+        uint8_t pix = gPortVram[pix_off];
+        if (pix == 0) {
+            out->opaque[x] = 0;
+            continue;
+        }
+        out->colors[x] = pltt_read16(pix);
+        out->opaque[x] = 1;
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* OBJ scanline rendering (regular + affine).                               */
 /* ------------------------------------------------------------------------ */
 
 /* Sprite size table indexed by (shape * 4 + size). Shape 3 is "prohibited"
@@ -336,20 +479,96 @@ static const uint8_t kObjDimensions[16][2] = {
     { 0, 0 },
 };
 
-/* OBJ output for a single scanline split by priority. We iterate OAM in
- * forward order and write the first opaque pixel per (x, priority); a
- * lower OAM index "wins" within the same priority because once a pixel
- * is filled the later sprite cannot overwrite it. The compositor draws
- * higher-numbered priorities first so OBJs of priority 0 end up on top. */
+/* Per-priority OBJ output for one scanline plus the auxiliary masks used
+ * by the compositor / window logic.  `semi[p][x]` flags pixels whose
+ * sprite was in attr0 mode 1 (semi-transparent) so the compositor can
+ * force an alpha blend.  `obj_window` accumulates pixels covered by an
+ * opaque OBJ in attr0 mode 2 (OBJ window source). */
 typedef struct {
     uint8_t opaque[4][DISP_W];
     uint16_t colors[4][DISP_W];
+    uint8_t semi[4][DISP_W];
+    uint8_t obj_window[DISP_W];
 } ObjScanline;
 
+/* Sample one pixel from an OBJ tile sheet, given the row/col within the
+ * sprite and the OBJ tile-mapping mode.  Returns the raw 4 bpp / 8 bpp
+ * palette index (0 = transparent). */
+static uint8_t obj_sample_pixel(int row_in_sprite, int col_in_sprite, int sprite_w_tiles, int base_tile,
+                                int is_8bpp, int obj_1d_mapping) {
+    int row_tile = row_in_sprite / 8;
+    int row_within_tile = row_in_sprite & 7;
+    int col_tile = col_in_sprite / 8;
+    int col_within_tile = col_in_sprite & 7;
+
+    int eff_base_tile = is_8bpp ? (base_tile & ~1) : base_tile;
+
+    int row_tile_step;
+    if (obj_1d_mapping) {
+        row_tile_step = row_tile * sprite_w_tiles * (is_8bpp ? 2 : 1);
+    } else {
+        row_tile_step = row_tile * 32;
+    }
+
+    int tile_offset_in_units;
+    if (is_8bpp) {
+        tile_offset_in_units = row_tile_step + col_tile * 2;
+    } else {
+        tile_offset_in_units = row_tile_step + col_tile;
+    }
+    int tile_id = (eff_base_tile + tile_offset_in_units) & 0x3FF;
+    uint32_t tile_addr = (uint32_t)VRAM_OBJ_BASE + (uint32_t)tile_id * 32;
+
+    if (is_8bpp) {
+        uint32_t off = tile_addr + (uint32_t)(row_within_tile * 8 + col_within_tile);
+        if (off >= sizeof(gPortVram)) {
+            return 0;
+        }
+        return gPortVram[off];
+    } else {
+        uint32_t off = tile_addr + (uint32_t)(row_within_tile * 4 + (col_within_tile >> 1));
+        if (off >= sizeof(gPortVram)) {
+            return 0;
+        }
+        uint8_t b = gPortVram[off];
+        return (col_within_tile & 1) ? (b >> 4) : (b & 0x0F);
+    }
+}
+
+/* Read PA / PB / PC / PD for the given affine group from OAM.  Each
+ * group's four parameters are interleaved in the high half of four
+ * consecutive 8-byte OAM entries: group N occupies OAM[N*32 + 6..7],
+ * OAM[N*32 + 14..15], OAM[N*32 + 22..23], OAM[N*32 + 30..31]. */
+static void obj_read_affine_params(int group, int32_t* pa, int32_t* pb, int32_t* pc, int32_t* pd) {
+    uint32_t base = (uint32_t)(group & 0x1F) * 32;
+    uint16_t ra, rb, rc, rd;
+    memcpy(&ra, &gPortOam[base + 6], 2);
+    memcpy(&rb, &gPortOam[base + 14], 2);
+    memcpy(&rc, &gPortOam[base + 22], 2);
+    memcpy(&rd, &gPortOam[base + 30], 2);
+    *pa = sign_extend(ra, 16);
+    *pb = sign_extend(rb, 16);
+    *pc = sign_extend(rc, 16);
+    *pd = sign_extend(rd, 16);
+}
+
+/* Decode the MOSAIC register: returns horizontal / vertical mosaic
+ * sizes for BGs and for OBJs.  Each is in [1, 16]. */
+static void mosaic_sizes(int* bg_h, int* bg_v, int* obj_h, int* obj_v) {
+    uint16_t m = io_read16(IO_MOSAIC);
+    *bg_h = ((m >> 0) & 0xF) + 1;
+    *bg_v = ((m >> 4) & 0xF) + 1;
+    *obj_h = ((m >> 8) & 0xF) + 1;
+    *obj_v = ((m >> 12) & 0xF) + 1;
+}
+
 static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
-    /* OAM holds 128 sprites x 8 bytes each. The last 2 bytes of every
-     * 8-byte OBJ entry are interleaved OBJ rotation/scaling parameters
-     * which we don't use here. */
+    int bg_h, bg_v, obj_h, obj_v;
+    mosaic_sizes(&bg_h, &bg_v, &obj_h, &obj_v);
+    (void)bg_h;
+    (void)bg_v;
+
+    /* OAM holds 128 sprites x 8 bytes each. */
     for (int idx = 0; idx < 128; ++idx) {
         uint32_t base = (uint32_t)idx * 8;
         uint16_t a0, a1, a2;
@@ -358,22 +577,15 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
         memcpy(&a2, &gPortOam[base + 4], 2);
 
         int affine = (a0 & OBJ_ATTR0_AFFINE) != 0;
+        int double_size = (a0 & OBJ_ATTR0_DOUBLE_SIZE) != 0;
         if (!affine && (a0 & OBJ_ATTR0_DISABLE)) {
             continue;
         }
-        /* PR #4 does not yet rasterize affine sprites. Skip them so they
-         * don't leak garbage onto the screen; PR #5 covers the affine
-         * pipeline. */
-        if (affine) {
-            continue;
-        }
-        /* Mode 3 ("prohibited") + OBJ window mode: skip until PR #5
-         * implements windows. Semi-transparent (mode 1) renders as
-         * normal opaque for now. */
         int mode = (a0 & OBJ_ATTR0_MODE_MASK) >> 10;
-        if (mode == 2 || mode == 3) {
-            continue;
+        if (mode == 3) {
+            continue; /* prohibited */
         }
+        int is_obj_window_source = (mode == 2);
 
         int shape = (a0 & OBJ_ATTR0_SHAPE_MASK) >> OBJ_ATTR0_SHAPE_SHIFT;
         int size = (a1 & OBJ_ATTR1_SIZE_MASK) >> OBJ_ATTR1_SIZE_SHIFT;
@@ -383,124 +595,371 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
             continue;
         }
 
-        /* Y is 8-bit unsigned but the visible window wraps at 256 so a
-         * sprite at Y=240 overlaps the top of the screen. */
+        /* Bounding box on screen.  For affine sprites with the
+         * DOUBLE_SIZE bit set, the sprite occupies a 2*sw x 2*sh box
+         * centred on (sx + sw, sy + sh); the texture sampling still
+         * uses sw x sh internally. */
+        int box_w = (affine && double_size) ? sw * 2 : sw;
+        int box_h = (affine && double_size) ? sh * 2 : sh;
+
         int sy = a0 & OBJ_ATTR0_Y_MASK;
-        int line_in_sprite = (y - sy) & 0xFF;
-        if (line_in_sprite >= sh) {
+        int line_in_box = (y - sy) & 0xFF;
+        if (line_in_box >= box_h) {
             continue;
         }
 
-        /* X is 9-bit signed. */
         int sx = a1 & OBJ_ATTR1_X_MASK;
         if (sx & OBJ_ATTR1_X_SIGN) {
             sx -= 0x200;
         }
-        if (sx + sw <= 0 || sx >= DISP_W) {
+        if (sx + box_w <= 0 || sx >= DISP_W) {
             continue;
         }
 
-        int hflip = (a1 & OBJ_ATTR1_HFLIP) != 0;
-        int vflip = (a1 & OBJ_ATTR1_VFLIP) != 0;
         int is_8bpp = (a0 & OBJ_ATTR0_256COLOR) != 0;
         int prio = (a2 & OBJ_ATTR2_PRIORITY_MASK) >> OBJ_ATTR2_PRIORITY_SHIFT;
         int pal_bank = (a2 & OBJ_ATTR2_PALETTE_MASK) >> OBJ_ATTR2_PALETTE_SHIFT;
         int base_tile = a2 & OBJ_ATTR2_TILE_MASK;
-
-        int row_in_sprite = vflip ? (sh - 1 - line_in_sprite) : line_in_sprite;
-        int row_tile = row_in_sprite / 8;
-        int row_within_tile = row_in_sprite & 7;
         int sprite_w_tiles = sw / 8;
+        int mosaic_on = (a0 & OBJ_ATTR0_MOSAIC) != 0;
 
-        /* OBJ tile addressing. Tile numbers are always in 32-byte units;
-         * for 8 bpp sprites the low bit of the tile number is ignored
-         * (real hardware) so we mask it to even. */
-        int eff_base_tile = is_8bpp ? (base_tile & ~1) : base_tile;
+        if (affine) {
+            int group = (a1 & OBJ_ATTR1_AFFINE_GROUP_MASK) >> OBJ_ATTR1_AFFINE_GROUP_SHIFT;
+            int32_t pa, pb, pc, pd;
+            obj_read_affine_params(group, &pa, &pb, &pc, &pd);
 
-        /* Step (in 32-byte tile units) from the top-left tile of the
-         * sprite to the start of `row_tile`. */
-        int row_tile_step;
-        if (obj_1d_mapping) {
-            /* 1D: tiles laid out linearly. For 8 bpp the per-row step
-             * doubles because each "logical tile" occupies two 32-byte
-             * tile slots. */
-            row_tile_step = row_tile * sprite_w_tiles * (is_8bpp ? 2 : 1);
+            int half_box_w = box_w / 2;
+            int half_box_h = box_h / 2;
+            int half_sw = sw / 2;
+            int half_sh = sh / 2;
+            int dy = line_in_box - half_box_h;
+            if (mosaic_on) {
+                /* Snap the screen y to the mosaic V grid.  Because the
+                 * sprite is sampled relative to display coordinates
+                 * here, we adjust dy so that all pixels in the same
+                 * mosaic V block share an identical sprite-y coord. */
+                int snapped_y = (y / obj_v) * obj_v;
+                dy = (snapped_y - sy - half_box_h);
+            }
+
+            for (int col = 0; col < box_w; ++col) {
+                int screen_x = sx + col;
+                if (screen_x < 0 || screen_x >= DISP_W) {
+                    continue;
+                }
+                int dx = col - half_box_w;
+                if (mosaic_on) {
+                    int snapped_x = (screen_x / obj_h) * obj_h;
+                    dx = snapped_x - sx - half_box_w;
+                }
+
+                /* tex = P * (dx, dy) + (sw/2, sh/2) */
+                int32_t tex_x_fp = pa * dx + pb * dy;
+                int32_t tex_y_fp = pc * dx + pd * dy;
+                int tex_x = (int)(tex_x_fp >> 8) + half_sw;
+                int tex_y = (int)(tex_y_fp >> 8) + half_sh;
+                if (tex_x < 0 || tex_x >= sw || tex_y < 0 || tex_y >= sh) {
+                    continue;
+                }
+
+                uint8_t pix = obj_sample_pixel(tex_y, tex_x, sprite_w_tiles, base_tile, is_8bpp,
+                                               obj_1d_mapping);
+                if (pix == 0) {
+                    continue;
+                }
+                if (is_obj_window_source) {
+                    /* OBJ-window sprites contribute to the OBJ-window
+                     * mask only — they do not paint colour. */
+                    out->obj_window[screen_x] = 1;
+                    continue;
+                }
+                if (out->opaque[prio][screen_x]) {
+                    continue;
+                }
+                int pal_index = is_8bpp ? pix : (pal_bank * 16 + pix);
+                out->colors[prio][screen_x] = pltt_read16(256 + pal_index);
+                out->opaque[prio][screen_x] = 1;
+                if (mode == 1) {
+                    out->semi[prio][screen_x] = 1;
+                }
+            }
         } else {
-            /* 2D: OBJ char sheet is 32 tiles wide, regardless of bpp. */
-            row_tile_step = row_tile * 32;
-        }
+            int hflip = (a1 & OBJ_ATTR1_HFLIP) != 0;
+            int vflip = (a1 & OBJ_ATTR1_VFLIP) != 0;
 
-        for (int col = 0; col < sw; ++col) {
-            int screen_x = sx + col;
-            if (screen_x < 0 || screen_x >= DISP_W) {
-                continue;
+            int row_in_sprite = vflip ? (sh - 1 - line_in_box) : line_in_box;
+            if (mosaic_on) {
+                int snapped_y = (y / obj_v) * obj_v;
+                int snapped_line = (snapped_y - sy) & 0xFF;
+                if (snapped_line >= sh) {
+                    snapped_line = sh - 1;
+                }
+                row_in_sprite = vflip ? (sh - 1 - snapped_line) : snapped_line;
             }
-            if (out->opaque[prio][screen_x]) {
-                /* A lower-OAM-index sprite already won this pixel at
-                 * this priority. */
-                continue;
-            }
-            int col_in_sprite = hflip ? (sw - 1 - col) : col;
-            int col_tile = col_in_sprite / 8;
-            int col_within_tile = col_in_sprite & 7;
 
-            int tile_offset_in_units;
-            if (is_8bpp) {
-                /* Each visible 8x8 cell occupies two 32-byte slots, so
-                 * stepping one cell to the right is +2 tile units. */
-                tile_offset_in_units = row_tile_step + col_tile * 2;
-            } else {
-                tile_offset_in_units = row_tile_step + col_tile;
-            }
-            int tile_id = (eff_base_tile + tile_offset_in_units) & 0x3FF;
-            uint32_t tile_addr = (uint32_t)VRAM_OBJ_BASE + (uint32_t)tile_id * 32;
-            uint8_t pix;
-            if (is_8bpp) {
-                uint32_t off = tile_addr + (uint32_t)(row_within_tile * 8 + col_within_tile);
-                if (off >= sizeof(gPortVram)) {
-                    pix = 0;
-                } else {
-                    pix = gPortVram[off];
+            for (int col = 0; col < box_w; ++col) {
+                int screen_x = sx + col;
+                if (screen_x < 0 || screen_x >= DISP_W) {
+                    continue;
                 }
-            } else {
-                uint32_t off = tile_addr + (uint32_t)(row_within_tile * 4 + (col_within_tile >> 1));
-                if (off >= sizeof(gPortVram)) {
-                    pix = 0;
-                } else {
-                    uint8_t b = gPortVram[off];
-                    pix = (col_within_tile & 1) ? (b >> 4) : (b & 0x0F);
+                int eff_col = col;
+                if (mosaic_on) {
+                    int snapped_x = (screen_x / obj_h) * obj_h;
+                    eff_col = snapped_x - sx;
+                    if (eff_col < 0) eff_col = 0;
+                    if (eff_col >= sw) eff_col = sw - 1;
+                }
+                int col_in_sprite = hflip ? (sw - 1 - eff_col) : eff_col;
+
+                uint8_t pix = obj_sample_pixel(row_in_sprite, col_in_sprite, sprite_w_tiles,
+                                               base_tile, is_8bpp, obj_1d_mapping);
+                if (pix == 0) {
+                    continue;
+                }
+                if (is_obj_window_source) {
+                    out->obj_window[screen_x] = 1;
+                    continue;
+                }
+                if (out->opaque[prio][screen_x]) {
+                    continue;
+                }
+                int pal_index = is_8bpp ? pix : (pal_bank * 16 + pix);
+                out->colors[prio][screen_x] = pltt_read16(256 + pal_index);
+                out->opaque[prio][screen_x] = 1;
+                if (mode == 1) {
+                    out->semi[prio][screen_x] = 1;
                 }
             }
-            if (pix == 0) {
-                continue;
-            }
-            int pal_index = is_8bpp ? pix : (pal_bank * 16 + pix);
-            /* OBJ palette starts at gPortPltt[0x200] = pltt_read16(256). */
-            out->colors[prio][screen_x] = pltt_read16(256 + pal_index);
-            out->opaque[prio][screen_x] = 1;
         }
     }
 }
 
 /* ------------------------------------------------------------------------ */
-/* Per-scanline composition.                                                */
+/* Mosaic post-pass for BGs and OBJs.                                        */
 /* ------------------------------------------------------------------------ */
 
-/* Mode-0 has all four BGs as text BGs. Modes 1/2 mix in affine BGs that
- * PR #4 does not yet implement; for those we still render any text BGs
- * that mode allows so the screen isn't completely empty, but the affine
- * BGs are ignored. */
+/* Snap pixels in [0, DISP_W) to the start of each H-mosaic block: every
+ * pixel within block N (covering [N*Mh, N*Mh + Mh)) takes the value at
+ * its block's leftmost on-screen pixel. */
+static void apply_h_mosaic_bg(BgScanline* s, int mh) {
+    if (mh <= 1) return;
+    for (int x = 0; x < DISP_W; ++x) {
+        int anchor = (x / mh) * mh;
+        if (anchor != x) {
+            s->opaque[x] = s->opaque[anchor];
+            s->colors[x] = s->colors[anchor];
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Window mask computation.                                                  */
+/* ------------------------------------------------------------------------ */
+
+/* For each x along this scanline, the per-pixel layer-enable mask
+ * selected by the highest-priority window that covers it
+ * (WIN0 > WIN1 > OBJ window > outside). */
+typedef struct {
+    uint8_t enable[DISP_W];
+    int any_window_enabled; /* 1 iff DISPCNT enables WIN0/WIN1/OBJ window */
+} WindowMask;
+
+/* Decode WININ / WINOUT byte into a layer-enable mask.  The byte's low
+ * 6 bits map directly onto BG0/BG1/BG2/BG3/OBJ/EFFECT (= LAYER_BD). */
+static uint8_t window_byte_to_mask(uint8_t b) {
+    return (uint8_t)(b & 0x3F);
+}
+
+/* Test whether the scanline `y` falls inside WINx's vertical span,
+ * honouring the GBA quirks: y2 <= y1 means "wraparound to bottom of
+ * frame", and y2 > 160 clamps to 160. */
+static int win_v_in_range(uint16_t winv, int y) {
+    int y1 = (winv >> 8) & 0xFF;
+    int y2 = winv & 0xFF;
+    if (y2 > DISP_H || y2 < y1) {
+        y2 = DISP_H;
+    }
+    return (y >= y1) && (y < y2);
+}
+
+static void win_h_range(uint16_t winh, int* x1_out, int* x2_out) {
+    int x1 = (winh >> 8) & 0xFF;
+    int x2 = winh & 0xFF;
+    if (x2 > DISP_W || x2 < x1) {
+        x2 = DISP_W;
+    }
+    *x1_out = x1;
+    *x2_out = x2;
+}
+
+static void compute_window_mask(int y, uint16_t dispcnt, const ObjScanline* obj, WindowMask* out) {
+    int win0_on = (dispcnt & DISPCNT_WIN0_ON) != 0;
+    int win1_on = (dispcnt & DISPCNT_WIN1_ON) != 0;
+    int winobj_on = (dispcnt & DISPCNT_WINOBJ_ON) != 0;
+    out->any_window_enabled = (win0_on || win1_on || winobj_on);
+    if (!out->any_window_enabled) {
+        for (int x = 0; x < DISP_W; ++x) {
+            out->enable[x] = 0x3F; /* everything visible everywhere */
+        }
+        return;
+    }
+
+    uint16_t winin = io_read16(IO_WININ);
+    uint16_t winout = io_read16(IO_WINOUT);
+    uint8_t mask_in0 = window_byte_to_mask(winin & 0xFF);
+    uint8_t mask_in1 = window_byte_to_mask((winin >> 8) & 0xFF);
+    uint8_t mask_outside = window_byte_to_mask(winout & 0xFF);
+    uint8_t mask_objwin = window_byte_to_mask((winout >> 8) & 0xFF);
+
+    int win0_h_x1 = 0, win0_h_x2 = 0;
+    int win1_h_x1 = 0, win1_h_x2 = 0;
+    int win0_v_in = 0, win1_v_in = 0;
+    if (win0_on) {
+        win0_v_in = win_v_in_range(io_read16(IO_WIN0V), y);
+        if (win0_v_in) {
+            win_h_range(io_read16(IO_WIN0H), &win0_h_x1, &win0_h_x2);
+        }
+    }
+    if (win1_on) {
+        win1_v_in = win_v_in_range(io_read16(IO_WIN1V), y);
+        if (win1_v_in) {
+            win_h_range(io_read16(IO_WIN1H), &win1_h_x1, &win1_h_x2);
+        }
+    }
+
+    for (int x = 0; x < DISP_W; ++x) {
+        if (win0_on && win0_v_in && x >= win0_h_x1 && x < win0_h_x2) {
+            out->enable[x] = mask_in0;
+        } else if (win1_on && win1_v_in && x >= win1_h_x1 && x < win1_h_x2) {
+            out->enable[x] = mask_in1;
+        } else if (winobj_on && obj->obj_window[x]) {
+            out->enable[x] = mask_objwin;
+        } else {
+            out->enable[x] = mask_outside;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Per-pixel composition + blending.                                        */
+/* ------------------------------------------------------------------------ */
+
 static int bg_is_text_in_mode(int mode, int bg_index) {
     switch (mode) {
         case 0:
-            return 1; /* all four BGs are text */
+            return 1;
         case 1:
-            return bg_index <= 1; /* BG0/BG1 text, BG2 affine, BG3 off */
+            return bg_index <= 1; /* BG0/BG1 text */
         case 2:
-            return 0; /* BG0/BG1 off, BG2/BG3 affine */
+            return 0;
         default:
-            return 0; /* bitmap modes */
+            return 0;
     }
+}
+
+static int bg_is_affine_in_mode(int mode, int bg_index) {
+    switch (mode) {
+        case 1:
+            return bg_index == 2;
+        case 2:
+            return bg_index == 2 || bg_index == 3;
+        default:
+            return 0;
+    }
+}
+
+/* Blend two BGR555 colours using EVA/EVB in 0..16.  The arithmetic
+ * matches the GBA: per-channel `min(31, (top*EVA + bot*EVB) >> 4)`. */
+static uint16_t blend_alpha(uint16_t top, uint16_t bot, int eva, int evb) {
+    if (eva > 16) eva = 16;
+    if (evb > 16) evb = 16;
+    int rt = top & 0x1F, gt = (top >> 5) & 0x1F, bt = (top >> 10) & 0x1F;
+    int rb = bot & 0x1F, gb = (bot >> 5) & 0x1F, bb = (bot >> 10) & 0x1F;
+    int r = (rt * eva + rb * evb) >> 4;
+    int g = (gt * eva + gb * evb) >> 4;
+    int b = (bt * eva + bb * evb) >> 4;
+    if (r > 31) r = 31;
+    if (g > 31) g = 31;
+    if (b > 31) b = 31;
+    return (uint16_t)(r | (g << 5) | (b << 10));
+}
+
+/* Brightness fade: `top + (max - top) * EVY / 16` for fade-to-white,
+ * `top - top * EVY / 16` for fade-to-black, per channel. */
+static uint16_t blend_brighter(uint16_t top, int evy) {
+    if (evy > 16) evy = 16;
+    int r = top & 0x1F, g = (top >> 5) & 0x1F, b = (top >> 10) & 0x1F;
+    r = r + ((31 - r) * evy >> 4);
+    g = g + ((31 - g) * evy >> 4);
+    b = b + ((31 - b) * evy >> 4);
+    return (uint16_t)(r | (g << 5) | (b << 10));
+}
+static uint16_t blend_darker(uint16_t top, int evy) {
+    if (evy > 16) evy = 16;
+    int r = top & 0x1F, g = (top >> 5) & 0x1F, b = (top >> 10) & 0x1F;
+    r = r - (r * evy >> 4);
+    g = g - (g * evy >> 4);
+    b = b - (b * evy >> 4);
+    return (uint16_t)(r | (g << 5) | (b << 10));
+}
+
+/* Find the top opaque pixel for column `x` according to GBA priority:
+ * priority 0 first, within a priority OBJs sit on top of BGs of equal
+ * priority, lower BG index wins among text BGs of equal priority.  The
+ * `enable_mask` gates the search (window-enable bits per layer).  When
+ * `start_layer` != LAYER_NONE the search is restricted to layers that
+ * sit *under* `start_layer` (used to find the 2nd-target pixel for
+ * alpha blending).  Returns LAYER_NONE if nothing opaque is found
+ * (caller falls back to backdrop). */
+static int find_top_layer(const BgScanline bg[4], const ObjScanline* obj, int x, uint8_t enable_mask,
+                          int start_layer, int start_priority, uint16_t* color_out, int* prio_out,
+                          int* semi_out) {
+    /* Walk by priority, then by per-priority order: OBJ first (since
+     * OBJ sits on top of BG of equal priority), then BG0..BG3.  When
+     * `start_layer` is LAYER_NONE the whole table is in scope; otherwise
+     * we skip everything strictly above `(start_priority, start_layer)`
+     * in the same composition order. */
+    static const int kBgOrder[4] = { LAYER_BG0, LAYER_BG1, LAYER_BG2, LAYER_BG3 };
+    int passed_start = (start_layer == LAYER_NONE);
+    for (int prio = 0; prio < 4; ++prio) {
+        /* OBJ at this priority. */
+        int layer = LAYER_OBJ;
+        if (!passed_start) {
+            if (prio == start_priority && layer == start_layer) {
+                passed_start = 1;
+                /* fall through; this slot itself is the start, skip it */
+                goto skip_obj;
+            }
+        } else if (enable_mask & LAYER_BIT(layer)) {
+            if (obj->opaque[prio][x]) {
+                *color_out = obj->colors[prio][x];
+                *prio_out = prio;
+                if (semi_out) *semi_out = obj->semi[prio][x];
+                return LAYER_OBJ;
+            }
+        }
+    skip_obj:
+        for (int b = 0; b < 4; ++b) {
+            layer = kBgOrder[b];
+            if (!passed_start) {
+                if (prio == start_priority && layer == start_layer) {
+                    passed_start = 1;
+                    continue;
+                }
+                continue;
+            }
+            if (!bg[layer].active) continue;
+            if (bg[layer].priority != prio) continue;
+            if (!(enable_mask & LAYER_BIT(layer))) continue;
+            if (bg[layer].opaque[x]) {
+                *color_out = bg[layer].colors[x];
+                *prio_out = prio;
+                if (semi_out) *semi_out = 0;
+                return layer;
+            }
+        }
+    }
+    return LAYER_NONE;
 }
 
 static void composite_scanline(uint32_t* out_row, int y, uint16_t dispcnt) {
@@ -508,42 +967,116 @@ static void composite_scanline(uint32_t* out_row, int y, uint16_t dispcnt) {
     uint32_t backdrop_argb = bgr555_to_argb8888(backdrop);
 
     int mode = dispcnt & DISPCNT_MODE_MASK;
+    if (mode > 2) {
+        /* Bitmap modes still deferred; fill with backdrop. */
+        for (int x = 0; x < DISP_W; ++x) {
+            out_row[x] = backdrop_argb;
+        }
+        return;
+    }
 
-    /* Bitmap modes (3/4/5) and any "no BGs in this mode" path: just fill
-     * with backdrop until PR #5. The OBJ layer is still composited so a
-     * test image with only sprites remains visible. */
+    int bg_h_mosaic, bg_v_mosaic, obj_h_mosaic, obj_v_mosaic;
+    mosaic_sizes(&bg_h_mosaic, &bg_v_mosaic, &obj_h_mosaic, &obj_v_mosaic);
+    (void)obj_h_mosaic;
+    (void)obj_v_mosaic;
 
-    BgScanline bg[4] = { 0 };
+    /* Render each BG at its (possibly mosaic-snapped) scanline. */
+    BgScanline bg[4];
+    memset(bg, 0, sizeof(bg));
     for (int b = 0; b < 4; ++b) {
-        if ((dispcnt & (DISPCNT_BG0_ON << b)) && bg_is_text_in_mode(mode, b)) {
-            render_text_bg_scanline(b, y, &bg[b]);
+        if (!(dispcnt & (DISPCNT_BG0_ON << b))) continue;
+        uint16_t bgcnt = io_read16(IO_BG0CNT + b * 2);
+        int mosaic_on = (bgcnt & BGCNT_MOSAIC) != 0;
+        int sample_y = y;
+        if (mosaic_on && bg_v_mosaic > 1) {
+            sample_y = (y / bg_v_mosaic) * bg_v_mosaic;
+        }
+        if (bg_is_text_in_mode(mode, b)) {
+            render_text_bg_scanline(b, sample_y, &bg[b]);
+        } else if (bg_is_affine_in_mode(mode, b)) {
+            render_affine_bg_scanline(b, sample_y, &bg[b]);
+        } else {
+            continue;
+        }
+        if (mosaic_on && bg_h_mosaic > 1) {
+            apply_h_mosaic_bg(&bg[b], bg_h_mosaic);
         }
     }
 
-    ObjScanline obj = { { { 0 } } };
+    ObjScanline obj;
+    memset(&obj, 0, sizeof(obj));
     if (dispcnt & DISPCNT_OBJ_ON) {
         int one_d = (dispcnt & DISPCNT_OBJ_1D_MAP) != 0;
         render_obj_scanline(y, one_d, &obj);
     }
 
-    /* Back-to-front composite: backdrop, then BG/OBJ pairs from
-     * priority 3 down to 0, with BGs of equal priority drawn highest
-     * BG number first (so BG0 ends up on top), and OBJs of that same
-     * priority painted afterwards (so OBJ sits on top of BG of equal
-     * priority). */
+    WindowMask winmask;
+    compute_window_mask(y, dispcnt, &obj, &winmask);
+
+    uint16_t bldcnt = io_read16(IO_BLDCNT);
+    uint16_t bldalpha = io_read16(IO_BLDALPHA);
+    uint16_t bldy_reg = io_read16(IO_BLDY);
+    int blend_mode = (bldcnt >> 6) & 0x3;
+    uint8_t first_target = (uint8_t)(bldcnt & 0x3F);
+    uint8_t second_target = (uint8_t)((bldcnt >> 8) & 0x3F);
+    int eva = bldalpha & 0x1F;
+    int evb = (bldalpha >> 8) & 0x1F;
+    int evy = bldy_reg & 0x1F;
+
     for (int x = 0; x < DISP_W; ++x) {
-        uint32_t pixel = backdrop_argb;
-        for (int prio = 3; prio >= 0; --prio) {
-            for (int b = 3; b >= 0; --b) {
-                if (bg[b].active && bg[b].priority == prio && bg[b].opaque[x]) {
-                    pixel = bgr555_to_argb8888(bg[b].colors[x]);
-                }
-            }
-            if (obj.opaque[prio][x]) {
-                pixel = bgr555_to_argb8888(obj.colors[prio][x]);
-            }
+        uint8_t enable = winmask.enable[x];
+        int blend_allowed = (enable & LAYER_BIT(LAYER_BD)) != 0; /* "effects enabled" bit */
+
+        uint16_t top_color = backdrop;
+        int top_prio = 4;
+        int top_semi = 0;
+        int top_layer = find_top_layer(bg, &obj, x, enable, LAYER_NONE, 0, &top_color, &top_prio,
+                                       &top_semi);
+        if (top_layer == LAYER_NONE) {
+            top_layer = LAYER_BD;
+            top_color = backdrop;
+            top_prio = 4;
+            top_semi = 0;
         }
-        out_row[x] = pixel;
+
+        uint16_t result = top_color;
+
+        /* OBJ semi-transparent forces alpha blend if a 2nd-target pixel
+         * is below.  Otherwise consult BLDCNT. */
+        int do_alpha = 0;
+        int do_brighter = 0;
+        int do_darker = 0;
+        if (top_layer == LAYER_OBJ && top_semi && blend_allowed) {
+            do_alpha = 1;
+        } else if (blend_allowed && (first_target & LAYER_BIT(top_layer))) {
+            if (blend_mode == 1) do_alpha = 1;
+            else if (blend_mode == 2) do_brighter = 1;
+            else if (blend_mode == 3) do_darker = 1;
+        }
+
+        if (do_alpha) {
+            /* Find the 2nd-target pixel directly below the top pixel. */
+            uint16_t bot_color = backdrop;
+            int bot_prio = 4;
+            int bot_layer = find_top_layer(bg, &obj, x, enable, top_layer, top_prio, &bot_color,
+                                           &bot_prio, NULL);
+            if (bot_layer == LAYER_NONE) {
+                bot_layer = LAYER_BD;
+                bot_color = backdrop;
+            }
+            if (second_target & LAYER_BIT(bot_layer)) {
+                result = blend_alpha(top_color, bot_color, eva, evb);
+            }
+            /* If the candidate 2nd layer wasn't a 2nd target, OBJ semi
+             * still falls back to opaque (no fade applies because the
+             * OBJ was never 1st target through BLDCNT mode 2/3). */
+        } else if (do_brighter) {
+            result = blend_brighter(top_color, evy);
+        } else if (do_darker) {
+            result = blend_darker(top_color, evy);
+        }
+
+        out_row[x] = bgr555_to_argb8888(result);
     }
 }
 
@@ -559,7 +1092,6 @@ void Port_RenderFrame(uint32_t* framebuffer) {
     uint16_t dispcnt = io_read16(IO_DISPCNT);
 
     if (dispcnt & DISPCNT_FORCED_BLANK) {
-        /* Real hardware drives the display white during forced blank. */
         for (int i = 0; i < DISP_W * DISP_H; ++i) {
             framebuffer[i] = 0xFFFFFFFFu;
         }
@@ -572,43 +1104,40 @@ void Port_RenderFrame(uint32_t* framebuffer) {
 }
 
 /* ------------------------------------------------------------------------ */
-/* Headless self-check (PR #4).                                             */
+/* Headless self-check (PRs #4 + #5).                                       */
 /* ------------------------------------------------------------------------ */
 
-/* Tiny RAII-ish helper: snapshot a region of one of the host arrays so
- * the self-check can scribble over it and restore the original bytes
- * before returning. Sized for the biggest region we touch (a 32x32-tile
- * BG screen + tile char data + a few sprites = under 8 KiB). */
+/* The self-check programs the host arrays directly, so save/restore
+ * everything it might touch.  Sized for the biggest region we reach
+ * (a 32x32 BG screen + a 256x256 affine BG map + char data + OAM). */
 typedef struct {
-    uint8_t io[64];
-    uint8_t pltt[16 * 2 + 16 * 2]; /* a few BG + OBJ palette entries */
-    uint8_t bg_chr[64];            /* 2 x 32-byte 4 bpp tiles */
-    uint8_t bg_map[8];             /* a few tilemap entries */
-    uint8_t obj_chr[64];           /* 2 x 32-byte 4 bpp tiles */
-    uint8_t oam[1024];             /* full OAM (128 sprites x 8 bytes) */
+    uint8_t io[0x60];
+    uint8_t pltt[PORT_PLTT_SIZE];
+    uint8_t vram_lo[0x4000];      /* BG char + screen bases used here */
+    uint8_t vram_obj[0x4000];     /* OBJ tile sheet */
+    uint8_t oam[PORT_OAM_SIZE];
 } RendererSnapshot;
 
 static void snapshot_save(RendererSnapshot* s) {
     memcpy(s->io, &gPortIo[0], sizeof(s->io));
-    memcpy(s->pltt, &gPortPltt[0], 16 * 2);
-    memcpy(s->pltt + 16 * 2, &gPortPltt[0x200], 16 * 2);
-    memcpy(s->bg_chr, &gPortVram[0], sizeof(s->bg_chr));
-    memcpy(s->bg_map, &gPortVram[0x800], sizeof(s->bg_map));
-    memcpy(s->obj_chr, &gPortVram[VRAM_OBJ_BASE], sizeof(s->obj_chr));
+    memcpy(s->pltt, &gPortPltt[0], sizeof(s->pltt));
+    memcpy(s->vram_lo, &gPortVram[0], sizeof(s->vram_lo));
+    memcpy(s->vram_obj, &gPortVram[VRAM_OBJ_BASE], sizeof(s->vram_obj));
     memcpy(s->oam, &gPortOam[0], sizeof(s->oam));
 }
 static void snapshot_restore(const RendererSnapshot* s) {
     memcpy(&gPortIo[0], s->io, sizeof(s->io));
-    memcpy(&gPortPltt[0], s->pltt, 16 * 2);
-    memcpy(&gPortPltt[0x200], s->pltt + 16 * 2, 16 * 2);
-    memcpy(&gPortVram[0], s->bg_chr, sizeof(s->bg_chr));
-    memcpy(&gPortVram[0x800], s->bg_map, sizeof(s->bg_map));
-    memcpy(&gPortVram[VRAM_OBJ_BASE], s->obj_chr, sizeof(s->obj_chr));
+    memcpy(&gPortPltt[0], s->pltt, sizeof(s->pltt));
+    memcpy(&gPortVram[0], s->vram_lo, sizeof(s->vram_lo));
+    memcpy(&gPortVram[VRAM_OBJ_BASE], s->vram_obj, sizeof(s->vram_obj));
     memcpy(&gPortOam[0], s->oam, sizeof(s->oam));
 }
 
 static void io_write16(uint32_t off, uint16_t v) {
     memcpy(&gPortIo[off & 0x3FE], &v, sizeof(v));
+}
+static void io_write32(uint32_t off, uint32_t v) {
+    memcpy(&gPortIo[off & 0x3FC], &v, sizeof(v));
 }
 static void pltt_write16(uint32_t index, uint16_t v) {
     memcpy(&gPortPltt[(index & 0x1FF) * 2], &v, sizeof(v));
@@ -620,165 +1149,308 @@ static void oam_write16(uint32_t off, uint16_t v) {
     memcpy(&gPortOam[off], &v, sizeof(v));
 }
 
+/* Reset every IO register and OAM the renderer reads to a sensible
+ * "off" baseline so a previous step's leftovers can't pollute the next
+ * one. */
+static void self_check_reset(void) {
+    memset(&gPortIo[0], 0, 0x60);
+    /* Disable every sprite. */
+    for (int i = 0; i < 128; ++i) {
+        oam_write16((uint32_t)i * 8, OBJ_ATTR0_DISABLE);
+        oam_write16((uint32_t)i * 8 + 2, 0);
+        oam_write16((uint32_t)i * 8 + 4, 0);
+    }
+}
+
 int Port_RendererSelfCheck(void) {
     RendererSnapshot snap;
     snapshot_save(&snap);
 
-    /* 1. Forced blank should yield a fully-white frame. */
     static uint32_t fb[DISP_W * DISP_H];
+    int ok = 1;
+
+    /* ---------- 1. Forced blank yields a fully-white frame. -------- */
+    self_check_reset();
     io_write16(IO_DISPCNT, DISPCNT_FORCED_BLANK);
     Port_RenderFrame(fb);
-    int ok = (fb[0] == 0xFFFFFFFFu && fb[DISP_W * DISP_H - 1] == 0xFFFFFFFFu);
+    ok = ok && (fb[0] == 0xFFFFFFFFu) && (fb[DISP_W * DISP_H - 1] == 0xFFFFFFFFu);
 
-    /* 2. Backdrop colour: clear DISPCNT (mode 0, no BGs/OBJs enabled),
-     *    write a known BGR555 to PLTT[0], expect every pixel to match. */
-    io_write16(IO_DISPCNT, 0); /* mode 0, all layers off */
-    pltt_write16(0, 0x7FFF);   /* white in BGR555 */
-    Port_RenderFrame(fb);
-    ok = ok && (fb[0] == 0xFFFFFFFFu);
+    /* ---------- 2. Backdrop colour. -------------------------------- */
+    self_check_reset();
     pltt_write16(0, 0x001F); /* pure red */
     Port_RenderFrame(fb);
     ok = ok && (fb[123] == 0xFFFF0000u);
 
-    /* 3. BG0 mode-0 4 bpp: place a single-tile, single-entry tilemap
-     *    showing palette index 1 across the entire tile. The whole
-     *    screen should sample that one palette entry. */
-    pltt_write16(0, 0x0000); /* black backdrop */
-    pltt_write16(1, 0x03E0); /* pure green (BGR555: g = 0x1F << 5) */
-    /* tile 0 in char base 0: every byte = 0x11 (low and high nibble = 1) */
+    /* ---------- 3. BG0 mode-0 4 bpp single-tile coverage. ---------- */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(1, 0x03E0); /* green */
     for (int i = 0; i < 32; ++i) {
         gPortVram[i] = 0x11;
     }
-    /* tilemap entry 0 in screen base 1 (offset 0x800): tile id 0,
-     * no flip, palette bank 0. */
+    /* Clear the screen base region we use (32*32 entries = 2 KiB). */
+    memset(&gPortVram[0x800], 0, 0x800);
+    /* tilemap entry 0 -> tile 0 / pal bank 0 / no flip. */
     vram_write16(0x800, 0x0000);
-    /* BG0CNT: priority 0, char base 0, screen base 1, 16-color, 32x32. */
     io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
-    io_write16(IO_BG0HOFS, 0);
-    io_write16(IO_BG0VOFS, 0);
-    /* DISPCNT: mode 0, BG0 on. */
     io_write16(IO_DISPCNT, DISPCNT_BG0_ON);
     Port_RenderFrame(fb);
-    /* Tile 0 only covers the first 8x8 of the tilemap. The remaining
-     * tilemap entries inside screen base 1 are 0 too (we cleared the
-     * snapshot region), so they all reference tile 0 / palette bank 0
-     * / palette index 1. Therefore every pixel of the screen reads
-     * green. */
     uint32_t green_argb = bgr555_to_argb8888(0x03E0);
     ok = ok && (fb[0] == green_argb);
-    ok = ok && (fb[DISP_W / 2 + (DISP_H / 2) * DISP_W] == green_argb);
     ok = ok && (fb[DISP_W * DISP_H - 1] == green_argb);
 
-    /* 4. Tilemap entry hflip + vflip: change tile 0 so the bottom-right
-     *    pixel is index 2 instead of 1, then test that hflip moves it
-     *    to bottom-left and vflip to top-right. */
-    pltt_write16(2, 0x7C00); /* pure blue (BGR555: b = 0x1F << 10) */
-    /* Tile 0: clear, then set pixel (7,7) to palette index 2. In 4 bpp
-     * tile layout: row y * 4 + (x>>1) byte; if x odd → high nibble. */
+    /* ---------- 4. Tilemap entry hflip / vflip / pal bank. -------- */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(1, 0x03E0);
+    pltt_write16(2, 0x7C00);      /* blue */
+    pltt_write16(16 + 1, 0x001F); /* pal bank 1 idx 1 = red */
     memset(&gPortVram[0], 0x11, 32);
-    /* (7,7): byte = 7 * 4 + 3 = 31; x is odd, so high nibble. Set high
-     * nibble to 2, low nibble keeps existing index 1. */
-    gPortVram[31] = (2 << 4) | 1;
-
-    /* No flip: pixel (7,7) of tile 0 → screen pixel (7,7) is blue. */
+    gPortVram[31] = (2 << 4) | 1; /* (7,7) -> palette idx 2 */
+    memset(&gPortVram[0x800], 0, 0x800);
     vram_write16(0x800, 0x0000);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON);
     Port_RenderFrame(fb);
     uint32_t blue_argb = bgr555_to_argb8888(0x7C00);
     ok = ok && (fb[7 + 7 * DISP_W] == blue_argb);
-    ok = ok && (fb[0] == green_argb);
-
-    /* hflip only: tile 0's pixel (7,7) maps to screen (0, 7). */
-    vram_write16(0x800, 0x0400);
+    vram_write16(0x800, 0x0400); /* hflip */
     Port_RenderFrame(fb);
     ok = ok && (fb[0 + 7 * DISP_W] == blue_argb);
-    ok = ok && (fb[7 + 7 * DISP_W] == green_argb);
-
-    /* vflip only: tile 0's pixel (7,7) maps to screen (7, 0). */
-    vram_write16(0x800, 0x0800);
+    vram_write16(0x800, 0x0800); /* vflip */
     Port_RenderFrame(fb);
     ok = ok && (fb[7 + 0 * DISP_W] == blue_argb);
-
-    /* Palette bank: select palette bank 1 in the tilemap entry, swap
-     * palette[16+1] with a different colour, expect every "background"
-     * pixel of tile 0 to use the new colour. */
-    pltt_write16(16 + 1, 0x001F); /* red */
-    vram_write16(0x800, 0x1000);  /* pal bank 1, no flip */
+    vram_write16(0x800, 0x1000); /* pal bank 1 */
     Port_RenderFrame(fb);
     uint32_t red_argb = bgr555_to_argb8888(0x001F);
     ok = ok && (fb[0] == red_argb);
-    /* And the high-nibble pixel (7,7) of tile 0 used palette index 2.
-     * Switch the high nibble to 0 (= transparent in the GBA sense; only
-     * sample==0 is transparent, palette colour 0 is just black) and
-     * verify the pixel exposes the backdrop. */
-    pltt_write16(0, 0x1234);
-    /* (7,7) byte = 31; high nibble = sample for x=7. Set high=0, low=1. */
-    gPortVram[31] = (0 << 4) | 1;
-    Port_RenderFrame(fb);
-    ok = ok && (fb[7 + 7 * DISP_W] == bgr555_to_argb8888(0x1234));
 
-    /* 5. Scroll: with hofs=1, the screen pixel previously at (1,0) now
-     *    appears at (0,0). Easiest verification: with hofs=8 the entire
-     *    leftmost tile shifts off-screen but since every tilemap entry
-     *    references tile 0 the visible pattern is unchanged. So we
-     *    instead test that after writing tile 1's row 0 to a distinct
-     *    pattern and using that tile in entry (1, 0), an hofs of 8
-     *    moves it to the leftmost column. */
+    /* ---------- 5. BG0 scroll (HOFS = 8 swaps tile 0 / tile 1). --- */
+    self_check_reset();
     pltt_write16(0, 0x0000);
-    /* Tile 1 (offset 32): every pixel = palette index 3. */
-    pltt_write16(3, 0x03FF); /* yellow-ish */
-    memset(&gPortVram[32], 0x33, 32);
-    vram_write16(0x800 + 0 * 2, 0x0000); /* (0,0) -> tile 0 */
-    vram_write16(0x800 + 1 * 2, 0x0001); /* (1,0) -> tile 1 */
+    pltt_write16(1, 0x03E0);
+    pltt_write16(3, 0x03FF);            /* yellow */
+    memset(&gPortVram[0], 0x11, 32);    /* tile 0 = idx 1 */
+    memset(&gPortVram[32], 0x33, 32);   /* tile 1 = idx 3 */
+    memset(&gPortVram[0x800], 0, 0x800);
+    vram_write16(0x800 + 0, 0x0000);
+    vram_write16(0x800 + 2, 0x0001);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
     io_write16(IO_BG0HOFS, 8);
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON);
     Port_RenderFrame(fb);
     uint32_t yellow_argb = bgr555_to_argb8888(0x03FF);
-    ok = ok && (fb[0] == yellow_argb); /* tile 1 is now at column 0 */
-    io_write16(IO_BG0HOFS, 0);
+    ok = ok && (fb[0] == yellow_argb);
 
-    /* 6. OBJ rendering: place an 8x8 4 bpp sprite that paints palette
-     *    index 1 at (0,0). It should sit on top of the BG. First disable
-     *    every other sprite -- a default-zero OAM entry would otherwise
-     *    render as "8x8 sprite at (0,0) using OBJ tile 0" and shadow
-     *    the test sprite. */
-    for (int i = 1; i < 128; ++i) {
-        oam_write16(i * 8, OBJ_ATTR0_DISABLE);
-    }
-    pltt_write16(256 + 1, 0x7FFF); /* OBJ palette[1] = white */
-    /* OBJ tile 0 at OBJ char base = VRAM_OBJ_BASE. */
+    /* ---------- 6. OBJ rendering and priority composition. -------- */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(1, 0x03E0);
+    pltt_write16(256 + 1, 0x7FFF); /* OBJ pal idx 1 = white */
     memset(&gPortVram[VRAM_OBJ_BASE], 0x11, 32);
-    /* OAM 0: y=0, x=0, size 8x8, 4 bpp, normal mode. */
-    oam_write16(0, 0x0000); /* y=0, no affine, mode normal, shape 0 (square) */
-    oam_write16(2, 0x0000); /* x=0, no flip, size 0 (=> 8x8 with shape 0) */
-    oam_write16(4, 0x0000); /* tile 0, priority 0, palette bank 0 */
-    /* Disable BG0 so it doesn't shadow the test, leave only OBJ on. */
-    io_write16(IO_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
+    /* OAM 0: 8x8 sprite at (0,0) using OBJ tile 0, priority 0. */
+    oam_write16(0, 0x0000);
+    oam_write16(2, 0x0000);
+    oam_write16(4, 0x0000);
+    /* BG0: same backdrop config; show that OBJ wins at equal priority. */
+    memset(&gPortVram[0], 0x11, 32);
+    memset(&gPortVram[0x800], 0, 0x800);
+    vram_write16(0x800, 0x0000);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     Port_RenderFrame(fb);
     uint32_t white_argb = bgr555_to_argb8888(0x7FFF);
     ok = ok && (fb[0] == white_argb);
-    ok = ok && (fb[7 + 7 * DISP_W] == white_argb);
-    /* Outside the sprite -> backdrop. */
-    ok = ok && (fb[8 + 0 * DISP_W] == bgr555_to_argb8888(0x0000));
 
-    /* OBJ disabled via attr0 disable bit: should disappear. */
+    /* OBJ disable bit hides the sprite. */
     oam_write16(0, OBJ_ATTR0_DISABLE);
     Port_RenderFrame(fb);
-    ok = ok && (fb[0] != white_argb);
-    oam_write16(0, 0); /* re-enable */
+    ok = ok && (fb[0] == green_argb);
+    oam_write16(0, 0);
 
-    /* OBJ priority composition: place BG0 over the sprite area. With the
-     * sprite at priority 0 and BG0 at priority 0 too, the OBJ wins. With
-     * the sprite moved to priority 3 and BG0 at priority 0, the BG wins. */
-    pltt_write16(1, 0x03E0); /* BG palette[1] = green */
+    /* OBJ moved to priority 3 -> BG0 (priority 0) wins. */
+    oam_write16(4, 0x0C00);
+    Port_RenderFrame(fb);
+    ok = ok && (fb[0] == green_argb);
+
+    /* ---------- 7. Affine BG (mode 1, BG2). ----------------------- */
+    /* Build a 16x16-tile (128x128 px) affine map where tile 0 covers
+     * the first cell only and contains palette idx 1 (green).  Using
+     * the identity affine transform with reference (0,0), the (0,0)
+     * pixel should sample tile 0 / palette idx 1.  Outside the map
+     * area we test both `wrap` and `transparent`. */
+    self_check_reset();
+    pltt_write16(0, 0x0000);     /* black backdrop */
+    pltt_write16(1, 0x03E0);     /* green */
+    /* Affine BG2: char base 0, screen base at offset 0x800 (= screen
+     * base block 1).  16x16 tilemap.  Tile 0 = solid palette idx 1. */
+    memset(&gPortVram[0], 1, 64);            /* tile 0: every byte = 1 */
+    memset(&gPortVram[64], 0, 64);           /* tile 1: all transparent */
+    memset(&gPortVram[0x800], 0, 256);       /* clear 16x16 map: tile 0 everywhere */
+    /* PA = PD = 0x100 (1.0), PB = PC = 0; ref (0,0). */
+    io_write16(IO_BG2PA, 0x0100);
+    io_write16(IO_BG2PB, 0x0000);
+    io_write16(IO_BG2PC, 0x0000);
+    io_write16(IO_BG2PD, 0x0100);
+    io_write32(IO_BG2X, 0);
+    io_write32(IO_BG2Y, 0);
+    /* BGCNT: priority 0, char base 0, screen base block 1, size 0
+     * (128x128), wrap off. */
+    io_write16(IO_BG2CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_DISPCNT, 1 | (1 << 10)); /* mode 1, BG2 on */
+    Port_RenderFrame(fb);
+    /* Inside the 128x128 map: green.  Outside (>=128, no wrap): backdrop. */
+    ok = ok && (fb[0 + 0 * DISP_W] == green_argb);
+    ok = ok && (fb[127 + 0 * DISP_W] == green_argb);
+    ok = ok && (fb[128 + 0 * DISP_W] == 0xFF000000u); /* outside, transparent */
+    /* Enable wrap -> the column at x=128 wraps back to tile 0 / green. */
+    io_write16(IO_BG2CNT, (1 << BGCNT_SCREENBASE_SHIFT) | BGCNT_AFFINE_WRAP);
+    Port_RenderFrame(fb);
+    ok = ok && (fb[128 + 0 * DISP_W] == green_argb);
+
+    /* ---------- 8. Window 0 masking. ------------------------------ */
+    /* WIN0 covers the rectangle [16, 32) x [4, 8); inside it BG0 is
+     * enabled, outside everything is disabled. */
+    self_check_reset();
+    pltt_write16(0, 0x0000);            /* black backdrop */
+    pltt_write16(1, 0x03E0);            /* green */
     memset(&gPortVram[0], 0x11, 32);
+    memset(&gPortVram[0x800], 0, 0x800);
     vram_write16(0x800, 0x0000);
-    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT)); /* prio 0 */
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_WIN0H, (16 << 8) | 32);    /* x in [16, 32) */
+    io_write16(IO_WIN0V, (4 << 8) | 8);      /* y in [4, 8) */
+    io_write16(IO_WININ, 0x0001);            /* inside WIN0: only BG0 */
+    io_write16(IO_WINOUT, 0x0000);           /* outside: nothing */
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON | DISPCNT_WIN0_ON);
+    Port_RenderFrame(fb);
+    /* (16, 4) is inside the window -> green.  (0, 0) is outside ->
+     * backdrop (black). */
+    ok = ok && (fb[16 + 4 * DISP_W] == green_argb);
+    ok = ok && (fb[0 + 0 * DISP_W] == 0xFF000000u);
+    ok = ok && (fb[31 + 7 * DISP_W] == green_argb); /* still inside */
+    ok = ok && (fb[32 + 4 * DISP_W] == 0xFF000000u); /* just outside */
+
+    /* ---------- 9. Alpha blend (mode 1).  BG0 over backdrop. ------ */
+    /* BG0 is 1st target with green; backdrop is 2nd target with red.
+     * EVA = 8, EVB = 8 -> per-channel `(top*8 + bot*8) >> 4` =
+     * (top + bot) / 2. */
+    self_check_reset();
+    pltt_write16(0, 0x001F);          /* red backdrop */
+    pltt_write16(1, 0x03E0);          /* green BG */
+    memset(&gPortVram[0], 0x11, 32);
+    memset(&gPortVram[0x800], 0, 0x800);
+    vram_write16(0x800, 0x0000);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_BLDCNT, 0x0001 | (0x20 << 8) | (1 << 6)); /* 1st=BG0, 2nd=BD, mode=1 */
+    io_write16(IO_BLDALPHA, (8 << 8) | 8);
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON);
+    Port_RenderFrame(fb);
+    uint16_t expect_blend = blend_alpha(0x03E0, 0x001F, 8, 8);
+    ok = ok && (fb[0] == bgr555_to_argb8888(expect_blend));
+
+    /* ---------- 10. Brightness fade (mode 2 / mode 3, BLDY). ------ */
+    /* Mode 2 (brighter), EVY = 16 -> top fades to white.
+     * Mode 3 (darker), EVY = 16 -> top fades to black. */
+    io_write16(IO_BLDCNT, 0x0001 | (2 << 6)); /* 1st=BG0, mode=2 brighter */
+    io_write16(IO_BLDY, 16);
+    Port_RenderFrame(fb);
+    ok = ok && (fb[0] == 0xFFFFFFFFu);
+    io_write16(IO_BLDCNT, 0x0001 | (3 << 6)); /* mode=3 darker */
+    Port_RenderFrame(fb);
+    ok = ok && (fb[0] == 0xFF000000u);
+
+    /* ---------- 11. Mosaic (BG horizontal). ----------------------- */
+    /* BG mosaic 4 horizontally: pixels in columns [0..3] all sample
+     * the value at x = 0; columns [8..11] sample x = 8.  Set tile 0
+     * to a column-varying pattern by writing distinct palette indices
+     * per pixel of row 0 of tile 0. */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(1, 0x001F); /* red */
+    pltt_write16(2, 0x03E0); /* green */
+    /* Tile 0 row 0 (4 bpp): bytes 0..3 = (idx 1, idx 1), (idx 1, idx 2),
+     * (idx 2, idx 1), (idx 2, idx 2).  -> px(0..7) = 1,1,1,2,2,1,2,2.
+     * Easier: pixel x within row 0 = (x & 4) ? 2 : 1, so we expect a
+     * step from idx 1 to idx 2 at x=4. */
+    memset(&gPortVram[0], 0, 32);
+    /* row 0: bytes 0..3.  pix(0)=low(b0), pix(1)=high(b0), pix(2)=low(b1)... */
+    gPortVram[0] = 0x11; /* pix 0,1 = idx 1 */
+    gPortVram[1] = 0x11; /* pix 2,3 = idx 1 */
+    gPortVram[2] = 0x22; /* pix 4,5 = idx 2 */
+    gPortVram[3] = 0x22; /* pix 6,7 = idx 2 */
+    /* Make remaining rows match row 0 so nothing else interferes. */
+    for (int r = 1; r < 8; ++r) {
+        gPortVram[r * 4 + 0] = 0x11;
+        gPortVram[r * 4 + 1] = 0x11;
+        gPortVram[r * 4 + 2] = 0x22;
+        gPortVram[r * 4 + 3] = 0x22;
+    }
+    memset(&gPortVram[0x800], 0, 0x800);
+    vram_write16(0x800, 0x0000);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT) | BGCNT_MOSAIC);
+    io_write16(IO_MOSAIC, (4 - 1)); /* H=4, V=1 (BG); OBJ 1x1 */
+    io_write16(IO_BLDCNT, 0);
+    io_write16(IO_DISPCNT, DISPCNT_BG0_ON);
+    Port_RenderFrame(fb);
+    /* Without mosaic px(3) = idx 1, px(4) = idx 2.  With H=4 mosaic,
+     * px(3) is anchored to px(0) = idx 1, and px(4) anchors to px(4)
+     * itself = idx 2. */
+    uint32_t color_idx1 = bgr555_to_argb8888(0x001F);
+    uint32_t color_idx2 = bgr555_to_argb8888(0x03E0);
+    ok = ok && (fb[3] == color_idx1);
+    ok = ok && (fb[4] == color_idx2);
+    /* x=5 anchors to x=4 -> idx 2 (without mosaic it would be idx 1). */
+    ok = ok && (fb[5] == color_idx2);
+
+    /* ---------- 12. OBJ semi-transparent forces alpha blend. ------ */
+    /* BG0 = green (2nd target), OBJ = white in mode-1 (semi).  Even
+     * though BLDCNT mode is 0, the OBJ semi-transparent attribute
+     * forces an alpha blend using EVA / EVB. */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(1, 0x03E0);          /* BG green */
+    pltt_write16(256 + 1, 0x7FFF);    /* OBJ white */
+    memset(&gPortVram[VRAM_OBJ_BASE], 0x11, 32);
+    /* OBJ 0: 8x8 at (0,0), mode = 1 (semi-transparent). */
+    oam_write16(0, 0x0400);    /* mode bits = 1 */
+    oam_write16(2, 0x0000);
+    oam_write16(4, 0x0000);
+    /* BG0 covers the area in green. */
+    memset(&gPortVram[0], 0x11, 32);
+    memset(&gPortVram[0x800], 0, 0x800);
+    vram_write16(0x800, 0x0000);
+    io_write16(IO_BG0CNT, (1 << BGCNT_SCREENBASE_SHIFT));
+    io_write16(IO_BLDCNT, (0x01 << 8)); /* 2nd target = BG0 only; mode=0 */
+    io_write16(IO_BLDALPHA, (8 << 8) | 8);
     io_write16(IO_DISPCNT, DISPCNT_BG0_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     Port_RenderFrame(fb);
-    ok = ok && (fb[0] == white_argb); /* OBJ on top */
+    uint16_t expect_obj_blend = blend_alpha(0x7FFF, 0x03E0, 8, 8);
+    ok = ok && (fb[0] == bgr555_to_argb8888(expect_obj_blend));
 
-    oam_write16(4, 0x0C00); /* sprite priority = 3 */
+    /* ---------- 13. Affine OBJ (identity transform). -------------- */
+    /* An affine sprite with PA=PD=0x100, PB=PC=0 should render
+     * identically to a regular sprite of the same size and tile. */
+    self_check_reset();
+    pltt_write16(0, 0x0000);
+    pltt_write16(256 + 1, 0x7C00); /* OBJ blue */
+    memset(&gPortVram[VRAM_OBJ_BASE], 0x11, 32);
+    /* Affine group 0: PA=0x100, PB=0, PC=0, PD=0x100. */
+    oam_write16(6, 0x0100);
+    oam_write16(14, 0x0000);
+    oam_write16(22, 0x0000);
+    oam_write16(30, 0x0100);
+    /* OBJ 0: 8x8 affine sprite at (0,0), group 0, no double-size. */
+    oam_write16(0, OBJ_ATTR0_AFFINE);     /* affine, mode=0, 4bpp, shape=0 */
+    oam_write16(2, 0x0000);                /* x=0, group 0, size 0 */
+    oam_write16(4, 0x0000);                /* tile 0, prio 0 */
+    io_write16(IO_BLDCNT, 0);
+    io_write16(IO_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     Port_RenderFrame(fb);
-    ok = ok && (fb[0] == green_argb); /* BG wins now */
+    uint32_t blue2 = bgr555_to_argb8888(0x7C00);
+    ok = ok && (fb[0] == blue2);
+    ok = ok && (fb[7 + 7 * DISP_W] == blue2);
+    ok = ok && (fb[8 + 0 * DISP_W] == 0xFF000000u); /* outside sprite -> backdrop */
 
     snapshot_restore(&snap);
     return ok ? 0 : 1;
