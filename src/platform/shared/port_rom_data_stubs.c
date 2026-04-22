@@ -61,6 +61,7 @@
 #ifdef __PORT__
 
 #include <stdint.h>
+#include <stddef.h>
 
 /* Mirror of the file-local `GfxItem` struct in `src/common.c`. The C
  * type is purely compile-side: at link time only the symbol name and
@@ -154,6 +155,18 @@ typedef struct {
     uint8_t destPaletteNum;
     uint8_t numPalettes;
 } PortPaletteGroup;
+
+/* Layout-compatibility guards: any future change to either the host
+ * mirror or the file-local `PaletteGroup` in `src/common.c` that
+ * desyncs the two will fail at compile time instead of at runtime. */
+_Static_assert(sizeof(PortPaletteGroup) == 4,
+               "PortPaletteGroup must match PaletteGroup (u16 + u8 + u8 = 4 bytes)");
+_Static_assert(offsetof(PortPaletteGroup, paletteId) == 0,
+               "PortPaletteGroup.paletteId must be at offset 0");
+_Static_assert(offsetof(PortPaletteGroup, destPaletteNum) == 2,
+               "PortPaletteGroup.destPaletteNum must be at offset 2");
+_Static_assert(offsetof(PortPaletteGroup, numPalettes) == 3,
+               "PortPaletteGroup.numPalettes must be at offset 3");
 
 static const PortPaletteGroup sPortPaletteGroupTerminator = {
     .paletteId = 0,
