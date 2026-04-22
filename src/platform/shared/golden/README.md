@@ -21,6 +21,7 @@ compares the resulting `actual` value against the matching file's
 | File                              | Build configuration       | What it pins                                                           |
 |-----------------------------------|---------------------------|------------------------------------------------------------------------|
 | `usa_off_frames30.txt`            | `TMC_LINK_GAME_SOURCES=OFF` (default) | The empty `agb_main_stub.c` loop's framebuffer after 30 frames. |
+| `usa_on_frames30.txt`             | `TMC_LINK_GAME_SOURCES=ON`            | The real `src/main.c::AgbMain`'s framebuffer after 30 frames — i.e. the title-screen idle reached after `HandleNintendoCapcomLogos` -> `HandleTitlescreen`. The hash has been verified stable across `--frames={30, 60, 120, 240, 600, 1200}`, so locking it in catches both rasterizer regressions and boot-time game-state divergences. |
 
 ## Updating a hash
 
@@ -33,11 +34,20 @@ compiler change that should not be hidden by stale tests.
 To regenerate one of the files:
 
 ```sh
+# OFF build (default):
 cmake --preset sdl-release
 cmake --build --preset sdl-release
 SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
     ./build/sdl-release/tmc_sdl --frames=30 --print-frame-hash \
     > src/platform/shared/golden/usa_off_frames30.txt
+
+# ON build:
+cmake -S . -B build/sdl-on -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DTMC_LINK_GAME_SOURCES=ON
+cmake --build build/sdl-on
+SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
+    ./build/sdl-on/tmc_sdl --frames=30 --mute --print-frame-hash \
+    > src/platform/shared/golden/usa_on_frames30.txt
 ```
 
 Then commit the change with a message that explains why the hash
@@ -45,13 +55,6 @@ moved. The CI run will re-assert the new value.
 
 ## What is **not** pinned (yet)
 
-- The `TMC_LINK_GAME_SOURCES=ON` build's title-screen frame: the
-  pixels are deterministic across runs (the CI's
-  "golden-image-on-determinism" step asserts that two consecutive
-  `--frames=30` runs hash to the same value), but the value itself
-  still moves with every PR that fleshes out one of the
-  `port_unresolved_stubs.c` weak placeholders. PR #5..#7 progress
-  needs to settle before this is worth pinning.
 - Bitmap modes (3/4/5): the rasterizer does not implement them yet
   (PR #9 stretch), so neither the OFF nor the ON build exercises
   them today.

@@ -23,13 +23,13 @@ goal here is the equivalent `tmc.sdl`.
 > `Port_SaveWriteByte` so file-select data survives a process exit,
 > and PR #8 (golden-image CI mechanism) has landed: `tmc_sdl
 > --print-frame-hash` emits a stable FNV-1a 64-bit hash of the
-> rasterizer's framebuffer, the OFF build's hash is pinned in
-> `src/platform/shared/golden/usa_off_frames30.txt` and CI asserts
-> it on every run, and the ON build is asserted to be at least
-> deterministic across two consecutive runs (the value itself is
-> not pinned yet — see PR #8 below) — the only renderer features
-> still deferred are the bitmap modes
-> (3/4/5) and HBlank-driven mid-scanline raster effects.** Every
+> rasterizer's framebuffer, and CI now asserts strict equality
+> against the pinned value for *both* the OFF build (in
+> `src/platform/shared/golden/usa_off_frames30.txt`) and the ON
+> build (in `src/platform/shared/golden/usa_on_frames30.txt`) on
+> every run — the only renderer features still deferred are the
+> bitmap modes (3/4/5) and HBlank-driven mid-scanline raster
+> effects.** Every
 > `src/**/*.c` TU that
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
@@ -625,7 +625,7 @@ are tracked here for future contributors.
   `EEPROM_OUT_OF_RANGE`.
 - [ ] **PR #7.** Bring `src/gba/m4a.c` into the SDL build, hook the
   emulated sound FIFOs into `src/platform/sdl/audio.c` so songs play.
-- [x] **PR #8.** (mechanism) Golden-image CI test: snapshot the
+- [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two
   CLI options:
@@ -639,22 +639,20 @@ are tracked here for future contributors.
   * `--screenshot=PATH` writes the same buffer as a PPM (P6) so
     rendering regressions are debuggable locally without rebuilding.
 
-  The default-build (`TMC_LINK_GAME_SOURCES=OFF`, empty
-  `agb_main_stub.c` loop) hash for `--frames=30` is pinned in
-  `src/platform/shared/golden/usa_off_frames30.txt` and the Ubuntu
-  CI now asserts the binary's stdout matches the file (any
-  rasterizer regression observable through the empty-VRAM / OAM /
-  PLTT default surface fails with a clear actual-vs-expected diff).
-  The `=ON` build's title-screen hash is *not* pinned yet — the
-  surface still touches several `port_unresolved_stubs.c` weak
-  placeholders that PR #5..#7 are still fleshing out, so the value
-  moves from PR to PR — but CI now asserts it is at least
-  deterministic across two consecutive runs (catches any host-side
-  non-determinism without locking in a fragile value). Pinning the
-  ON-build hash is the deferred follow-up under this checkbox; once
-  PR #5..#7 settle the value, the determinism check upgrades to a
-  strict equality match against a stored value next to the OFF
-  entry.
+  Both the default build (`TMC_LINK_GAME_SOURCES=OFF`, empty
+  `agb_main_stub.c` loop) and the `=ON` build (real
+  `src/main.c::AgbMain` reaching the title-screen idle) have their
+  `--frames=30` hashes pinned in
+  `src/platform/shared/golden/usa_off_frames30.txt` and
+  `src/platform/shared/golden/usa_on_frames30.txt` respectively, and
+  the Ubuntu CI now asserts strict equality against both files on
+  every run (any rasterizer regression observable through either
+  surface fails with a clear actual-vs-expected diff). The ON-build
+  hash has been verified stable across `--frames={30, 60, 120, 240,
+  600, 1200}`, so locking it in catches both rasterizer regressions
+  and any boot-time game-state divergences in the same check; the
+  CI step also keeps the two-run determinism diagnostic so any
+  host-side non-determinism still surfaces with a specific error.
 
   See `src/platform/shared/golden/README.md` for how to regenerate
   a hash and the policy for when it is and is not appropriate to
