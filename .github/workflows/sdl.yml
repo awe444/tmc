@@ -51,23 +51,96 @@ jobs:
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
 
+      # PR #8 of the SDL-port roadmap: golden-image strict-equality check.
+      #
+      # The default build is now `TMC_LINK_GAME_SOURCES=ON` (PR #2b.4b
+      # runtime flip), so this check exercises the real
+      # `src/main.c::AgbMain` reaching the title-screen idle. The
+      # title-screen frame hash is pinned in
+      # `src/platform/shared/golden/usa_on_frames30.txt` and has been
+      # verified stable across `--frames={30, 60, 120, 240, 600, 1200}`,
+      # so this catches both rasterizer regressions and boot-time
+      # game-state divergences in the same check.
+      #
+      # The two-run determinism is preserved as a secondary assertion
+      # so any host-side non-determinism still surfaces with a clear
+      # error (the strict-equality match would also catch it, but the
+      # determinism diagnostic is more specific).
+      - name: Golden-image strict-equality check (default / ON build)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          save_dir_run1=$(mktemp -d build/golden-tmp-run1.XXXXXX)
+          save_dir_run2=$(mktemp -d build/golden-tmp-run2.XXXXXX)
+          trap 'rm -rf "$save_dir_run1" "$save_dir_run2"' EXIT
+          run1=$(./build/tmc_sdl --frames=30 --mute \
+                     --save-dir="$save_dir_run1" --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:' || true)
+          run2=$(./build/tmc_sdl --frames=30 --mute \
+                     --save-dir="$save_dir_run2" --print-frame-hash 2>/dev/null \
+                     | grep '^frame-hash:' || true)
+          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_on_frames30.txt || true)
+          echo "run1:     $run1"
+          echo "run2:     $run2"
+          echo "expected: $expected"
+          if [ -z "$run1" ] || [ -z "$run2" ]; then
+            echo "::error::tmc_sdl --print-frame-hash produced no output."
+            exit 1
+          fi
+          if [ -z "$expected" ]; then
+            echo "::error::Golden-image baseline src/platform/shared/golden/usa_on_frames30.txt is missing a frame-hash line."
+            exit 1
+          fi
+          if [ "$run1" != "$run2" ]; then
+            echo "::error::Default (ON) build's title-screen frame hash is not deterministic."
+            echo "::error::Two consecutive --frames=30 runs disagreed."
+            exit 1
+          fi
+          if [ "$run1" != "$expected" ]; then
+            echo "::error::Golden-image hash mismatch for the default (ON) build at --frames=30."
+            echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
+            exit 1
+          fi
+
+      # The `=OFF` build (empty-loop `agb_main_stub.c`) is preserved
+      # both as an early-bring-up scaffold for future ports (PSP / PS2
+      # / ...) and as an isolation harness for the platform layer
+      # itself. CI keeps it compile-checked + smoke-tested + golden-
+      # checked on every run so that path doesn't bit-rot.
+      - name: Configure (TMC_LINK_GAME_SOURCES=OFF)
+        run: |
+          cmake -S . -B build-link-off -DTMC_GAME_VERSION=${{ matrix.version }} -DTMC_LINK_GAME_SOURCES=OFF -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (TMC_LINK_GAME_SOURCES=OFF)
+        run: cmake --build build-link-off --config Release -j
+
+      - name: Smoke test (OFF build, headless, 30 frames)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./build-link-off/tmc_sdl --frames=30 --mute --save-dir=.
+
       # PR #8 of the SDL-port roadmap: golden-image CI test.
       #
-      # Asserts the rasterizer's framebuffer hash for the default
-      # (TMC_LINK_GAME_SOURCES=OFF) build at frame 30 matches the value
-      # pinned in `src/platform/shared/golden/usa_off_frames30.txt`.
-      # The OFF build exercises the empty-loop `agb_main_stub.c`, so
-      # the framebuffer is exactly the rasterizer's empty-VRAM /
-      # empty-OAM / empty-PLTT default — any rasterizer regression
-      # observable through that surface fails CI here with a clear
-      # diff between the produced and expected hash.
+      # Asserts the rasterizer's framebuffer hash for the OFF build at
+      # frame 30 matches the value pinned in
+      # `src/platform/shared/golden/usa_off_frames30.txt`. The OFF build
+      # exercises the empty-loop `agb_main_stub.c`, so the framebuffer
+      # is exactly the rasterizer's empty-VRAM / empty-OAM / empty-PLTT
+      # default — any rasterizer regression observable through that
+      # surface fails CI here with a clear diff between the produced
+      # and expected hash.
       - name: Golden-image hash check (OFF build)
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
         run: |
           set -euo pipefail
-          output=$(./build/tmc_sdl --frames=30 --mute --save-dir=. --print-frame-hash 2>&1)
+          output=$(./build-link-off/tmc_sdl --frames=30 --mute --save-dir=. --print-frame-hash 2>&1)
           actual=$(printf '%s\n' "$output" | grep '^frame-hash:' || true)
           if [ -z "$actual" ]; then
             echo "::error::Golden-image hash check for the OFF build did not produce a frame-hash line at --frames=30."
@@ -84,80 +157,6 @@ jobs:
           echo "expected: $expected"
           if [ "$actual" != "$expected" ]; then
             echo "::error::Golden-image hash mismatch for the OFF build at --frames=30."
-            echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
-            exit 1
-          fi
-
-      # PR #2b.4b of the SDL-port roadmap: the link step now succeeds
-      # with `TMC_LINK_GAME_SOURCES=ON` thanks to the weak-stub coverage
-      # in `src/platform/shared/port_unresolved_stubs.c`. Build (but do
-      # not yet run) the resulting `tmc_sdl` binary so the CI catches
-      # any regression in either the leaf-set compile or the final link.
-      # The runtime smoke test is intentionally left on the default
-      # (OFF) build until the remaining asm/data stubs are fleshed out
-      # enough for `src/main.c::AgbMain` to boot without segfaulting --
-      # flipping the default to ON is tracked as a follow-up.
-      - name: Configure (TMC_LINK_GAME_SOURCES=ON)
-        run: |
-          cmake -S . -B build-link-on -DTMC_GAME_VERSION=${{ matrix.version }} -DTMC_LINK_GAME_SOURCES=ON -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build (TMC_LINK_GAME_SOURCES=ON)
-        run: cmake --build build-link-on --config Release -j
-
-      - name: Verify link-on tmc_sdl was produced
-        run: |
-          test -x build-link-on/tmc_sdl
-
-      # PR #8 of the SDL-port roadmap: golden-image strict-equality check.
-      #
-      # The ON build's title-screen frame hash is now pinned in
-      # `src/platform/shared/golden/usa_on_frames30.txt` (PR #5 affine
-      # BG / windows / blending and PR #6 EEPROM save are both complete;
-      # PR #7 m4a is audio-only and does not affect framebuffer pixels).
-      # The hash has been verified stable across `--frames={30, 60, 120,
-      # 240, 600, 1200}`, so locking it in catches both rasterizer
-      # regressions and boot-time game-state divergences in the same
-      # check that already runs against the OFF build above.
-      #
-      # The two-run determinism is preserved as a secondary assertion
-      # so any host-side non-determinism still surfaces with a clear
-      # error (the strict-equality match would also catch it, but the
-      # determinism diagnostic is more specific).
-      - name: Golden-image strict-equality check (ON build)
-        env:
-          SDL_VIDEODRIVER: dummy
-          SDL_AUDIODRIVER: dummy
-        run: |
-          set -euo pipefail
-          mkdir -p build-link-on
-          save_dir_run1=$(mktemp -d build-link-on/golden-tmp-run1.XXXXXX)
-          save_dir_run2=$(mktemp -d build-link-on/golden-tmp-run2.XXXXXX)
-          trap 'rm -rf "$save_dir_run1" "$save_dir_run2"' EXIT
-          run1=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir="$save_dir_run1" --print-frame-hash 2>/dev/null \
-                     | grep '^frame-hash:' || true)
-          run2=$(./build-link-on/tmc_sdl --frames=30 --mute \
-                     --save-dir="$save_dir_run2" --print-frame-hash 2>/dev/null \
-                     | grep '^frame-hash:' || true)
-          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_on_frames30.txt || true)
-          echo "run1:     $run1"
-          echo "run2:     $run2"
-          echo "expected: $expected"
-          if [ -z "$run1" ] || [ -z "$run2" ]; then
-            echo "::error::tmc_sdl --print-frame-hash produced no output."
-            exit 1
-          fi
-          if [ -z "$expected" ]; then
-            echo "::error::Golden-image baseline src/platform/shared/golden/usa_on_frames30.txt is missing a frame-hash line."
-            exit 1
-          fi
-          if [ "$run1" != "$run2" ]; then
-            echo "::error::ON build's title-screen frame hash is not deterministic."
-            echo "::error::Two consecutive --frames=30 runs disagreed."
-            exit 1
-          fi
-          if [ "$run1" != "$expected" ]; then
-            echo "::error::Golden-image hash mismatch for the ON build at --frames=30."
             echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
             exit 1
           fi

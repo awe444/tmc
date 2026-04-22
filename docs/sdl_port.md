@@ -9,9 +9,13 @@ which adds an `sa2.sdl` target on top of the matching ROM decompilation. The
 goal here is the equivalent `tmc.sdl`.
 
 > Status: **PR #1 of the roadmap is implemented, PR #2a (foundational
-> `__PORT__` header rewiring) has landed, PR #2b is feature-complete
-> at the link level (2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, and the
-> link-resolution half of 2b.4b are done), PR #3 (mirroring the
+> `__PORT__` header rewiring) has landed, PR #2b is feature-complete:
+> 2b.1, 2b.2, waves 1–3 of 2b.3, 2b.4a, the link-resolution half of
+> 2b.4b, and the runtime flip of 2b.4b are all done — `tmc_sdl` now
+> builds with `TMC_LINK_GAME_SOURCES=ON` by default, so the default
+> binary boots into `src/main.c::AgbMain`, runs through
+> `HandleNintendoCapcomLogos` into `HandleTitlescreen`, and reaches the
+> title-screen idle. PR #3 (mirroring the
 > SDL key bitmask into the emulated `REG_KEYINPUT` slot) has landed,
 > PR #4 (software rasterizer for BG mode 0 + OBJ regular sprites,
 > 4 bpp + 8 bpp) now drives `Port_VideoPresent()` from the emulated
@@ -24,9 +28,10 @@ goal here is the equivalent `tmc.sdl`.
 > and PR #8 (golden-image CI mechanism) has landed: `tmc_sdl
 > --print-frame-hash` emits a stable FNV-1a 64-bit hash of the
 > rasterizer's framebuffer, and CI now asserts strict equality
-> against the pinned value for *both* the OFF build (in
-> `src/platform/shared/golden/usa_off_frames30.txt`) and the ON
-> build (in `src/platform/shared/golden/usa_on_frames30.txt`) on
+> against the pinned value for *both* the default ON build (in
+> `src/platform/shared/golden/usa_on_frames30.txt`) and the
+> explicit-OFF build (in
+> `src/platform/shared/golden/usa_off_frames30.txt`) on
 > every run — the only renderer features still deferred are the
 > bitmap modes (3/4/5) and HBlank-driven mid-scanline raster
 > effects.** Every
@@ -34,14 +39,13 @@ goal here is the equivalent `tmc.sdl`.
 > the SDL port can sensibly consume now builds clean under `__PORT__`
 > (618 of 618; the 13 files that needed file-local fixes were patched
 > behind `#ifdef __PORT__`), and `tmc_game_sources` is the full game
-> tree. A `TMC_LINK_GAME_SOURCES=ON` configuration now links cleanly
-> into `tmc_sdl` — the ~850 symbols that still live only in unported
-> `asm/src/`, the not-yet-linked `src/gba/m4a.c`, and the large const
-> tables under `data/` are satisfied by weak abort/BSS stubs in
-> `src/platform/shared/port_unresolved_stubs.c`. The runtime flip of
-> the default to `ON` is intentionally deferred — `src/main.c::AgbMain`
-> reaches enough unresolved stubs during early init that it SIGSEGVs,
-> and fleshing those paths out is the scope of PRs #5 – #7.** The
+> tree. The default build links the game library into `tmc_sdl` — the
+> ~850 symbols that still live only in unported `asm/src/`, the
+> not-yet-linked `src/gba/m4a.c`, and the large const tables under
+> `data/` are satisfied by weak abort/BSS stubs in
+> `src/platform/shared/port_unresolved_stubs.c`. The `=OFF` build
+> remains supported as an early-bring-up scaffold for future ports
+> (PSP / PS2 / ...) and as a platform-layer isolation harness.** The
 > default build produces a `tmc_sdl` executable that opens a 240×160
 > (scaled 4×) window, accepts keyboard and gamepad input (via
 > `SDL_GameController`), opens a silent SDL audio device,
@@ -55,8 +59,10 @@ goal here is the equivalent `tmc.sdl`.
 > `src/platform/shared/gba_memory.c`, and the agbcc-isms (`EWRAM_DATA`,
 > `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`, `MEMORY_BARRIER`, `ASM_FUNC`,
 > `NONMATCH`, `SystemCall`, …) collapsing to no-ops. The real game
-> logic **links cleanly** but does not yet **run** — closing that
-> remaining gap is spread across PRs #5 – #7.
+> logic now both **links cleanly** and **boots** as far as the
+> title-screen idle; advancing further into file-select / game-task
+> transitions is the remaining audio-and-asm work tracked under
+> PR #7 (m4a) and the asm-decomp track.
 
 
 ## Building
@@ -100,7 +106,7 @@ cmake --build --preset sdl-release
 | `TMC_ENABLE_GAMEPAD`         | `ON`    | Initialise `SDL_GameController` for gamepad input.       |
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
-| `TMC_LINK_GAME_SOURCES`      | `OFF`   | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4a). The library is always **built** as a dependency; this option controls whether it is also **linked**. Turning it ON requires the 2b.4b stubs for the symbols still reaching into `src/enemy/`, `src/manager/`, etc. |
+| `TMC_LINK_GAME_SOURCES`      | `ON`    | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4). The library is always **built** as a dependency; this option controls whether it is also **linked** so that `src/main.c::AgbMain` becomes the entry point. Setting `=OFF` falls back to the empty-loop `agb_main_stub.c` placeholder, which is preserved as an early-bring-up scaffold for future ports and as a platform-layer isolation harness. |
 
 ## Running
 
@@ -146,6 +152,71 @@ write; it is loaded at startup and flushed on clean shutdown. Erased Flash
 reads as `0xFF`, so any region not yet written by the game returns that
 value — this matches real hardware so the existing `src/save.c` validation
 checks behave identically.
+
+## Game assets / `baserom.gba`
+
+**The SDL build does not yet ingest the game's real graphics, palettes,
+maps, or audio.** Building with assets — i.e. running the
+`tools/asset_processor` pipeline against `baserom.gba` and linking the
+extracted blobs into `tmc_sdl` — is not yet supported. There is
+deliberately no `TMC_BASEROM=` / `TMC_ASSETS_DIR=` option on the SDL
+target, and the SDL `CMakeLists.txt` does not depend on `baserom.gba`,
+the `assets/` extraction directory, or the data tables under `data/`.
+
+Concretely, what the host build does instead:
+
+- `assets/gfx_offsets.h` and `assets/map_offsets.h` (which the ROM build
+  generates from the extracted base ROM) are replaced by host-port
+  `offset_*` stubs that all collapse to `0`. These live under
+  `src/platform/shared/generated/assets/` and are regenerated by
+  `tools/port/gen_offset_stubs.py`.
+- `gGfxGroups[]` is provided by `src/platform/shared/port_rom_data_stubs.c`
+  with every entry pointing at a single `GfxItem` whose control byte is
+  `0x0D`, the "no-op" arm of `src/common.c::LoadGfxGroup`. The function
+  returns immediately, so no graphics ever get unpacked into VRAM and no
+  palette ever gets copied into PLTT.
+- `gGlobalGfxAndPalettes[]` is a small zero-filled buffer; address-of
+  references into it land inside a mapped region but the bytes are zero.
+- `m4a` is silent (see `src/platform/shared/m4a_stub.c`); `gSongTable` /
+  `gMPlayJumpTable` and friends are weak BSS placeholders in
+  `src/platform/shared/port_unresolved_stubs.c`.
+
+### What to expect when running `tmc_sdl`
+
+When you build and launch the default `tmc_sdl` binary today:
+
+- A 240×160 (scaled 4×) window opens, paced at 59.7274 Hz.
+- The real `src/main.c::AgbMain` boots and runs through
+  `HandleNintendoCapcomLogos -> HandleTitlescreen` into the title-screen
+  idle state machine.
+- **The framebuffer stays at the rasterizer's cleared backdrop** because
+  every `LoadGfxGroup` call short-circuits before touching VRAM/PLTT.
+  You will not see the Nintendo / Capcom logos, the Camelot logo, the
+  title-screen art, the cursor, or any sprite — these are all real
+  ROM-extracted assets the host build cannot reach.
+- Keyboard / gamepad input is sampled into the emulated `REG_KEYINPUT`
+  every frame; the game-state machine reads it normally, but the
+  visible result is the same blank backdrop because the renderer has
+  nothing to compose.
+- Audio output is silent (the m4a engine is a stub; PR #7 of the
+  roadmap will bring in `src/gba/m4a.c` and connect it to
+  `src/platform/sdl/audio.c`).
+- `tmc.sav` (or `--save-dir=` target) is created and persisted normally
+  via the EEPROM-backed save path (PR #6); save data round-trips
+  correctly even though no graphics are visible.
+- The headless smoke test (`--frames=N --print-frame-hash`) produces a
+  stable, pinned hash — see `src/platform/shared/golden/README.md`.
+
+If you want the matching ROM build (which *does* render the real game
+because it is built against `baserom.gba` directly), see
+[INSTALL.md](../INSTALL.md) and run `make tmc`. The SDL port and the
+ROM build live side by side and do not interfere with each other; see
+the "Coexistence with the GBA ROM build" section below.
+
+A future PR is expected to plumb the `tools/asset_processor` output
+(or an equivalent host-side asset pack) into the SDL build so the real
+graphics show up; until then the `port_rom_data_stubs.c` short-circuit
+is the contract.
 
 ## Layering
 
@@ -282,13 +353,13 @@ are tracked here for future contributors.
       `TMC_LINK_GAME_SOURCES=ON` build now compiles every top-level
       `src/*.c`.
   - [x] **2b.4a** Foundation for replacing `agb_main_stub.c` with the
-    real `src/main.c::AgbMain`. The `TMC_LINK_GAME_SOURCES` option now
+    real `src/main.c::AgbMain`. The `TMC_LINK_GAME_SOURCES` option
     additionally **links** the `tmc_game_sources` library into the
     `tmc_sdl` executable (replacing the stub) instead of merely building
-    it — and the stub TU is now opt-out: it only enters the executable
-    when `TMC_LINK_GAME_SOURCES=OFF`. Three pieces of host-side
-    infrastructure make the link possible for the call graph rooted at
-    `AgbMain`:
+    it — and the stub TU is opt-out: it only enters the executable
+    when `TMC_LINK_GAME_SOURCES=OFF` (the preserved non-default
+    compatibility mode). Three pieces of host-side infrastructure make
+    the link possible for the call graph rooted at `AgbMain`:
     1. `src/platform/shared/port_globals.c` allocates host BSS for the
        linker-script globals that `linker.ld` would otherwise fix at
        hard-coded EWRAM/IWRAM offsets — `gMain`, `gInput`, `gScreen`,
@@ -318,12 +389,12 @@ are tracked here for future contributors.
     dropped stub into `src/platform/sdl/main.c` so it still runs during
     the headless smoke test.
 
-    Behaviour with `TMC_LINK_GAME_SOURCES=OFF` (the still-default) is
-    unchanged: `tmc_sdl` builds from the empty-loop `agb_main_stub.c`,
-    and the smoke test passes. The Ubuntu CI job now only runs the
-    default build (the second `=ON` configure pass was redundant once
-    the library was switched to "always built as a dependency"); the
-    leaf set is still compile-checked on every PR by
+    Behaviour with `TMC_LINK_GAME_SOURCES=OFF` is preserved as an
+    early-bring-up scaffold for future ports and as a platform-layer
+    isolation harness: `tmc_sdl` builds from the empty-loop
+    `agb_main_stub.c` and the smoke test passes. Both build flavours
+    are exercised by the Ubuntu CI job; the leaf set is also still
+    compile-checked on every PR by
     `add_dependencies(tmc_sdl tmc_game_sources)`.
   - [x] **2b.4b** (link only) Widened `TMC_GAME_LEAF_SOURCES` to the
     entire `src/**/*.c` tree (618 TUs). The 13 files that did not
@@ -360,16 +431,24 @@ are tracked here for future contributors.
     `src/main.c::AgbMain`; the Ubuntu CI now runs both a default
     (`OFF`) build+smoke test and a second `=ON` build pass that
     verifies the link.
-  - [ ] **2b.4b** (runtime flip) Flip `TMC_LINK_GAME_SOURCES` to ON by
-    default. Blocks on making `AgbMain` boot: the weak stubs above
-    keep the link succeeding but trap on call, so the existing
-    headless smoke test (`--frames=30`) would SIGSEGV once any unported
-    path is exercised during init. The remaining work is distributed
-    across the later roadmap entries (affine BGs / windows / blending
-    in PR #5, m4a in PR #7) rather than landing as a
-    single big step here; once those ports reduce the stub surface
-    enough that `AgbMain` survives the smoke-test budget, the default
-    can flip.
+  - [x] **2b.4b** (runtime flip) Flipped `TMC_LINK_GAME_SOURCES` to ON
+    by default. The weak stubs in
+    `src/platform/shared/port_unresolved_stubs.c`, the targeted
+    silent overrides in `src/platform/shared/ram_silent_stubs.c`, the
+    contiguous entity-arena layout in `src/platform/shared/port_globals.c`,
+    and the `Port_RunGameLoop()` / `Port_VBlankIntrWait()` plumbing
+    in `src/platform/shared/interrupts.c` (all itemised in the
+    "Progress so far" notes below) cumulatively let `AgbMain` survive
+    the headless `--frames=N` smoke test budget for
+    `N ∈ {30, 60, 120, 240, 600, 1200}` and reach the title-screen
+    idle. The Ubuntu CI now runs the default (ON) build's smoke test
+    and golden-hash check, plus an explicit `=OFF` configure / build
+    / smoke / golden-hash check so the empty-loop scaffold doesn't
+    bit-rot. Continuing past the title-screen idle (file-select /
+    game-task transitions) needs additional unported `ram_*` helpers,
+    manager dispatchers, and EWRAM-layout work, all tracked under the
+    later roadmap entries (PR #7 m4a + the asm-decomp track) rather
+    than under this checkbox.
 
     *Progress so far (incremental landings under this checkbox):*
     The `--frames=N` headless smoke test against
@@ -639,9 +718,9 @@ are tracked here for future contributors.
   * `--screenshot=PATH` writes the same buffer as a PPM (P6) so
     rendering regressions are debuggable locally without rebuilding.
 
-  Both the default build (`TMC_LINK_GAME_SOURCES=OFF`, empty
-  `agb_main_stub.c` loop) and the `=ON` build (real
-  `src/main.c::AgbMain` reaching the title-screen idle) have their
+  Both the `=OFF` build (empty `agb_main_stub.c` loop) and the
+  default `=ON` build (real `src/main.c::AgbMain` reaching the
+  title-screen idle) have their
   `--frames=30` hashes pinned in
   `src/platform/shared/golden/usa_off_frames30.txt` and
   `src/platform/shared/golden/usa_on_frames30.txt` respectively, and

@@ -41,22 +41,25 @@ option(TMC_WIDESCREEN     "Reserve hooks for the future widescreen renderer."   
 option(TMC_USE_FETCHCONTENT_SDL
     "Fall back to FetchContent for SDL2 if it isn't found on the system." OFF)
 
-# Sub-step 2b.4a of the SDL-port roadmap (see docs/sdl_port.md). The
+# Sub-step 2b.4 of the SDL-port roadmap (see docs/sdl_port.md). The
 # `tmc_game_sources` static library (built from the subset of
 # `src/**/*.c` that compiles cleanly under `__PORT__`) is **always**
 # built as a dependency of `tmc_sdl` so CI catches regressions in the
-# leaf set. When `TMC_LINK_GAME_SOURCES=ON`, the library is also linked
-# into the executable, replacing the empty-loop `agb_main_stub.c`
-# placeholder with the real `src/main.c::AgbMain`. The 2b.4a foundation
-# (host definitions of the `linker.ld` globals + unprefixed BIOS aliases
-# under `__PORT__`) satisfies the link references rooted at `AgbMain`,
-# but the full call graph still pulls in symbols from `src/enemy/`,
-# `src/manager/`, `src/menu/`, `src/data/`, `asm/src/`, ... -- those
-# will be added or stubbed in 2b.4b. Until then this option stays
-# default OFF, and turning it ON requires also providing the missing
-# symbol stubs.
+# leaf set. When `TMC_LINK_GAME_SOURCES=ON` (the default), the library
+# is also linked into the executable, replacing the empty-loop
+# `agb_main_stub.c` placeholder with the real `src/main.c::AgbMain`.
+# Setting `=OFF` falls back to the `agb_main_stub.c` empty loop; that
+# path is preserved both as an early-bring-up scaffold for future ports
+# (PSP / PS2 / ...) and as an isolation harness for the platform layer
+# itself. The 2b.4a foundation (host definitions of the `linker.ld`
+# globals + unprefixed BIOS aliases under `__PORT__`) plus the
+# 2b.4b weak-stub coverage in `port_unresolved_stubs.c` satisfy the
+# call graph rooted at `AgbMain` well enough that the title-screen
+# frame hash is stable across `--frames={30, 60, 120, 240, 600, 1200}`
+# (verified in CI against `usa_on_frames30.txt`). The runtime flip to
+# ON is PR #2b.4b runtime-flip in the roadmap.
 option(TMC_LINK_GAME_SOURCES
-    "Link the src/**/*.c game sources into tmc_sdl (PR #2b.4)." OFF)
+    "Link the src/**/*.c game sources into tmc_sdl (PR #2b.4)." ON)
 
 # Only the "sdl" platform is implemented in this PR. Other values are
 # reserved so future ports can slot into the same option without breaking the
@@ -147,11 +150,10 @@ endif()
 # globals). When `TMC_LINK_GAME_SOURCES=ON`, the real game sources from
 # `src/**/*.c` are pulled in via the `tmc_game_sources` static library
 # defined further below, and the placeholder `agb_main_stub.c` is
-# dropped so that `src/main.c::AgbMain` becomes the entry point. With
-# the default `OFF`, the stub takes over and the platform layer is
-# exercised in isolation (PR #2b.4b will flip the default to ON once
-# the remaining link references from outside the leaf set are stubbed
-# or ported — see docs/sdl_port.md).
+# dropped so that `src/main.c::AgbMain` becomes the entry point. ON is
+# now the default (PR #2b.4b runtime flip — see docs/sdl_port.md);
+# setting `=OFF` keeps the empty-loop stub for early-bring-up of new
+# ports and as a platform-layer isolation harness.
 # ---------------------------------------------------------------------------
 set(TMC_PLATFORM_SDL_SOURCES
     src/platform/sdl/main.c
@@ -944,9 +946,9 @@ target_compile_options(tmc_game_sources PRIVATE
 )
 # Always build the library alongside tmc_sdl so CI catches regressions
 # in the leaf set on every PR. Only LINK it into the executable when
-# `TMC_LINK_GAME_SOURCES=ON`; with the default OFF, the build still
-# produces a working `tmc_sdl` from the empty-loop `agb_main_stub.c`,
-# while the leaf set is continuously compile-verified.
+# `TMC_LINK_GAME_SOURCES=ON` (the default); with `=OFF`, the build
+# still produces a working `tmc_sdl` from the empty-loop
+# `agb_main_stub.c`, while the leaf set is continuously compile-verified.
 add_dependencies(tmc_sdl tmc_game_sources)
 
 # Weak-symbol placeholder archive for the ~850 references that
