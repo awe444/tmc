@@ -204,6 +204,55 @@ set(TMC_PLATFORM_SHARED_SOURCES
 )
 
 # ---------------------------------------------------------------------------
+# Configure-time generation of `_port_offset_stubs.h`.
+#
+# The host stubs `assets/{gfx,map}_offsets.h` (under
+# `src/platform/shared/generated/`) `#include "_port_offset_stubs.h"`,
+# which is a ~30k-line `#ifndef X #define X 0 #endif` catch-all keyed on
+# every offset symbol referenced from the JSON-driven asset tables. It
+# is intentionally NOT committed -- shipping it would dominate every PR
+# diff -- and is regenerated deterministically from `assets/*.json` here
+# at configure time by `tools/port/gen_host_assets.py gen-offsets-stub`.
+# Re-run is fast (under a second) and idempotent.
+#
+# That makes Python3 a hard configure-time dependency for the SDL port
+# (it was already required for the `-DTMC_BASEROM=` path; this just
+# pulls the dependency up so the no-baserom path needs it too).
+# ---------------------------------------------------------------------------
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(_tmc_offset_stubs_dir "${CMAKE_BINARY_DIR}/generated/port_offset_stubs")
+set(_tmc_offset_stubs_h   "${_tmc_offset_stubs_dir}/_port_offset_stubs.h")
+file(MAKE_DIRECTORY "${_tmc_offset_stubs_dir}")
+# Re-run at every configure (assets/*.json could have grown). The
+# generator overwrites the file in-place, so this stays idempotent and
+# does not invalidate ccache.
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/port/gen_host_assets.py" gen-offsets-stub
+        --repo-root "${CMAKE_SOURCE_DIR}"
+        --out "${_tmc_offset_stubs_h}"
+    RESULT_VARIABLE _tmc_stub_rc
+    OUTPUT_VARIABLE _tmc_stub_out
+    ERROR_VARIABLE  _tmc_stub_err)
+if(NOT _tmc_stub_rc EQUAL 0)
+    message(FATAL_ERROR
+        "tools/port/gen_host_assets.py gen-offsets-stub failed "
+        "(exit ${_tmc_stub_rc}):\n${_tmc_stub_out}${_tmc_stub_err}")
+endif()
+if(_tmc_stub_out)
+    message(STATUS "  ${_tmc_stub_out}")
+endif()
+# Re-run on configure if any of the JSON inputs change. CMake reruns
+# the configure step automatically when files in CMAKE_CONFIGURE_DEPENDS
+# are touched, which is exactly the trigger we want for the stub
+# (it depends only on the union of `offset_*` symbol names extracted
+# from those JSONs).
+file(GLOB _tmc_assets_jsons CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/assets/*.json")
+set_property(DIRECTORY APPEND PROPERTY
+    CMAKE_CONFIGURE_DEPENDS ${_tmc_assets_jsons})
+
+# ---------------------------------------------------------------------------
 # Asset-table source selection (TMC_BASEROM).
 #
 # Without `-DTMC_BASEROM=...`, link the all-zero `port_rom_data_stubs.c`
@@ -224,7 +273,6 @@ if(TMC_BASEROM)
             "`python3 tools/port/gen_host_assets.py make-placeholder-baserom "
             "--out <path>` to generate a deterministic placeholder for testing.")
     endif()
-    find_package(Python3 REQUIRED COMPONENTS Interpreter)
     set(_tmc_assets_out "${CMAKE_BINARY_DIR}/generated/port_assets")
     set(_tmc_assets_inc "${_tmc_assets_out}/assets")
     file(MAKE_DIRECTORY "${_tmc_assets_inc}")
@@ -252,11 +300,11 @@ if(TMC_BASEROM)
     endif()
     # The generated header lives in `${_tmc_assets_inc}/gfx_offsets.h`
     # but `#include "_port_offset_stubs.h"` from inside it needs to
-    # resolve. Add the existing stub directory to the include path so
-    # the bare include succeeds.
+    # resolve. The configure-time-generated stub directory is already
+    # added to every include path further below, so just exporting the
+    # generated assets dir is enough here.
     list(APPEND TMC_GENERATED_ASSETS_INCLUDE_DIRS
-        "${_tmc_assets_out}"
-        "${CMAKE_SOURCE_DIR}/src/platform/shared/generated/assets")
+        "${_tmc_assets_out}")
     list(APPEND TMC_PLATFORM_SHARED_SOURCES "${_tmc_gen_assets_c}")
 else()
     list(APPEND TMC_PLATFORM_SHARED_SOURCES
@@ -1030,6 +1078,15 @@ target_include_directories(tmc_game_sources PRIVATE
     # a separate include root. See tools/port/gen_host_assets.py
     # and docs/sdl_port.md (PR #2b.3, wave 3).
     src/platform/shared/generated
+    # The catch-all `_port_offset_stubs.h` referenced by both stubs and
+    # by the configure-time generated `gfx_offsets.h` is itself
+    # configure-time-generated into the build tree (see the
+    # "Configure-time generation of `_port_offset_stubs.h`" block at
+    # the top of this file). The directory is added to the include
+    # search path so the bare `#include "_port_offset_stubs.h"`
+    # resolves whether the includer is the in-tree stub header or the
+    # generated `gfx_offsets.h` from the `-DTMC_BASEROM=` path.
+    ${_tmc_offset_stubs_dir}
 )
 target_compile_definitions(tmc_game_sources PRIVATE
     __PORT__

@@ -714,7 +714,13 @@ def cmd_make_placeholder_baserom(args: argparse.Namespace) -> None:
 def cmd_gen_offsets_stub(args: argparse.Namespace) -> None:
     """Regenerate the all-zero `_port_offset_stubs.h` catch-all.
 
-    Lives at `src/platform/shared/generated/assets/_port_offset_stubs.h`.
+    Normally invoked by CMake at configure time and written into the
+    build directory (`${CMAKE_BINARY_DIR}/generated/port_offset_stubs/
+    _port_offset_stubs.h`); `--out` selects the destination. When `--out`
+    is omitted, falls back to the legacy in-tree location at
+    `src/platform/shared/generated/assets/_port_offset_stubs.h` so manual
+    invocations from the repo root still work.
+
     Each symbol gets `#ifndef ... #define X 0` so the real
     `gfx_offsets.h` (when present) can override it without #undef noise.
 
@@ -725,10 +731,14 @@ def cmd_gen_offsets_stub(args: argparse.Namespace) -> None:
     `assets/{gfx,map}_offsets.h`.
     """
     repo_root = Path(args.repo_root or default_repo_root())
-    out_path = (
-        repo_root / "src" / "platform" / "shared" / "generated" / "assets"
-        / "_port_offset_stubs.h"
-    )
+    if args.out:
+        out_path = Path(args.out)
+    else:
+        out_path = (
+            repo_root / "src" / "platform" / "shared" / "generated" / "assets"
+            / "_port_offset_stubs.h"
+        )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Collect the union of every `offset_*` symbol across every JSON
     # config and every variant. (Same shape as the previously
@@ -758,18 +768,21 @@ def cmd_gen_offsets_stub(args: argparse.Namespace) -> None:
         "/*",
         " * Auto-generated host-port stub for assets/*_offsets.h.",
         " *",
+        " * Written at CMake configure time into",
+        " *   ${CMAKE_BINARY_DIR}/generated/port_offset_stubs/_port_offset_stubs.h",
+        " * by `tools/port/gen_host_assets.py gen-offsets-stub --out <path>`.",
+        " * Do not commit a copy of this file -- it is `.gitignore`d for that",
+        " * reason. Configure the SDL CMake project to regenerate it.",
+        " *",
         " * The matching GBA ROM build (see Makefile / GBA.mk) writes the real",
         " * values to `assets/gfx_offsets.h` and `assets/map_offsets.h` from the",
         " * `asset_processor` tool after extracting the base ROM. The SDL host",
         " * port is decoupled from the ROM build and falls back to these",
         " * `#ifndef`-guarded zero stubs whenever the configure-time",
-        " * `tools/port/gen_host_assets.py` did not produce a real value (i.e.",
-        " * because the build was configured without a `-DTMC_BASEROM=` path,",
-        " * or for symbol classes the generator does not yet cover -- map /",
-        " * sound / sample / data offsets, in this PR's scope).",
-        " *",
-        " * Regenerate with:",
-        " *   python3 tools/port/gen_host_assets.py gen-offsets-stub",
+        " * `tools/port/gen_host_assets.py gen` did not produce a real value",
+        " * (i.e. because the build was configured without a `-DTMC_BASEROM=`",
+        " * path, or for symbol classes the generator does not yet cover --",
+        " * map / sound / sample / data offsets, in this PR's scope).",
         " *",
         " * See docs/sdl_port.md (PR #2b.3, wave 3) for the wider context.",
         " */",
@@ -866,9 +879,17 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     s = sub.add_parser(
         "gen-offsets-stub",
-        help="regenerate src/platform/shared/generated/assets/_port_offset_stubs.h",
+        help="(re)generate _port_offset_stubs.h (configure-time helper for CMake)",
     )
     s.add_argument("--repo-root", help="repository root (auto-detected)")
+    s.add_argument(
+        "--out",
+        help=(
+            "destination path for `_port_offset_stubs.h` (defaults to the "
+            "legacy in-tree location for back-compat with manual invocations; "
+            "CMake passes a path under ${CMAKE_BINARY_DIR}/generated/)"
+        ),
+    )
     s.set_defaults(func=cmd_gen_offsets_stub)
 
     args = p.parse_args(argv)
