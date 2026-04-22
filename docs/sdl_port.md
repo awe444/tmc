@@ -632,9 +632,10 @@ are tracked here for future contributors.
   * `--print-frame-hash` renders one extra frame after the
     `--frames=N` budget unwinds `AgbMain`, hashes the resulting
     240×160 ARGB8888 buffer with FNV-1a 64-bit, and prints the value
-    to stdout as `frame-hash: 0x<16 hex>`. Endianness-stable: the
-    hash operates on the raw byte stream, so the same logical pixels
-    produce the same value on any little- or big-endian host.
+    to stdout as `frame-hash: 0x<16 hex>`. The hash currently operates
+    on the native in-memory byte stream of the `uint32_t` pixels, so
+    it is stable for a given host layout but is not guaranteed to
+    match across little- and big-endian hosts.
   * `--screenshot=PATH` writes the same buffer as a PPM (P6) so
     rendering regressions are debuggable locally without rebuilding.
 
