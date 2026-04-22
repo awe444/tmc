@@ -205,10 +205,10 @@
 #undef DmaStop
 #undef DmaWait
 #define DmaSet(dmaNum, src, dest, control) Port_DmaSet((dmaNum), (const void*)(src), (void*)(dest), (u32)(control))
-#define DMA_FILL(dmaNum, value, dest, size, bit)                              \
-    {                                                                         \
-        u##bit _v = (u##bit)(value);                                          \
-        Port_DmaFill##bit((dmaNum), _v, (void*)(dest), (u32)(size));          \
+#define DMA_FILL(dmaNum, value, dest, size, bit)                     \
+    {                                                                \
+        u##bit _v = (u##bit)(value);                                 \
+        Port_DmaFill##bit((dmaNum), _v, (void*)(dest), (u32)(size)); \
     }
 #define DmaFill16(dmaNum, value, dest, size) Port_DmaFill16((dmaNum), (u16)(value), (void*)(dest), (u32)(size))
 #define DmaFill32(dmaNum, value, dest, size) Port_DmaFill32((dmaNum), (u32)(value), (void*)(dest), (u32)(size))
