@@ -30,6 +30,7 @@ tools/binutils
 # scripts
 *.py
 !tools/extract_include_enum.py
+!tools/port/*.py
 *.pl
 
 # graphics

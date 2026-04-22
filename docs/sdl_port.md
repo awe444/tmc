@@ -107,6 +107,7 @@ cmake --build --preset sdl-release
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
 | `TMC_LINK_GAME_SOURCES`      | `ON`    | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4). The library is always **built** as a dependency; this option controls whether it is also **linked** so that `src/main.c::AgbMain` becomes the entry point. Setting `=OFF` falls back to the empty-loop `agb_main_stub.c` placeholder, which is preserved as an early-bring-up scaffold for future ports and as a platform-layer isolation harness. |
+| `TMC_BASEROM`               | *empty* | Path to a `baserom.gba`. When set, runs `tools/port/gen_host_assets.py` at configure time to populate `gGfxGroups[]`, `gPaletteGroups[]`, and `gGlobalGfxAndPalettes[]` from the player's own ROM, and to emit a real `gfx_offsets.h`. When unset (the default), the `port_rom_data_stubs.c` all-zero fallback is linked. See the "Game assets / `baserom.gba`" section below. |
 
 ## Running
 
@@ -155,21 +156,81 @@ checks behave identically.
 
 ## Game assets / `baserom.gba`
 
-**The SDL build does not yet ingest the game's real graphics, palettes,
-maps, or audio.** Building with assets — i.e. running the
-`tools/asset_processor` pipeline against `baserom.gba` and linking the
-extracted blobs into `tmc_sdl` — is not yet supported. There is
-deliberately no `TMC_BASEROM=` / `TMC_ASSETS_DIR=` option on the SDL
-target, and the SDL `CMakeLists.txt` does not depend on `baserom.gba`,
-the `assets/` extraction directory, or the data tables under `data/`.
+The SDL build has **opt-in** support for the game's real graphics and
+palettes via the `TMC_BASEROM=` CMake option. With it set, the host
+build runs `tools/port/gen_host_assets.py` at configure time to extract
+the gfx/palette payload from your own copy of `baserom.gba` and
+generate strong host definitions of `gGlobalGfxAndPalettes[]`,
+`gGfxGroups[]`, and `gPaletteGroups[]`. Without it (the default),
+the all-zero stubs in `src/platform/shared/port_rom_data_stubs.c`
+are linked instead, the boot path takes the `LoadGfxGroup` 0x0D
+short-circuit, and the title-screen frame hash matches the pinned
+golden image.
 
-Concretely, what the host build does instead:
+```sh
+# 1. (One-time) Drop your own copy of baserom.gba somewhere outside the
+#    repo. The retail ROMs are 16,777,216 bytes; the tool checks the
+#    file exists and reads only the byte ranges declared in
+#    `assets/gfx.json` for the configured TMC_GAME_VERSION.
+# 2. Configure the host build against it:
+cmake -S . -B build -DTMC_GAME_VERSION=USA \
+                    -DTMC_BASEROM=/path/to/baserom.gba
+cmake --build build -j
+./build/tmc_sdl
+```
+
+### Testing the pipeline without a baserom
+
+If you don't have `baserom.gba` on hand (e.g. you're working on the
+SDL port itself and just want to exercise the asset-integration
+plumbing), generate a deterministic 16,777,216-byte all-zero
+placeholder with:
+
+```sh
+python3 tools/port/gen_host_assets.py make-placeholder-baserom \
+    --out /tmp/placeholder_baserom.gba
+cmake -S . -B build-baserom -DTMC_GAME_VERSION=USA \
+                            -DTMC_BASEROM=/tmp/placeholder_baserom.gba
+cmake --build build-baserom -j
+```
+
+An all-zero baserom is intentionally chosen for the placeholder: the
+host `Port_LZ77UnComp*` reads a 4-byte header and `out_size=0` exits
+the decompressor immediately, while the uncompressed `DmaSet` paths
+just copy zeros into VRAM/EWRAM. The end result is the same blank
+backdrop the stub build produces, but the run still exercises every
+piece of plumbing — the real `gGfxGroups[]`/`gPaletteGroups[]`
+table layout, the per-variant `.ifdef` resolution in
+`data/gfx/{gfx,palette}_groups.s`, the `gfx_offsets.h` macro
+generation, and the `Port_TranslateHwAddr()` translation hop that
+makes `LoadGfxGroup`'s `dest=0x06000000`-style writes land inside
+`gPortVram` rather than SIGSEGVing on an unmapped low page. CI runs
+this build on every push so the asset pipeline does not bit-rot.
+
+### What's still stubbed
+
+Even with `TMC_BASEROM` set, a few neighbouring asset paths remain
+on their stubs (deferred to follow-up PRs to keep this scope small):
+
+- `assets/map_offsets.h` (the map / tileset / dungeon-map blobs at
+  `data/gfx/../maps/` etc.) is still produced by the all-zero
+  `_port_offset_stubs.h` catch-all -- per-variant map symbols would
+  need a similar walk over `assets/map.json` plus parsers for
+  `data/map/*.s` (`tile_headers`, `map_data`, `map_headers`,
+  `tileset_headers`).
+- `assets/sounds.json` / `samples.json` (m4a song table + PCM samples)
+  -- deferred behind the m4a engine itself (PR #7 of the roadmap).
+- The ASM-only data tables under `data/data_*.s`, `data/sound/*`,
+  and `data/animations/`. These do not block any boot-path code;
+  the stub coverage in `port_unresolved_stubs.c` keeps the link clean.
+
+Concretely, what the host build does without `TMC_BASEROM`:
 
 - `assets/gfx_offsets.h` and `assets/map_offsets.h` (which the ROM build
   generates from the extracted base ROM) are replaced by host-port
   `offset_*` stubs that all collapse to `0`. These live under
   `src/platform/shared/generated/assets/` and are regenerated by
-  `tools/port/gen_offset_stubs.py`.
+  `tools/port/gen_host_assets.py gen-offsets-stub`.
 - `gGfxGroups[]` is provided by `src/platform/shared/port_rom_data_stubs.c`
   with every entry pointing at a single `GfxItem` whose control byte is
   `0x0D`, the "no-op" arm of `src/common.c::LoadGfxGroup`. The function
@@ -183,7 +244,8 @@ Concretely, what the host build does instead:
 
 ### What to expect when running `tmc_sdl`
 
-When you build and launch the default `tmc_sdl` binary today:
+When you build and launch the default `tmc_sdl` binary today (without
+`TMC_BASEROM`):
 
 - A 240×160 (scaled 4×) window opens, paced at 59.7274 Hz.
 - The real `src/main.c::AgbMain` boots and runs through
@@ -235,7 +297,7 @@ src/platform/shared/           ← cross-port C: reused by future ports
     agb_main_stub.c            ← placeholder for src/main.c::AgbMain (PR #2)
     generated/assets/          ← host-port stubs for the ROM build's
                                   `assets/*_offsets.h`; regenerate with
-                                  `tools/port/gen_offset_stubs.py`
+                                  `tools/port/gen_host_assets.py`
 src/                           ← unchanged GBA-decomp game source
 include/                       ← unchanged GBA-decomp headers
 ```
@@ -334,7 +396,7 @@ are tracked here for future contributors.
       `assets/gfx_offsets.h` and `assets/map_offsets.h` are generated
       by the ROM-build `asset_processor` from the extracted base ROM
       and are therefore unavailable in the SDL build; a new
-      `tools/port/gen_offset_stubs.py` walks every `.c`/`.h` that
+      `tools/port/gen_host_assets.py` walks every `.c`/`.h` that
       pulls in either header, collects the 1,293 unique `offset_*`
       identifiers it references, and emits host-port stubs under
       `src/platform/shared/generated/assets/` that collapse each one
@@ -736,6 +798,42 @@ are tracked here for future contributors.
   See `src/platform/shared/golden/README.md` for how to regenerate
   a hash and the policy for when it is and is not appropriate to
   do so.
+- [x] **PR #2c.** Opt-in extracted-asset integration. Adds
+  `tools/port/gen_host_assets.py`, a single Python tool that:
+  * walks `assets/gfx.json` for the active `TMC_GAME_VERSION`,
+    parses `data/gfx/{gfx,palette}_groups.s` (resolving the
+    `.ifdef EU` / `.ifdef JP_D` branches), and emits a real
+    `gfx_offsets.h` plus a strong `port_rom_assets.c` populating
+    `gGlobalGfxAndPalettes[]`, `gGfxGroups[]`, `gPaletteGroups[]`
+    from the player's own copy of `baserom.gba`;
+  * has a `make-placeholder-baserom` subcommand that writes a
+    deterministic 16,777,216-byte all-zero file so CI can exercise
+    the full pipeline without shipping copyrighted data;
+  * subsumes the long-referenced `gen_offset_stubs.py` under a
+    `gen-offsets-stub` subcommand.
+
+  CMake's new `TMC_BASEROM=<path>` option drives the generator at
+  configure time, swaps the generated source in for the all-zero
+  `port_rom_data_stubs.c`, and prepends the include path so the
+  real `gfx_offsets.h` wins over the stub. With `TMC_BASEROM`
+  unset (the default) the existing stub-build behaviour is bit-
+  for-bit unchanged.
+
+  To make the asset path actually safe at runtime, the host-side
+  DMA / LZ77 / CpuSet helpers (`src/platform/shared/dma.c`,
+  `src/platform/shared/bios.c`) now pre-translate raw GBA hardware
+  addresses through `Port_TranslateHwAddr()` (newly extracted from
+  the existing `PORT_HW_ADDR(...)` macro into a single source of
+  truth in `src/platform/shared/gba_memory.c`). `LoadGfxGroup`'s
+  `dest=0x06000000` writes therefore land inside `gPortVram` /
+  `gPortPltt` / `gPortEwram` instead of SIGSEGVing on an unmapped
+  low page.
+
+  Out of scope for this PR (deferred to keep it focused): map /
+  tileset / dungeon-map blobs (`assets/map_offsets.h`), the m4a
+  sound table and PCM samples (handled by PR #7), and the ASM-only
+  data tables. See the "Game assets / `baserom.gba`" section above
+  for what each path currently does.
 - [ ] **PR #9.** (Stretch) Threaded renderer; widescreen mode under
   `TMC_WIDESCREEN`; Win32-OpenGL backend; PSP / PS2 ports following
   the same `src/platform/<name>/` pattern.
