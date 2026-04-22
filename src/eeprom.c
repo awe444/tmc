@@ -164,18 +164,34 @@ u16 EEPROMWrite(u16 address, const u16* data, u8 unk_3) {
         return EEPROM_OUT_OF_RANGE;
 
 #ifdef __PORT__
-    /* Host port (PR #6): mirror the 8-byte payload into the tmc.sav
-     * buffer and flush so the write survives a process exit. The bit-
-     * stream protocol below is bypassed entirely. The byte order matches
-     * EEPROMRead's host short-circuit so a Read after Write round-trips
-     * exactly. */
+    /* Host port: mirror the 8-byte payload into the save buffer, but
+     * avoid flushing the full backing file on every 8-byte EEPROM block.
+     * Consecutive block writes are batched and flushed only when a write
+     * sequence ends (detected by a non-consecutive address) or when the
+     * final EEPROM block is written. The byte order matches EEPROMRead's
+     * host short-circuit so a Read after Write round-trips exactly. */
     {
+        static bool32 sPortSaveDirty = FALSE;
+        static u16 sPortLastAddress;
         u32 byte_off = (u32)address * 8u;
         const u8* d = (const u8*)data;
+
+        if (sPortSaveDirty && address != (u16)(sPortLastAddress + 1)) {
+            Port_SaveFlush();
+            sPortSaveDirty = FALSE;
+        }
+
         for (i = 0; i < 8; ++i) {
             Port_SaveWriteByte(byte_off + i, d[i]);
         }
-        Port_SaveFlush();
+
+        sPortSaveDirty = TRUE;
+        sPortLastAddress = address;
+
+        if ((u32)address + 1u >= gEEPROMConfig->size) {
+            Port_SaveFlush();
+            sPortSaveDirty = FALSE;
+        }
         (void)buffer;
         (void)timeout_flag;
         (void)prev_vcount;
