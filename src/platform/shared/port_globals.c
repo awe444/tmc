@@ -109,7 +109,7 @@ struct port_entity_arena sPortEntityArena __attribute__((aligned(16), used));
  * with sizeof(PlayerEntity)=184 and sizeof(GenericEntity)=176 on a
  * 64-bit host (entity.h struct layout assertions are no-ops here, so
  * we re-assert the relevant offsets explicitly). */
-#define PORT_ARENA_OFF_AUX  184
+#define PORT_ARENA_OFF_AUX 184
 #define PORT_ARENA_OFF_ENTS (184 + 1232)
 
 _Static_assert(offsetof(struct port_entity_arena, aux) == PORT_ARENA_OFF_AUX,
@@ -124,14 +124,13 @@ _Static_assert(offsetof(struct port_entity_arena, ents) == PORT_ARENA_OFF_ENTS,
  * syntax via `__asm__`; this is GCC / Clang only. Microsoft Windows
  * (MSVC) builds are not supported by this port -- see
  * docs/sdl_port.md -- so no MSVC fallback is needed here. */
-__asm__(
-    ".globl gPlayerEntity\n"
-    ".set   gPlayerEntity, sPortEntityArena\n"
-    ".globl gAuxPlayerEntities\n"
-    ".set   gAuxPlayerEntities, sPortEntityArena+" PORT_XSTR(PORT_ARENA_OFF_AUX) "\n"
-    ".globl gEntities\n"
-    ".set   gEntities, sPortEntityArena+" PORT_XSTR(PORT_ARENA_OFF_ENTS) "\n"
-);
+__asm__(".globl gPlayerEntity\n"
+        ".set   gPlayerEntity, sPortEntityArena\n"
+        ".globl gAuxPlayerEntities\n"
+        ".set   gAuxPlayerEntities, sPortEntityArena+" PORT_XSTR(
+            PORT_ARENA_OFF_AUX) "\n"
+                                ".globl gEntities\n"
+                                ".set   gEntities, sPortEntityArena+" PORT_XSTR(PORT_ARENA_OFF_ENTS) "\n");
 
 /* Entity-list heads. The empty-list convention is `head->first ==
  * head->last == head` (a one-element circular list whose only node is
