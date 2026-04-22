@@ -779,15 +779,25 @@ static int win_v_in_range(uint16_t winv, int y) {
 
     if (y1 > DISP_H) {
         y1 = DISP_H;
+ * honouring the GBA quirks: y2 <= y1 means the window wraps, covering
+ * [y1, DISP_H) || [0, y2), and y1 == y2 therefore means full height.
+ * Endpoints beyond the display height clamp to DISP_H. */
+static int win_v_in_range(uint16_t winv, int y) {
+    int y1 = (winv >> 8) & 0xFF;
+    int y2 = winv & 0xFF;
+
+    if (y1 > DISP_H) {
+        y1 = DISP_H;
     }
     if (y2 > DISP_H) {
         y2 = DISP_H;
     }
 
-    if (y2 <= y1) {
-        return (y >= y1) || (y < y2);
+    if (y2 > y1) {
+        return (y >= y1) && (y < y2);
     }
-    return (y >= y1) && (y < y2);
+
+    return (y >= y1) || (y < y2);
 }
 
 static void win_h_range(uint16_t winh, int* x1_out, int* x2_out) {
