@@ -53,9 +53,15 @@
  *    one and this file is `__PORT__`-only).
  *
  * Once a real ROM-asset-loading path is added in a later PR the
- * strong definitions here can be removed; the symbol type / signature
- * exactly mirrors the public `extern` declarations in `src/common.c`,
- * `src/beanstalkSubtask.c`, etc. so no caller change is required.
+ * strong definitions here can be removed. The struct types
+ * (`GfxItem`, `PaletteGroup`) are pulled from
+ * `port_rom_data_types.h`, which is the single source of truth shared
+ * with `src/common.c`'s extern declarations. The array element types
+ * here therefore match the public `extern const GfxItem* gGfxGroups[]`
+ * / `extern const PaletteGroup* gPaletteGroups[]` signatures exactly
+ * (same struct tag, same qualifier list on the array elements), so
+ * the definitions are type-compatible across translation units even
+ * under LTO / whole-program checkers.
  */
 
 #ifdef __PORT__
@@ -63,26 +69,11 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* Mirror of the file-local `GfxItem` struct in `src/common.c`. The C
- * type is purely compile-side: at link time only the symbol name and
- * raw byte layout matter, and that layout (4 bytes union, 4 bytes
- * dest, 4 bytes unk8 = 12 bytes) is fixed by the ROM `gfx_raw` macro.
- * Using a port-local mirror avoids leaking the type out of common.c. */
-typedef struct {
-    union {
-        int32_t raw;
-        struct {
-            uint8_t filler0[3];
-            uint8_t unk3;
-        } bytes;
-    } unk0;
-    uint32_t dest;
-    uint32_t unk8;
-} PortGfxItem;
+#include "port_rom_data_types.h"
 
 /* Shared terminator. `unk3 == 0x0D` is the LoadGfxGroup early-return
  * code; `dest` and `unk8` are unused on that path. */
-static const PortGfxItem sPortGfxGroupTerminator = {
+static const GfxItem sPortGfxGroupTerminator = {
     /* unk0.bytes.unk3 = 0x0D, low three bytes irrelevant. */
     .unk0 = { .bytes = { { 0, 0, 0 }, 0x0D } },
     .dest = 0,
@@ -104,9 +95,15 @@ static const PortGfxItem sPortGfxGroupTerminator = {
 
 /* Strong host definition (replaces the weak BSS stub in
  * port_unresolved_stubs.c). The size matches the ROM table:
- * `gGfxGroups[]` lists `gGfxGroup_0` (a deliberate NULL slot) plus
- * groups 1..132, so 133 pointer slots in total. */
-const PortGfxItem* const gGfxGroups[133] = {
+ * `gGfxGroups[]` lists `gGfxGroup_0` (a deliberate NULL slot in the
+ * ROM) plus groups 1..132, so 133 pointer slots in total. Unlike the
+ * ROM table, this host stub initializes every slot, including index
+ * 0, to the shared terminator entry -- the early-boot code paths
+ * exercised by the SDL host never index slot 0, so leaving it
+ * non-NULL is harmless and keeps the initializer uniform. The
+ * element type (`const GfxItem*`, no extra trailing `const`) matches
+ * `extern const GfxItem* gGfxGroups[]` in `src/common.c` exactly. */
+const GfxItem* gGfxGroups[133] = {
     PORT_TERM_128,
     &sPortGfxGroupTerminator,
     &sPortGfxGroupTerminator,
@@ -128,7 +125,8 @@ const uint8_t gGlobalGfxAndPalettes[4096];
 /* ----------------------------------------------------------------------- *
  * gPaletteGroups[] -- analogue of gGfxGroups[] for `LoadPaletteGroup`.
  *
- * Mirror of the file-local PaletteGroup struct in src/common.c:
+ * Uses the shared `PaletteGroup` typedef from `port_rom_data_types.h`,
+ * which mirrors the file-local typedef in `src/common.c`:
  *
  *     typedef struct {
  *         u16 paletteId;
@@ -151,25 +149,7 @@ const uint8_t gGlobalGfxAndPalettes[4096];
  * the still-unported asset blobs in `data/gfx/`.
  * ----------------------------------------------------------------------- */
 
-typedef struct {
-    uint16_t paletteId;
-    uint8_t destPaletteNum;
-    uint8_t numPalettes;
-} PortPaletteGroup;
-
-/* Layout-compatibility guards: any future change to either the host
- * mirror or the file-local `PaletteGroup` in `src/common.c` that
- * desyncs the two will fail at compile time instead of at runtime. */
-_Static_assert(sizeof(PortPaletteGroup) == 4,
-               "PortPaletteGroup must match PaletteGroup (u16 + u8 + u8 = 4 bytes)");
-_Static_assert(offsetof(PortPaletteGroup, paletteId) == 0,
-               "PortPaletteGroup.paletteId must be at offset 0");
-_Static_assert(offsetof(PortPaletteGroup, destPaletteNum) == 2,
-               "PortPaletteGroup.destPaletteNum must be at offset 2");
-_Static_assert(offsetof(PortPaletteGroup, numPalettes) == 3,
-               "PortPaletteGroup.numPalettes must be at offset 3");
-
-static const PortPaletteGroup sPortPaletteGroupTerminator = {
+static const PaletteGroup sPortPaletteGroupTerminator = {
     .paletteId = 0,
     .destPaletteNum = 0,
     .numPalettes = 1, /* high bit clear -> loop exits after first iteration */
@@ -178,7 +158,9 @@ static const PortPaletteGroup sPortPaletteGroupTerminator = {
 /* gPaletteGroups[] in `data/gfx/palette_groups.s` is 208 pointer slots
  * for the USA build (index 0 + groups 1..207); the EU build drops
  * group 207 to 207 slots. Sizing for the larger of the two is harmless
- * for the smaller build because no in-range index is ever NULL. */
+ * for the smaller build because no in-range index is ever NULL.
+ * Element type matches `extern const PaletteGroup* gPaletteGroups[]`
+ * in `src/common.c` exactly (no extra trailing `const`). */
 #define PORT_PALG_8                                                          \
     &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,              \
         &sPortPaletteGroupTerminator, &sPortPaletteGroupTerminator,          \
@@ -188,7 +170,7 @@ static const PortPaletteGroup sPortPaletteGroupTerminator = {
 #define PORT_PALG_64 PORT_PALG_16, PORT_PALG_16, PORT_PALG_16, PORT_PALG_16
 #define PORT_PALG_192 PORT_PALG_64, PORT_PALG_64, PORT_PALG_64
 
-const PortPaletteGroup* const gPaletteGroups[208] = {
+const PaletteGroup* gPaletteGroups[208] = {
     PORT_PALG_192,
     PORT_PALG_8, PORT_PALG_8,    /* 16  -> 208 */
 };
