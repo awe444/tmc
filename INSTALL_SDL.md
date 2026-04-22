@@ -51,8 +51,27 @@ be downloaded and statically linked.
 
 ## What the port currently does
 
-PR #1 of the SDL-port roadmap is implemented: the binary opens a window,
-accepts keyboard / X-Input gamepad input, opens a silent audio device,
-and runs an empty 59.7274 Hz frame loop. The actual game logic is not
-yet linked in. See [docs/sdl_port.md](docs/sdl_port.md) for the full
-roadmap and current status.
+The default build links the real game source into `tmc_sdl` and boots
+into `src/main.c::AgbMain`. The binary opens a window, accepts
+keyboard / X-Input gamepad input, opens a silent audio device, and
+runs the GBA game-state machine through `HandleNintendoCapcomLogos ->
+HandleTitlescreen` into the title-screen idle.
+
+**Building with real game assets is not yet supported.** The SDL build
+does not ingest `baserom.gba` or the `tools/asset_processor` extraction
+output, so the framebuffer stays at the rasterizer's cleared backdrop:
+the Nintendo / Capcom logos, title-screen art, sprites, and audio
+samples never load. EEPROM-backed save data still round-trips
+correctly. See [docs/sdl_port.md](docs/sdl_port.md#game-assets--baseromgba)
+for the full "Game assets / `baserom.gba`" expectations and
+[docs/sdl_port.md](docs/sdl_port.md) for the roadmap.
+
+If you want the visually faithful, audio-on game today, build the
+matching GBA ROM (see [INSTALL.md](INSTALL.md)) and run it under your
+GBA emulator of choice. The SDL port and the ROM build coexist and do
+not interfere with each other.
+
+If you only want to exercise the SDL platform layer in isolation (a
+blank window paced at 59.7274 Hz with input + silent audio, and no
+game logic linked in), pass `-DTMC_LINK_GAME_SOURCES=OFF` at configure
+time.
