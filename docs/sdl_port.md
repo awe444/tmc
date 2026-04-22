@@ -369,11 +369,12 @@ are tracked here for future contributors.
     can flip.
 
     *Progress so far (incremental landings under this checkbox):*
-    The first few "literal hardware address" SIGSEGVs along the boot
-    path have been removed so `AgbMain` now reaches its main
-    `WaitForNextFrame()` loop and runs the title-screen task before
-    SIGSEGV-ing on the (still-unresolved) `gGfxGroups` /
-    `gGlobalGfxAndPalettes` data tables. Specifically:
+    The `--frames=N` headless smoke test against
+    `cmake -DTMC_LINK_GAME_SOURCES=ON` now exits cleanly: `AgbMain`
+    runs through `HandleNintendoCapcomLogos`, lands in
+    `HandleTitlescreen`, advances its internal state machine past
+    `EraseAllEntities` / `UpdateEntities`, and reaches the title-screen
+    animation before the host pacer unwinds it. Specifically:
     * Added `PORT_HW_ADDR(addr)` in `include/gba/defines.h` -- a host
       translator from a literal GBA hardware address (`0x07000000`,
       `0x06000000`, ...) to the matching offset inside the emulated
@@ -420,20 +421,66 @@ are tracked here for future contributors.
       and a 4 KiB zero buffer for `gGlobalGfxAndPalettes[]`.
       `port_unresolved_stubs.c` no longer emits weak BSS for those
       three names. With this in place `AgbMain` advances past
-      `HandleNintendoCapcomLogos` into `HandleTitlescreen`, where the
-      next blocker is `ram_UpdateEntities` (an unported ARM-asm
-      function reached from `entity.c::UpdateEntities`) -- a
-      different category of work (asm decompilation rather than
-      ROM-data wiring) that is tracked separately from this
-      checkbox.
+      `HandleNintendoCapcomLogos` into `HandleTitlescreen`.
+    * Added tailored silent overrides in
+      `src/platform/shared/ram_silent_stubs.c` for the entity-related
+      ARM-asm helpers reached from `HandleTitlescreen` --
+      `ram_UpdateEntities`, `ram_ClearAndUpdateEntities`,
+      `ram_DrawEntities`, `ram_DrawDirect`, `ram_sub_080ADA04`, and
+      `ram_CollideAll`. Each is a no-op because the entity lists
+      stay empty during the headless smoke test (no real spawners
+      have been wired up yet); the matching tracking notes inside
+      each stub spell out the removal contract (drop the host stub
+      in the same commit that lands the C decomp of the ARM source).
+    * Promoted the entity arena to strong, contiguous host BSS in
+      `src/platform/shared/port_globals.c`. The GBA build relies on
+      `gPlayerEntity` / `gAuxPlayerEntities` / `gEntities` being
+      laid out adjacently in EWRAM (via `linker.ld`); engine code
+      such as `entity.c::EraseAllEntities` walks
+      `MemClear(&gPlayerEntity, 10880)` straight off the player
+      struct into the auxiliary and pooled entities. With the prior
+      256-byte-per-symbol weak placeholders that memset overflowed
+      into unrelated globals -- notably wiping `gIntroState` every
+      frame so `HandleTitlescreen` never advanced past its `case 0:`.
+      The fix is a single `port_entity_arena` struct (player + aux +
+      ents) plus `__asm__ .set` aliases that publish the three
+      engine names at their matching offsets, with `_Static_assert`s
+      pinning the host-side `sizeof(PlayerEntity)` /
+      `sizeof(GenericEntity)` literals.
+    * Added a strong host definition for `gEntityLists` /
+      `gEntityListsBackup` (also in `port_globals.c`) plus a
+      `__attribute__((constructor))` that pre-installs the
+      sentinel-self-loop pattern `head->first == head->last == head`
+      that `entity.c::DeleteAllEntities` requires before its first
+      traversal. The matching ROM build relies on
+      `entity.c::sub_0805E98C` to install that pattern, but its
+      first invocation happens *inside* `EraseAllEntities` *after*
+      `DeleteAllEntities`, so on the host (whose BSS comes up zero-
+      filled instead of pre-init'd by the boot ROM image) the very
+      first `DeleteAllEntities` would dereference a NULL list head.
+    * Added `Port_RunGameLoop()` in
+      `src/platform/shared/interrupts.c` -- a `setjmp`/`longjmp`
+      wrapper around the entry function so `Port_VBlankIntrWait` can
+      bail out of the game's infinite loop when shutdown (or the
+      `--frames=N` budget) is requested. The real `src/main.c::AgbMain`
+      is `while (TRUE)` with no `Port_ShouldQuit` polling (the
+      stubbed `agb_main_stub.c` polled it explicitly), so without
+      this hook the smoke-test budget would tick down to zero but
+      the binary would never reach `Port_SaveFlush()` /
+      `Port_VideoShutdown()`. `src/platform/sdl/main.c` now invokes
+      `AgbMain` through this wrapper.
 
-    The next blocker is `ram_UpdateEntities` (and its sibling `ram_*`
-    entity-update helpers), reached from `HandleTitlescreen` once the
-    Nintendo / Capcom logo step completes. Adding a meaningful host
-    implementation requires either decompiling the ARM source or
-    adding a tailored silent override (the existing
-    `ram_silent_stubs.c` pattern), which belongs to the still-open
-    asm-decomp track rather than to this PR's ROM-data step.
+    With the above, `tmc_sdl --frames={30,60,120,240}` against the
+    `=ON` build all complete within their budgets and exit `0`.
+
+    The next blocker is the next host-runtime divergence past the
+    title-screen idle: continuing to advance the `--frames=N` budget
+    will eventually reach the file-select / game-task transitions
+    where additional unported `ram_*` helpers, manager dispatchers,
+    and EWRAM-layout assumptions await -- tracked under the relevant
+    later roadmap entries (PR #5 affine BGs / windows, PR #6 EEPROM
+    save persistence, PR #7 m4a, asm-decomp track) rather than
+    landing under this checkbox.
 - [x] **PR #3.** `Port_InputPump()` now writes `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot (`gPortIo + 0x130`) every frame, and
   `Port_InputInit()` primes the slot to `0x3FF` (no keys pressed) before

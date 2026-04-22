@@ -11,6 +11,7 @@
  */
 #include "platform/port.h"
 
+#include <setjmp.h>
 #include <stdint.h>
 #include <time.h>
 
@@ -21,6 +22,13 @@
 static volatile int s_quit_requested = 0;
 static volatile int s_frame_budget = 0;
 static uint64_t s_last_vblank_ns = 0;
+
+/* Non-local jump checkpoint installed by Port_RunGameLoop(). The real
+ * `src/main.c::AgbMain` never returns under TMC_LINK_GAME_SOURCES=ON,
+ * so when the host pacer detects shutdown it longjmps back here to
+ * unwind the entry call without modifying any game source. */
+static jmp_buf s_game_loop_jmp;
+static int s_game_loop_active = 0;
 
 static uint64_t now_ns(void) {
 #if defined(_WIN32)
@@ -67,6 +75,10 @@ static void sleep_ns(uint64_t ns) {
 
 void Port_VBlankIntrWait(void) {
     if (s_quit_requested) {
+        if (s_game_loop_active) {
+            /* Bail out of the game's infinite loop. See Port_RunGameLoop. */
+            longjmp(s_game_loop_jmp, 1);
+        }
         return;
     }
 
@@ -107,6 +119,24 @@ int Port_ShouldQuit(void) {
 
 void Port_RequestQuit(void) {
     s_quit_requested = 1;
+}
+
+void Port_RunGameLoop(void (*entry)(void)) {
+    if (entry == NULL) {
+        return;
+    }
+    if (setjmp(s_game_loop_jmp) == 0) {
+        s_game_loop_active = 1;
+        entry();
+        /* Reachable only if `entry` returned on its own (i.e. not the
+         * real AgbMain, which loops forever). */
+        s_game_loop_active = 0;
+        return;
+    }
+    /* Longjmp from Port_VBlankIntrWait. Game loop has been forcibly
+     * unwound; clear the active flag so a stray late call returns
+     * normally instead of jumping into a stale frame. */
+    s_game_loop_active = 0;
 }
 
 /* ---------- Unprefixed alias for VBlankIntrWait ------------------------ */

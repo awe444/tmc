@@ -98,14 +98,13 @@ PORT_UNRESOLVED_FUNC(m4aSoundMain)
 PORT_UNRESOLVED_FUNC(m4aSoundVSync)
 PORT_UNRESOLVED_FUNC(m4aSoundVSyncOff)
 PORT_UNRESOLVED_FUNC(m4aSoundVSyncOn)
-PORT_UNRESOLVED_FUNC(ram_ClearAndUpdateEntities)
-PORT_UNRESOLVED_FUNC(ram_CollideAll)
-PORT_UNRESOLVED_FUNC(ram_DrawDirect)
-PORT_UNRESOLVED_FUNC(ram_DrawEntities)
+/* ram_ClearAndUpdateEntities, ram_CollideAll, ram_DrawDirect,
+ * ram_DrawEntities, ram_MakeFadeBuff256, ram_sub_080ADA04, and
+ * ram_UpdateEntities have tailored silent overrides in
+ * ram_silent_stubs.c (see roadmap 2b.4b "runtime flip" notes in
+ * docs/sdl_port.md); they no longer need an abort-trap weak
+ * placeholder here. */
 PORT_UNRESOLVED_FUNC(ram_IntrMain)
-PORT_UNRESOLVED_FUNC(ram_MakeFadeBuff256)
-PORT_UNRESOLVED_FUNC(ram_UpdateEntities)
-PORT_UNRESOLVED_FUNC(ram_sub_080ADA04)
 PORT_UNRESOLVED_FUNC(sub_080B1B84)
 PORT_UNRESOLVED_FUNC(sub_080B1BA4)
 
@@ -194,7 +193,7 @@ PORT_UNRESOLVED_DATA(gAreaRoomMaps);
 PORT_UNRESOLVED_DATA(gAreaTable);
 PORT_UNRESOLVED_DATA(gAreaTileSets);
 PORT_UNRESOLVED_DATA(gAreaTiles);
-PORT_UNRESOLVED_DATA(gAuxPlayerEntities);
+/* gAuxPlayerEntities lives in port_globals.c (entity arena). */
 PORT_UNRESOLVED_DATA(gBG0Buffer);
 PORT_UNRESOLVED_DATA(gBG1Buffer);
 PORT_UNRESOLVED_DATA(gBG2Buffer);
@@ -212,9 +211,10 @@ PORT_UNRESOLVED_DATA(gDungeonNames);
 PORT_UNRESOLVED_DATA(gEEPROMConfig);
 PORT_UNRESOLVED_DATA(gEnemyTarget);
 PORT_UNRESOLVED_DATA(gEntCount);
-PORT_UNRESOLVED_DATA(gEntities);
-PORT_UNRESOLVED_DATA(gEntityLists);
-PORT_UNRESOLVED_DATA(gEntityListsBackup);
+/* gPlayerEntity / gAuxPlayerEntities / gEntities have strong host
+ * definitions in port_globals.c (placed contiguously in a single
+ * named BSS section to satisfy `MemClear(&gPlayerEntity, 10880)`).
+ * gEntityLists / gEntityListsBackup likewise. */
 PORT_UNRESOLVED_DATA(gExtraFrameOffsets);
 PORT_UNRESOLVED_DATA(gFadeControl);
 PORT_UNRESOLVED_DATA(gFigurines);
@@ -253,7 +253,7 @@ PORT_UNRESOLVED_DATA(gPaletteList);
 PORT_UNRESOLVED_DATA(gPauseMenuOptions);
 PORT_UNRESOLVED_DATA(gPeahatChargeDirectionOffsets);
 PORT_UNRESOLVED_DATA(gPlayerClones);
-PORT_UNRESOLVED_DATA(gPlayerEntity);
+/* gPlayerEntity lives in port_globals.c (entity arena). */
 PORT_UNRESOLVED_DATA(gPlayerScriptExecutionContext);
 PORT_UNRESOLVED_DATA(gPlayerState);
 PORT_UNRESOLVED_DATA(gPossibleInteraction);
