@@ -471,8 +471,6 @@ done:
     s_entry_count = saved_count;
     if (saved_count > 0) {
         memcpy(s_entries, saved, saved_count * sizeof(saved[0]));
-    } else {
-        s_entry_count = 0;
     }
     return rc;
 }
