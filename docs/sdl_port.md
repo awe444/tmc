@@ -1321,6 +1321,44 @@ are tracked here for future contributors.
       `Port_AudioPushSamples` from `m4aSoundVSync`. This is where
       audio actually plays. Also ships the CGB register pokes from
       `ply_port`.
+      - [x] **PR #7 part 2.3.1** Promoted `ply_port` from a no-op
+        stub to a real C port of `asm/lib/m4a_asm.s::ply_port` in
+        `src/platform/shared/m4a_host.c`. Reads two bytes from
+        `track->cmdPtr` (CGB sound-register byte offset, value),
+        advances cmdPtr by 2, and writes the value into the emulated
+        MMIO array as `gPortIo[0x60 + offset] = value` — mirroring
+        the asm's direct `*(0x04000060 + offset) = value` write
+        through the same byte-translation that
+        `Port_TranslateHwAddr()` already applies to every
+        `0x04000000+x` host access. The host has no real CGB sound
+        hardware so the write is silent in audible terms; future PR
+        #7 part 2.3 main-step CGB-aware mixer code can read those
+        bytes back out of `gPortIo[]` to drive the channel state.
+        `Port_M4ASelfCheck()` grew a 2.3.1 section that exercises
+        four scenarios: standalone single poke (asserting cmdPtr+2,
+        the target byte set, both neighbour bytes untouched), a
+        second standalone poke at a different offset (asserting the
+        first poke's byte survives), the dispatcher path through
+        opcode `0xCC` (= `M4A_JUMP_BASE + 27`) followed by the two
+        operand bytes and a wait command (asserting cmdPtr advances
+        by exactly 4, gPortIo poked, `runningStatus` latched, and
+        `wait` decremented), with the CGB sound-register window
+        (0x60..0xA0) saved/restored around the test so the
+        rasterizer (which reads display registers in the same
+        gPortIo array) is bit-for-bit unaffected. The `--frames=30`
+        golden hashes for both the default `=ON`
+        (`0x8f68687253dc1b25`) and the preserved `=OFF`
+        (`0xf9b70c534973f325`) builds remain bit-for-bit unchanged
+        because `ply_port` is reachable only via `MPlayMain`, which
+        under the silent host mixer is itself reachable only via
+        `Port_M4ASelfCheck()` — the production runtime path links
+        each music player's `MPlayMainHead` but `SoundMain` is
+        still a no-op (the main step of PR #7 part 2.3) so the
+        head is never walked, and the gPortIo restore step keeps
+        the rasterizer state identical post-self-check. Every
+        dispatcher-reachable `ply_*` handler now has a real host C
+        port; the remaining 2.3 work is the `SoundMain` /
+        `SoundMainBTM` mixer itself.
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two

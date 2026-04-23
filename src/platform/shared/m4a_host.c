@@ -626,10 +626,10 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 /* (`ply_fine`, `ply_goto`, `ply_patt`, `ply_pend`, `ply_rept`) and    */
 /* the `track->chan` walk in `ply_endtie`. PR #7 part 2.2.2.2.2.1     */
 /* promoted `ply_voice` (it just copies `mp->tone[index]` into        */
-/* `track->tone`). The remaining handlers (`ply_note`, `ply_port`)    */
-/* need either the channel-allocation walk against `gSoundInfo`        */
-/* (`ply_note`, lands in PR #7 part 2.2.2.2.2.2) or the CGB register   */
-/* pokes that PR #7 part 2.3 will introduce (`ply_port`).              */
+/* `track->tone`), 2.2.2.2.2.2 promoted `ply_note`, and 2.3.1         */
+/* promoted `ply_port` (CGB sound-register byte poke through the      */
+/* emulated `gPortIo[]` MMIO array). Every dispatcher-reachable       */
+/* `ply_*` handler now has a real host C port.                         */
 /*                                                                     */
 /* `NUM_MUSIC_PLAYERS == 0` under `__PORT__` (see src/gba/m4a.c) — so  */
 /* even though `MPlayMain` is now a real port, it never iterates a    */
@@ -972,20 +972,63 @@ void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     track->tone = mp->tone[voice];
 }
 
-/* The remaining gated handler is `ply_port` (needs the CGB register
- * pokes that the host mixer doesn't have a backing-store for yet —
- * PR #7 part 2.3). `ply_note` was promoted to a real C port in PR #7
- * part 2.2.2.2.2.2 (the implementation lives below this stub block,
- * after the SoundInfo / CgbChannel host mirrors it depends on). */
+/* The remaining gated handlers are all promoted by PR #7 part 2.3:
+ * `ply_port` writes a CGB sound register (lands in 2.3.1, below).
+ * `ply_note` was promoted to a real C port in PR #7 part 2.2.2.2.2.2
+ * (the implementation lives below this stub block, after the
+ * SoundInfo / CgbChannel host mirrors it depends on). */
 #define M4A_PLY_STUB(name)                                 \
     void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
         (void)mp;                                          \
         (void)tr;                                          \
     }
 
-M4A_PLY_STUB(ply_port)
+/* (no remaining stubs in this block — `ply_port` is promoted below.) */
 
 #undef M4A_PLY_STUB
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.1: ply_port.                                        */
+/*                                                                    */
+/* Host C reimplementation of `asm/lib/m4a_asm.s::ply_port`. The asm  */
+/* loads two bytes from `track->cmdPtr`: the first is the byte offset */
+/* into the CGB sound-register region (base `0x04000060`), the second */
+/* is the value to write. cmdPtr is advanced by 2.                    */
+/*                                                                    */
+/* On the GBA the write lands directly in MMIO and pokes the CGB      */
+/* channel's pulse / wave / noise / envelope register. On the host    */
+/* there is no real CGB hardware; the emulated MMIO array `gPortIo[]` */
+/* (declared in `include/platform/port.h` and defined in              */
+/* `src/platform/shared/gba_memory.c`) backs every `0x04000000+x`     */
+/* address through `Port_TranslateHwAddr()` already, and the 0x60..   */
+/* 0x88 sound-register window sits inside it. Writing                 */
+/* `gPortIo[0x60 + offset] = value` therefore mirrors what the asm    */
+/* does on the GBA, leaves the gPortIo state observable by any future */
+/* CGB-aware host mixer (PR #7 part 2.3 main step), and is silent in  */
+/* terms of audible output (the host has no audio path through        */
+/* gPortIo[]).                                                        */
+/*                                                                    */
+/* The asm doesn't bounds-check `offset`; neither do we. The high     */
+/* byte covers offsets 0x60..0x15F inside the 0x400-byte `gPortIo`,   */
+/* which is comfortably in-range. (In practice the offsets emitted by */
+/* mid2agb / Sappy are constrained to the 0x60..0x88 CGB window, so   */
+/* the upper portion of the range is unreachable from real song       */
+/* data.)                                                             */
+/*                                                                    */
+/* `ply_port` is `gMPlayJumpTable[27]` (opcode 0xCC). Like every      */
+/* other dispatcher-reachable handler in this file, it is reached at  */
+/* runtime only via `MPlayMain`, which under the silent host mixer is */
+/* itself reachable only from `Port_M4ASelfCheck()` — production      */
+/* music players have `MPlayMainHead` linked but `SoundMain` is still */
+/* a no-op (PR #7 part 2.3 main step), so the head is never walked.   */
+/* ------------------------------------------------------------------ */
+void ply_port(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    extern uint8_t gPortIo[];
+    u8 offset = m4a_consume_byte(track);
+    u8 value = m4a_consume_byte(track);
+    gPortIo[0x60 + offset] = value;
+    (void)mp;
+}
 
 /* ------------------------------------------------------------------ */
 /* PR #7 part 2.2.2.2.2.2: ply_note.                                  */
@@ -3083,6 +3126,81 @@ int Port_M4ASelfCheck(void) {
      * zero-fill that m4aSoundInit will perform when the engine
      * boots). */
     memset(gSoundInfo, 0, sizeof(gSoundInfo));
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.1: ply_port.                                 */
+    /*                                                             */
+    /* Drives the standalone handler and the dispatcher path       */
+    /* (opcode 0xCC = M4A_JUMP_BASE + 27 = ply_port via            */
+    /* gMPlayJumpTable). Asserts cmdPtr advances by exactly 2,     */
+    /* the target gPortIo[0x60 + offset] byte gets the value, and  */
+    /* an unrelated gPortIo byte is left untouched.                */
+    /*                                                             */
+    /* gPortIo is the emulated MMIO array; we save / restore the   */
+    /* CGB sound-register window (0x60..0x88) around the test so   */
+    /* the rasterizer (which reads display registers in the same   */
+    /* array) stays bit-for-bit identical post-self-check. */
+    /* ----------------------------------------------------------- */
+    {
+        extern uint8_t gPortIo[];
+        u8 saved[0x40];
+        memcpy(saved, &gPortIo[0x60], sizeof(saved));
+        memset(&gPortIo[0x60], 0, sizeof(saved));
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        u8 stream_local[8];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+
+        /* Standalone: write 0xA5 to gPortIo[0x60 + 0x12]. */
+        stream_local[0] = 0x12; /* offset */
+        stream_local[1] = 0xA5; /* value */
+        track_local.cmdPtr = stream_local;
+        ply_port(&mp_local, &track_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 2);
+        M4A_CHECK(gPortIo[0x60 + 0x12] == 0xA5);
+        M4A_CHECK(gPortIo[0x60 + 0x11] == 0x00); /* untouched neighbour */
+        M4A_CHECK(gPortIo[0x60 + 0x13] == 0x00); /* untouched neighbour */
+
+        /* Standalone, second poke at a different offset overwrites
+         * its target and leaves the previous one alone. */
+        stream_local[0] = 0x05;
+        stream_local[1] = 0x3C;
+        track_local.cmdPtr = stream_local;
+        ply_port(&mp_local, &track_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 2);
+        M4A_CHECK(gPortIo[0x60 + 0x05] == 0x3C);
+        M4A_CHECK(gPortIo[0x60 + 0x12] == 0xA5); /* still set */
+
+        /* Dispatcher path: opcode 0xCC = M4A_JUMP_BASE + 27 = ply_port
+         * via gMPlayJumpTable. Followed by the two operand bytes
+         * (offset, value) and a wait command so MPlayMain stops after
+         * the poke. */
+        memset(&gPortIo[0x60], 0, sizeof(saved));
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.ident = M4A_ID_NUMBER;
+        mp_local.tempoI = 150;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST;
+        stream_local[0] = 0xCC; /* ply_port */
+        stream_local[1] = 0x20; /* offset */
+        stream_local[2] = 0x77; /* value */
+        stream_local[3] = 0x81; /* wait, gClockTable[1] = 0x01 */
+        track_local.cmdPtr = stream_local;
+        MPlayMain(&mp_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 4);
+        M4A_CHECK(gPortIo[0x60 + 0x20] == 0x77);
+        M4A_CHECK(track_local.runningStatus == 0xCC);
+        M4A_CHECK(track_local.wait == 0); /* 1 - 1 = 0 after tick */
+
+        /* Restore the CGB sound-register window so the rasterizer
+         * (which reads display registers from the same gPortIo array)
+         * is unaffected. */
+        memcpy(&gPortIo[0x60], saved, sizeof(saved));
+    }
 
 #undef M4A_WRITE_LE32
 #undef M4A_RUN
