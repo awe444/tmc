@@ -1059,7 +1059,50 @@ are tracked here for future contributors.
           `MPlayMain`'s dispatcher loop + `ply_voice` / `ply_note`
           and the per-track `TrkVolPitSet` second loop. Gated so the
           channel-update half stays a no-op when `track->chan` is
-          NULL (the silent host mixer case).
+          NULL (the silent host mixer case). Split into three
+          substeps:
+            - [x] **PR #7 part 2.2.2.2.1** Promoted `MPlayMain`
+              from a no-op stub to a real port of the asm's top
+              half (`_080AF908..._080AFAB0`): tempo accumulator,
+              per-track inner loop with the `chan` gate-time walk,
+              `START`-flag handling (`Clear64byte` + dispatcher
+              defaults via `m4a_track_start_init`), command-byte
+              dispatcher (running-status decode; `b >= 0xCF` →
+              `ply_note` (still a stub from 2.2.1); `0xB1..0xCE`
+              → `gMPlayJumpTable[b - 0xB1]`; `0x80..0xB0` →
+              `wait = gClockTable[b - 0x80]`; track-killed
+              early-out), LFO modulation tick (`lfoDelayC` /
+              `lfoSpeedC` triangle-wave + `MODCHG` per `modT`),
+              and the `mp->status = 0x80000000` "no live tracks"
+              sentinel. `Port_M4ASelfCheck()` extended with a new
+              section that drives `MPlayMain` against a synthesized
+              `MusicPlayerInfo` + `MusicPlayerTrack` + cmd stream
+              and verifies the dispatcher walks, wait + running
+              status semantics, `ply_fine` killing the track,
+              tempo accumulator remainder, the LFO tick path, and
+              the `START`-flag track init. The per-track second
+              loop (`TrkVolPitSet` + chan-update) remains a no-op
+              and `ply_voice` / `ply_note` are still stubs — that
+              work lands in 2.2.2.2.2 and 2.2.2.2.3 below. Golden
+              `--frames=30` hashes for both `=ON`
+              (`0x8f68687253dc1b25`) and `=OFF`
+              (`0xf9b70c534973f325`) builds remain bit-for-bit
+              unchanged because `MPlayMain` is reached only via
+              `Port_M4ASelfCheck()` (`NUM_MUSIC_PLAYERS == 0`
+              under `__PORT__`).
+            - [ ] **PR #7 part 2.2.2.2.2** Host C reimplementation
+              of `ply_voice` and `ply_note`. Needs a synthesized
+              `mp->tone` bank for the self-check and a
+              channel-allocation walk against `gSoundInfo` for
+              `ply_note`'s "find an idle SoundChannel" search.
+            - [ ] **PR #7 part 2.2.2.2.3** Per-track `TrkVolPitSet`
+              second loop in `MPlayMain` (the `_080AFAB2..._080AFB60`
+              region). Channel-update half stays a no-op when
+              `track->chan == NULL` (the silent host mixer case);
+              the `TrkVolPitSet(mp, track)` call itself runs
+              unconditionally on tracks with `MPT_FLG_VOLCHG`/
+              `MPT_FLG_PITCHG` set, exercising the C-defined
+              `TrkVolPitSet` from `src/gba/m4a.c`.
         - [ ] **PR #7 part 2.2.2.3** Promote `NUM_MUSIC_PLAYERS` back
           to its real value in `src/gba/m4a.c` once the dispatcher
           can drive a synthesized song through to completion under
