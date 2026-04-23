@@ -213,9 +213,11 @@ extern const u8 gClockTable[];
 void ClearChain(void* x);
 void FadeOutBody(MusicPlayerInfo* mp);
 
-/* Forward decl for `ply_note` / `ply_voice` (still no-op stubs for
- * 2.2.2.2.1 — promoted to real ports in 2.2.2.2.2). The dispatcher
- * needs the prototype so the call site below typechecks. */
+/* Forward decl for `ply_note` / `ply_voice`. `ply_voice` was promoted
+ * from a no-op stub to a real C port in PR #7 part 2.2.2.2.2.1;
+ * `ply_note` stays a stub until 2.2.2.2.2.2 (it needs the channel-
+ * allocation walk against `gSoundInfo`). The dispatcher needs the
+ * prototype so the call site below typechecks. */
 void ply_note(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 
@@ -587,18 +589,20 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 /* from no-op stubs to real C ports of the asm in `asm/lib/m4a_asm.s`. */
 /* PR #7 part 2.2.2.1 then promoted the control-flow handlers          */
 /* (`ply_fine`, `ply_goto`, `ply_patt`, `ply_pend`, `ply_rept`) and    */
-/* the `track->chan` walk in `ply_endtie`. The remaining handlers      */
-/* (`ply_voice`, `ply_note`, `ply_port`) need `MPlayMain`'s            */
-/* surrounding state (ROM-address loads against `gSongTable`, CGB      */
-/* register pokes) and remain stubs until PR #7 parts 2.2.2.2 / 2.3    */
-/* land.                                                                */
+/* the `track->chan` walk in `ply_endtie`. PR #7 part 2.2.2.2.2.1     */
+/* promoted `ply_voice` (it just copies `mp->tone[index]` into        */
+/* `track->tone`). The remaining handlers (`ply_note`, `ply_port`)    */
+/* need either the channel-allocation walk against `gSoundInfo`        */
+/* (`ply_note`, lands in PR #7 part 2.2.2.2.2.2) or the CGB register   */
+/* pokes that PR #7 part 2.3 will introduce (`ply_port`).              */
 /*                                                                     */
-/* `MPlayMain` is itself a no-op stub and `NUM_MUSIC_PLAYERS == 0`     */
-/* under `__PORT__` (see src/gba/m4a.c), so none of these handlers is  */
-/* reached at runtime today. They are instead exercised in isolation   */
-/* by `Port_M4ASelfCheck()` below, which feeds each handler a          */
-/* synthesized cmdPtr byte stream and verifies the resulting track     */
-/* state against the asm semantics in `asm/lib/m4a_asm.s`.             */
+/* `NUM_MUSIC_PLAYERS == 0` under `__PORT__` (see src/gba/m4a.c) — so  */
+/* even though `MPlayMain` is now a real port, it never iterates a    */
+/* live track in the production runtime path. The handlers above are  */
+/* therefore reachable today only via `Port_M4ASelfCheck()` below,     */
+/* which feeds each handler a synthesized cmdPtr byte stream + (for    */
+/* `ply_voice`) a synthesized tone bank, and verifies the resulting    */
+/* track state against the asm semantics in `asm/lib/m4a_asm.s`.       */
 
 /* MusicPlayerTrack flag bits used by the ply_* handlers (mirrored from */
 /* include/gba/m4a.h's MPT_FLG_*).                                      */
@@ -901,16 +905,48 @@ void ply_rept(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     }
 }
 
-/* The handlers still gated on PR #7 part 2.2.2.2 (need `MPlayMain`'s
- * surrounding state — channel-list walking, ROM-address loads against
- * `gSongTable`, CGB register pokes). Stay no-op stubs for now. */
+/* `ply_voice` — load a voice-bank entry into the track's embedded
+ * ToneData. Reads a single byte (the voice index) from cmdPtr,
+ * advances cmdPtr by 1, then copies `mp->tone[index]` (a 12-byte
+ * ToneData entry on the GBA) into `track->tone`.
+ *
+ * The asm at `_080AF838` does the copy as three back-to-back 4-byte
+ * loads/stores from `mp->tone + index * 12` into `track->tone`,
+ * routing each load through `sub_080AF75E` (the ROM-bounds clamp we
+ * already skip elsewhere — see the m4a_read_cmd_ptr comment). On the
+ * host the `wav` field of ToneData widens from 4 to 8 bytes so a
+ * literal 12-byte memcpy would silently truncate `tone.wav`; we use a
+ * struct assignment instead, which uses the host's ToneData layout
+ * (16 bytes here vs 12 on the GBA) and copies every public field
+ * by name. The asm's per-field byte order (type/key/length/pan_sweep
+ * → wav → attack/decay/sustain/release) is preserved by the C struct
+ * definition in include/gba/m4a.h.
+ *
+ * `ply_voice` is `gMPlayJumpTable[12]` (opcode 0xBD), so it is
+ * reachable through MPlayMain's running-status path; under the
+ * silent host mixer the only caller is `Port_M4ASelfCheck()` because
+ * NUM_MUSIC_PLAYERS == 0 keeps MPlayMain out of the production
+ * path. */
+void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    u8 voice = m4a_consume_byte(track);
+    /* mp->tone is a pointer to a flat array of ToneData entries.
+     * The asm computes the byte offset as `voice * 12` (3 << 2);
+     * here we use array indexing via the host ToneData type so the
+     * compiler does the size scaling correctly. */
+    track->tone = mp->tone[voice];
+}
+
+/* The handlers still gated on later 2.2.2.2.2 substeps (`ply_note`
+ * needs the channel-allocation walk against `gSoundInfo`) and on
+ * PR #7 part 2.3 (`ply_port` needs the CGB register pokes that the
+ * host mixer doesn't have a backing-store for yet). Stay no-op
+ * stubs for now. */
 #define M4A_PLY_STUB(name)                                 \
     void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
         (void)mp;                                          \
         (void)tr;                                          \
     }
 
-M4A_PLY_STUB(ply_voice)
 M4A_PLY_STUB(ply_port)
 M4A_PLY_STUB(ply_note)
 
@@ -1642,6 +1678,108 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track_local.tone.type == 1);
         M4A_CHECK(track_local.priority == 0);          /* cleared */
         M4A_CHECK(track_local.cmdPtr == stream_local); /* untouched */
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.2.2.2.2.1: ply_voice.                          */
+    /*                                                             */
+    /* Verifies the standalone handler (cmdPtr advance + per-field */
+    /* ToneData copy) and the MPlayMain dispatch path through      */
+    /* gMPlayJumpTable[12] (opcode 0xBD). The asm clones           */
+    /* `mp->tone[index]` into `track->tone` as 3 back-to-back      */
+    /* 4-byte loads/stores, but the host port uses a struct        */
+    /* assignment so it survives the wider `wav` pointer field on  */
+    /* 64-bit hosts.                                               */
+    /* ----------------------------------------------------------- */
+    {
+        ToneData bank[3];
+        memset(bank, 0, sizeof(bank));
+        /* Distinguishing patterns per slot so any cross-slot read
+         * shows up as a wrong-field assertion failure. */
+        bank[0].type = 0x01;
+        bank[0].key = 0x10;
+        bank[0].length = 0x20;
+        bank[0].pan_sweep = 0x30;
+        bank[0].wav = (WaveData*)(uintptr_t)0x11111111u;
+        bank[0].attack = 0x41;
+        bank[0].decay = 0x51;
+        bank[0].sustain = 0x61;
+        bank[0].release = 0x71;
+        bank[1].type = 0x02;
+        bank[1].key = 0x12;
+        bank[1].length = 0x22;
+        bank[1].pan_sweep = 0x32;
+        bank[1].wav = (WaveData*)(uintptr_t)0x22222222u;
+        bank[1].attack = 0x42;
+        bank[1].decay = 0x52;
+        bank[1].sustain = 0x62;
+        bank[1].release = 0x72;
+        bank[2].type = 0x03;
+        bank[2].key = 0x13;
+        bank[2].length = 0x23;
+        bank[2].pan_sweep = 0x33;
+        bank[2].wav = (WaveData*)(uintptr_t)0x33333333u;
+        bank[2].attack = 0x43;
+        bank[2].decay = 0x53;
+        bank[2].sustain = 0x63;
+        bank[2].release = 0x73;
+
+        /* Standalone ply_voice with index 1: every field of
+         * track.tone must equal bank[1] and cmdPtr must advance by 1. */
+        u8 stream_local[2];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        mp.tone = bank;
+        stream_local[0] = 1; /* voice index */
+        track.cmdPtr = stream_local;
+        ply_voice(&mp, &track);
+        M4A_CHECK(track.cmdPtr == stream_local + 1);
+        M4A_CHECK(track.tone.type == bank[1].type);
+        M4A_CHECK(track.tone.key == bank[1].key);
+        M4A_CHECK(track.tone.length == bank[1].length);
+        M4A_CHECK(track.tone.pan_sweep == bank[1].pan_sweep);
+        M4A_CHECK(track.tone.wav == bank[1].wav);
+        M4A_CHECK(track.tone.attack == bank[1].attack);
+        M4A_CHECK(track.tone.decay == bank[1].decay);
+        M4A_CHECK(track.tone.sustain == bank[1].sustain);
+        M4A_CHECK(track.tone.release == bank[1].release);
+        M4A_CHECK(track.flags == 0); /* no flag side-effects */
+
+        /* Boundary check at index 0 picks up bank[0], not bank[1]. */
+        memset(&track, 0, sizeof(track));
+        stream_local[0] = 0;
+        track.cmdPtr = stream_local;
+        ply_voice(&mp, &track);
+        M4A_CHECK(track.tone.type == bank[0].type);
+        M4A_CHECK(track.tone.wav == bank[0].wav);
+        M4A_CHECK(track.tone.release == bank[0].release);
+
+        /* Dispatcher path: opcode 0xBD = M4A_JUMP_BASE + 12 = ply_voice
+         * via gMPlayJumpTable. Followed by an operand byte (voice
+         * index) and a wait command so MPlayMain stops after the
+         * voice load. */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        u8 disp_stream[8];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.ident = M4A_ID_NUMBER;
+        mp_local.tempoI = 150;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        mp_local.tone = bank;
+        track_local.flags = M4A_FLG_EXIST;
+        disp_stream[0] = 0xBD; /* ply_voice */
+        disp_stream[1] = 2;    /* voice index */
+        disp_stream[2] = 0x81; /* wait, gClockTable[1] = 0x01 */
+        track_local.cmdPtr = disp_stream;
+        MPlayMain(&mp_local);
+        M4A_CHECK(track_local.cmdPtr == disp_stream + 3);
+        M4A_CHECK(track_local.tone.type == bank[2].type);
+        M4A_CHECK(track_local.tone.wav == bank[2].wav);
+        M4A_CHECK(track_local.tone.release == bank[2].release);
+        M4A_CHECK(track_local.runningStatus == 0xBD);
+        M4A_CHECK(track_local.wait == 0); /* 1 - 1 = 0 after tick */
     }
 
 #undef M4A_WRITE_LE32
