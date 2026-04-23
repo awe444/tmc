@@ -120,6 +120,35 @@ int Port_HeadersSelfCheck(void) {
     ok = ok && (gPortIo[REG_OFFSET_KEYINPUT] == 0xFF) && (gPortIo[REG_OFFSET_KEYINPUT + 1] == 0x03);
     REG_KEYINPUT = saved_keyinput;
 
+    /* Asset-integration prep: the host DMA / LZ77 / CpuSet helpers now
+     * pre-translate raw GBA hardware addresses through
+     * `Port_TranslateHwAddr()` so that `LoadGfxGroup` /
+     * `LoadPaletteGroup` can pass `dest=0x06000000`-style literals
+     * straight from the `data/gfx/...s` tables without SIGSEGVing. Round
+     * a known byte through `Port_DmaCopy16` with a literal VRAM target
+     * to prove that translation hop is wired up; CI's --frames=N smoke
+     * test exercises this on every run so any regression shows up
+     * with a clear assertion failure rather than as a runtime crash
+     * once the asset path is enabled. */
+    {
+        const uint16_t marker = 0xABCD;
+        uint16_t saved_vram_word;
+        memcpy(&saved_vram_word, gPortVram, sizeof(saved_vram_word));
+        Port_DmaCopy16(3, &marker, (void*)(uintptr_t)0x06000000u, sizeof(marker));
+        ok = ok && (gPortVram[0] == 0xCD) && (gPortVram[1] == 0xAB);
+        memcpy(gPortVram, &saved_vram_word, sizeof(saved_vram_word));
+    }
+    {
+        /* And confirm the translator returns existing host pointers
+         * unchanged so the (hot) path used by the rasterizer / game
+         * code that already passes `gPortPltt + N` keeps the same
+         * semantics it had before this change. */
+        ok = ok && (Port_TranslateHwAddr((uintptr_t)gPortVram) == (void*)gPortVram);
+        ok = ok && (Port_TranslateHwAddr((uintptr_t)gPortPltt) == (void*)gPortPltt);
+        ok = ok && (Port_TranslateHwAddr(0x06000010u) == (void*)(gPortVram + 0x10));
+        ok = ok && (Port_TranslateHwAddr(0x05000200u) == (void*)(gPortPltt + 0x200));
+    }
+
     /* Exercise the agbcc-ism no-ops too so the linker can't drop them. */
     PortHeaderNaked();
     (void)PortHeaderAgbccIsms(0x1234);

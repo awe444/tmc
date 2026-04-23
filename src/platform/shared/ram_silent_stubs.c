@@ -37,11 +37,53 @@
 #pragma GCC diagnostic ignored "-Wmissing-declarations"
 #endif
 
-/* Palette fade compositor. Real implementation blends `src` into `dst`
- * scaled by a 0..256 ratio. A silent no-op leaves PAL_RAM untouched,
- * which renders the screen at full saturation throughout fades but
- * does not corrupt state. Hit by `FadeVBlank` once per visible frame. */
-void ram_MakeFadeBuff256(void) {
+#include <string.h>
+
+/* Palette fade compositor.
+ *
+ * Real (still-unported) implementation in
+ * `asm/src/intr.s::arm_MakeFadeBuff256` reads 16 BGR555 colours from
+ * `src` (one palette in `gPaletteBuffer`) and writes 16 BGR555 colours
+ * to `dst` (the matching slot of `PAL_RAM` / `BG_PLTT`), with each
+ * channel passed through `gUnk_08000F54[brightness][channel]` (a 64-
+ * entry per-channel LUT) and blended by `(unk1, unk2)` for the
+ * fade-in / fade-out animation. Hit by `FadeVBlank` once per "used"
+ * palette per frame.
+ *
+ * On the host port we only need this enough to land the loaded palette
+ * data on the renderer's side. When no fade is active -- which is the
+ * default after `InitFade`'s `MemClear(&gUnk_020354C0, ...)` and is
+ * the state at the title screen and during normal gameplay outside
+ * room transitions -- `(unk1, unk2)` are both 0 and the ARM kernel
+ * collapses to a per-channel LUT lookup. With brightness 0 that LUT
+ * is the identity, so the resulting blit is a straight 32-byte copy
+ * from `src` to `dst`, which is what we do here.
+ *
+ * What this stub deliberately does *not* yet replicate (out of scope
+ * for the asset-integration PR; tracked for follow-up):
+ *
+ *   - The per-channel brightness LUT (`gUnk_08000F54`). At
+ *     `SetBrightness(1)` / brightness 2 the real game scales each 5-
+ *     bit channel through a saturated curve. Without the LUT data we
+ *     show colours at raw brightness, which matches what the comment
+ *     above the previous no-op already promised ("full saturation
+ *     throughout fades").
+ *   - The (`unk1`, `unk2`) blend used by `FadeMain`/`FadeIn`/`FadeOut`
+ *     for the area-transition cross-fade. Until this lands, fades
+ *     snap instantaneously; no state is corrupted.
+ *
+ * Both follow-ups are pure visual polish on top of the now-correct
+ * palette flush; neither blocks any boot-path code.
+ */
+void ram_MakeFadeBuff256(const void* src, void* dst, unsigned int unk2, unsigned int unk1) {
+    (void)unk2;
+    (void)unk1;
+    /* One palette = 16 colours * 2 bytes = 32 bytes, matching the
+     * `mov ip, #0x10` / `ldrh ... [r0], #2` / `strh ... [r1], #2`
+     * loop in `arm_MakeFadeBuff256`. */
+    if (src != NULL && dst != NULL) {
+        memcpy(dst, src, 32);
+    }
 }
 
 /* Per-frame entity dispatcher. The real (still-unported) ARM

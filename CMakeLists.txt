@@ -20,6 +20,23 @@ project(tmc_sdl
     LANGUAGES C
 )
 
+# Default to RelWithDebInfo (= `-O2 -g -DNDEBUG`) when the user does not
+# pick a configuration on a single-config generator. This preserves the
+# historical out-of-the-box behaviour (`-O2 -g`) of this CMakeLists while
+# still letting `-DCMAKE_BUILD_TYPE=Debug` produce a real `-O0 -g` build
+# for source-level debugging (see docs/sdl_port.md, "Debug build" section).
+# Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) pick
+# the configuration at build time, so we leave CMAKE_BUILD_TYPE untouched
+# in that case.
+get_property(_tmc_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _tmc_is_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING
+        "Build configuration. Use Debug for an -O0 source-level-debugging build."
+        FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
@@ -60,6 +77,33 @@ option(TMC_USE_FETCHCONTENT_SDL
 # ON is PR #2b.4b runtime-flip in the roadmap.
 option(TMC_LINK_GAME_SOURCES
     "Link the src/**/*.c game sources into tmc_sdl (PR #2b.4)." ON)
+
+# ---------------------------------------------------------------------------
+# TMC_BASEROM (extracted-asset integration; see docs/sdl_port.md
+# "Game assets / `baserom.gba`" section).
+#
+# When set to a path to a 16,777,216-byte `baserom.gba`, the host build
+# runs `tools/port/gen_host_assets.py` at configure time to produce a
+# real `gfx_offsets.h` plus a `port_rom_assets.c` that defines
+# `gGlobalGfxAndPalettes[]`, `gGfxGroups[]`, and `gPaletteGroups[]`
+# from the player's own copy of the ROM. The generated source replaces
+# the all-zero `port_rom_data_stubs.c`, and the generated header is
+# placed earlier on the include search path so it wins over the stub.
+#
+# When unset (the default), the existing all-zero stubs are linked.
+# The boot path takes the `LoadGfxGroup` 0x0D short-circuit and the
+# title-screen frame hash matches the pinned golden image -- this is
+# the behaviour CI exercises on every run.
+#
+# A deterministic 16 MiB all-zero placeholder baserom (suitable for
+# CI / for testing the pipeline without shipping copyrighted data)
+# can be generated with:
+#
+#     python3 tools/port/gen_host_assets.py make-placeholder-baserom \
+#         --out /tmp/placeholder_baserom.gba
+# ---------------------------------------------------------------------------
+set(TMC_BASEROM "" CACHE FILEPATH
+    "Path to a baserom.gba; enables real asset integration (see docs/sdl_port.md).")
 
 # Only the "sdl" platform is implemented in this PR. Other values are
 # reserved so future ports can slot into the same option without breaking the
@@ -173,9 +217,119 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
+    src/platform/shared/port_random.c
+    src/platform/shared/port_text_unpacker.c
+    src/platform/shared/port_text_data_stubs.c
     src/platform/shared/render.c
-    src/platform/shared/port_rom_data_stubs.c
 )
+
+# ---------------------------------------------------------------------------
+# Configure-time generation of `_port_offset_stubs.h`.
+#
+# The host stubs `assets/{gfx,map}_offsets.h` (under
+# `src/platform/shared/generated/`) `#include "_port_offset_stubs.h"`,
+# which is a ~30k-line `#ifndef X #define X 0 #endif` catch-all keyed on
+# every offset symbol referenced from the JSON-driven asset tables. It
+# is intentionally NOT committed -- shipping it would dominate every PR
+# diff -- and is regenerated deterministically from `assets/*.json` here
+# at configure time by `tools/port/gen_host_assets.py gen-offsets-stub`.
+# Re-run is fast (under a second) and idempotent.
+#
+# That makes Python3 a hard configure-time dependency for the SDL port
+# (it was already required for the `-DTMC_BASEROM=` path; this just
+# pulls the dependency up so the no-baserom path needs it too).
+# ---------------------------------------------------------------------------
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(_tmc_offset_stubs_dir "${CMAKE_BINARY_DIR}/generated/port_offset_stubs")
+set(_tmc_offset_stubs_h   "${_tmc_offset_stubs_dir}/_port_offset_stubs.h")
+file(MAKE_DIRECTORY "${_tmc_offset_stubs_dir}")
+# Re-run at every configure (assets/*.json could have grown). The
+# generator overwrites the file in-place, so this stays idempotent and
+# does not invalidate ccache.
+execute_process(
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/port/gen_host_assets.py" gen-offsets-stub
+        --repo-root "${CMAKE_SOURCE_DIR}"
+        --out "${_tmc_offset_stubs_h}"
+    RESULT_VARIABLE _tmc_stub_rc
+    OUTPUT_VARIABLE _tmc_stub_out
+    ERROR_VARIABLE  _tmc_stub_err)
+if(NOT _tmc_stub_rc EQUAL 0)
+    message(FATAL_ERROR
+        "tools/port/gen_host_assets.py gen-offsets-stub failed "
+        "(exit ${_tmc_stub_rc}):\n${_tmc_stub_out}${_tmc_stub_err}")
+endif()
+if(_tmc_stub_out)
+    message(STATUS "  ${_tmc_stub_out}")
+endif()
+# Re-run on configure if any of the JSON inputs change. CMake reruns
+# the configure step automatically when files in CMAKE_CONFIGURE_DEPENDS
+# are touched, which is exactly the trigger we want for the stub
+# (it depends only on the union of `offset_*` symbol names extracted
+# from those JSONs).
+file(GLOB _tmc_assets_jsons CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/assets/*.json")
+set_property(DIRECTORY APPEND PROPERTY
+    CMAKE_CONFIGURE_DEPENDS ${_tmc_assets_jsons})
+
+# ---------------------------------------------------------------------------
+# Asset-table source selection (TMC_BASEROM).
+#
+# Without `-DTMC_BASEROM=...`, link the all-zero `port_rom_data_stubs.c`
+# (the long-standing default; see `docs/sdl_port.md`'s "Game assets"
+# section). With it set, run `tools/port/gen_host_assets.py` at
+# configure time and link the generated `port_rom_assets.c` instead.
+# The header dir is exported into `TMC_GENERATED_ASSETS_INCLUDE_DIRS`
+# so the `tmc_game_sources` library can prepend it to its own include
+# search path -- the generated `gfx_offsets.h` then wins over the
+# all-zero stub at `src/platform/shared/generated/assets/gfx_offsets.h`.
+# ---------------------------------------------------------------------------
+set(TMC_GENERATED_ASSETS_INCLUDE_DIRS "")
+if(TMC_BASEROM)
+    if(NOT EXISTS "${TMC_BASEROM}")
+        message(FATAL_ERROR
+            "TMC_BASEROM='${TMC_BASEROM}' does not exist. Pass an absolute "
+            "path to a baserom.gba (16,777,216 bytes), or use "
+            "`python3 tools/port/gen_host_assets.py make-placeholder-baserom "
+            "--out <path>` to generate a deterministic placeholder for testing.")
+    endif()
+    set(_tmc_assets_out "${CMAKE_BINARY_DIR}/generated/port_assets")
+    set(_tmc_assets_inc "${_tmc_assets_out}/assets")
+    file(MAKE_DIRECTORY "${_tmc_assets_inc}")
+    set(_tmc_gen_offsets_h "${_tmc_assets_inc}/gfx_offsets.h")
+    set(_tmc_gen_assets_c  "${_tmc_assets_out}/port_rom_assets.c")
+    message(STATUS "TMC_BASEROM: generating host asset tables for ${TMC_GAME_VERSION} from ${TMC_BASEROM}")
+    execute_process(
+        COMMAND "${Python3_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/port/gen_host_assets.py" gen
+            --baserom "${TMC_BASEROM}"
+            --variant "${TMC_GAME_VERSION}"
+            --out-dir "${_tmc_assets_out}"
+            --repo-root "${CMAKE_SOURCE_DIR}"
+            --verbose
+        RESULT_VARIABLE _tmc_gen_rc
+        OUTPUT_VARIABLE _tmc_gen_out
+        ERROR_VARIABLE  _tmc_gen_err)
+    if(NOT _tmc_gen_rc EQUAL 0)
+        message(FATAL_ERROR
+            "tools/port/gen_host_assets.py failed (exit ${_tmc_gen_rc}):\n"
+            "${_tmc_gen_out}${_tmc_gen_err}")
+    endif()
+    if(_tmc_gen_out)
+        message(STATUS "  ${_tmc_gen_out}")
+    endif()
+    # The generated header lives in `${_tmc_assets_inc}/gfx_offsets.h`
+    # but `#include "_port_offset_stubs.h"` from inside it needs to
+    # resolve. The configure-time-generated stub directory is already
+    # added to every include path further below, so just exporting the
+    # generated assets dir is enough here.
+    list(APPEND TMC_GENERATED_ASSETS_INCLUDE_DIRS
+        "${_tmc_assets_out}")
+    list(APPEND TMC_PLATFORM_SHARED_SOURCES "${_tmc_gen_assets_c}")
+else()
+    list(APPEND TMC_PLATFORM_SHARED_SOURCES
+        src/platform/shared/port_rom_data_stubs.c)
+endif()
 # `port_unresolved_stubs.c` is intentionally NOT compiled directly into
 # `tmc_sdl`: its weak symbols would otherwise be resolved before the
 # linker scans `tmc_game_sources`, and a static library only pulls in
@@ -198,6 +352,14 @@ add_executable(tmc_sdl
 target_include_directories(tmc_sdl PRIVATE
     include
     include/platform
+    # The configure-time-generated `port_rom_assets.c` (when
+    # `-DTMC_BASEROM=...` is set) lives under `${BUILD_DIR}/generated/`
+    # and `#include`s `port_rom_data_types.h`, which sits in
+    # `src/platform/shared/`. The hand-written `port_rom_data_stubs.c`
+    # already finds it via the implicit "same directory as the source
+    # file" rule; expose the directory explicitly so the generated TU
+    # can resolve it the same way.
+    src/platform/shared
 )
 
 target_compile_definitions(tmc_sdl PRIVATE
@@ -235,9 +397,11 @@ endif()
 # so strict-aliasing must stay off for any future PR that links it. We
 # enable the same flag here so the platform layer matches. Only GCC /
 # Clang are supported (Windows / MSVC builds are out of scope -- see
-# docs/sdl_port.md).
+# docs/sdl_port.md). Optimization / debug-info flags come from the
+# active `CMAKE_BUILD_TYPE` (defaulted to RelWithDebInfo above) so that
+# `-DCMAKE_BUILD_TYPE=Debug` produces a real `-O0 -g` build instead of
+# being silently overridden by a hardcoded `-O2 -g` here.
 target_compile_options(tmc_sdl PRIVATE
-    -O2 -g
     -Wall
     -Wno-multichar
     -Wno-parentheses
@@ -351,7 +515,7 @@ set(TMC_GAME_LEAF_SOURCES
     # produced by the asset_processor during the GBA ROM build) and on
     # storing ARM function addresses in a u32 slot. The offset headers
     # have host-port stubs under src/platform/shared/generated/assets/
-    # (regenerated by tools/port/gen_offset_stubs.py); the u32 slot is
+    # (regenerated by tools/port/gen_host_assets.py); the u32 slot is
     # widened to uintptr_t under __PORT__ via a small include/room.h
     # tweak and the matching PORT_ROM_PTR() macro in include/global.h.
     src/backgroundAnimations.c
@@ -919,14 +1083,32 @@ set(TMC_GAME_LEAF_SOURCES
 
 add_library(tmc_game_sources STATIC ${TMC_GAME_LEAF_SOURCES})
 target_include_directories(tmc_game_sources PRIVATE
+    # When `-DTMC_BASEROM=...` was passed, this is the directory holding
+    # the configure-time-generated `assets/gfx_offsets.h` plus the
+    # existing stub directory (so `_port_offset_stubs.h` resolves from
+    # inside that generated header). It's listed first so the real
+    # offsets win over the all-zero stub at
+    # `src/platform/shared/generated/assets/gfx_offsets.h`. Empty when
+    # `TMC_BASEROM` is unset, in which case the existing stub-only
+    # search path applies.
+    ${TMC_GENERATED_ASSETS_INCLUDE_DIRS}
     include
     include/platform
     # Host-port stub headers for `assets/*_offsets.h`, which the
     # matching ROM build generates from the asset_processor. The
     # SDL port must not touch `assets/`, so these stubs live under
-    # a separate include root. See tools/port/gen_offset_stubs.py
+    # a separate include root. See tools/port/gen_host_assets.py
     # and docs/sdl_port.md (PR #2b.3, wave 3).
     src/platform/shared/generated
+    # The catch-all `_port_offset_stubs.h` referenced by both stubs and
+    # by the configure-time generated `gfx_offsets.h` is itself
+    # configure-time-generated into the build tree (see the
+    # "Configure-time generation of `_port_offset_stubs.h`" block at
+    # the top of this file). The directory is added to the include
+    # search path so the bare `#include "_port_offset_stubs.h"`
+    # resolves whether the includer is the in-tree stub header or the
+    # generated `gfx_offsets.h` from the `-DTMC_BASEROM=` path.
+    ${_tmc_offset_stubs_dir}
 )
 target_compile_definitions(tmc_game_sources PRIVATE
     __PORT__
@@ -934,7 +1116,6 @@ target_compile_definitions(tmc_game_sources PRIVATE
     ${TMC_VERSION_DEFINES}
 )
 target_compile_options(tmc_game_sources PRIVATE
-    -O2 -g
     -Wall
     -Wno-multichar
     -Wno-parentheses
@@ -974,7 +1155,7 @@ target_compile_definitions(tmc_unresolved_stubs PRIVATE
     ${TMC_VERSION_DEFINES}
 )
 target_compile_options(tmc_unresolved_stubs PRIVATE
-    -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function
+    -Wall -Wno-unused-parameter -Wno-unused-function
     -fno-strict-aliasing
 )
 add_dependencies(tmc_sdl tmc_unresolved_stubs)

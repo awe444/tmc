@@ -22,19 +22,35 @@
  * include/gba/macro.h (DmaSet, DmaCopy16, DmaCopy32, DmaFill16, DmaFill32,
  * etc.) so that PR #2 can replace those macros with calls into here. */
 
+/* Some game source files hand `DmaSet` / `DmaCopy*` a literal GBA
+ * hardware address (e.g. `0x6000000`) for `dst` (and occasionally
+ * `src`); this is most commonly seen in `LoadGfxGroup` /
+ * `LoadPaletteGroup` once the asset-integration build path is enabled
+ * (see `tools/port/gen_host_assets.py` and the `data/gfx/...s` tables).
+ * Translate both pointers through the host hardware-address translator
+ * so the call lands inside the matching `gPort*` array; addresses
+ * outside any known region (i.e. real host pointers) pass through
+ * unchanged. */
+static inline void* xlate_dst(void* p) {
+    return Port_TranslateHwAddr((uintptr_t)p);
+}
+static inline const void* xlate_src(const void* p) {
+    return (const void*)Port_TranslateHwAddr((uintptr_t)p);
+}
+
 void Port_DmaCopy16(int channel, const void* src, void* dst, uint32_t size) {
     (void)channel;
-    memcpy(dst, src, size);
+    memcpy(xlate_dst(dst), xlate_src(src), size);
 }
 
 void Port_DmaCopy32(int channel, const void* src, void* dst, uint32_t size) {
     (void)channel;
-    memcpy(dst, src, size);
+    memcpy(xlate_dst(dst), xlate_src(src), size);
 }
 
 void Port_DmaFill16(int channel, uint16_t value, void* dst, uint32_t size) {
     (void)channel;
-    uint16_t* p = (uint16_t*)dst;
+    uint16_t* p = (uint16_t*)xlate_dst(dst);
     uint32_t cnt = size / sizeof(uint16_t);
     for (uint32_t i = 0; i < cnt; ++i) {
         p[i] = value;
@@ -43,7 +59,7 @@ void Port_DmaFill16(int channel, uint16_t value, void* dst, uint32_t size) {
 
 void Port_DmaFill32(int channel, uint32_t value, void* dst, uint32_t size) {
     (void)channel;
-    uint32_t* p = (uint32_t*)dst;
+    uint32_t* p = (uint32_t*)xlate_dst(dst);
     uint32_t cnt = size / sizeof(uint32_t);
     for (uint32_t i = 0; i < cnt; ++i) {
         p[i] = value;
@@ -68,5 +84,5 @@ void Port_DmaSet(int channel, const void* src, void* dst, uint32_t control) {
     uint32_t count = control & 0xFFFFu;
     int is_32 = (control & (1u << 26)) != 0;
     uint32_t bytes = is_32 ? count * 4u : count * 2u;
-    memcpy(dst, src, bytes);
+    memcpy(xlate_dst(dst), xlate_src(src), bytes);
 }

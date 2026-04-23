@@ -45,6 +45,27 @@ extern uint8_t gPortIo[PORT_IO_SIZE];
 void Port_InitMemory(void);
 
 /* ------------------------------------------------------------------------ */
+/* Hardware-address translation.                                            */
+/*                                                                          */
+/* A handful of game source files hand the BIOS / DMA helpers a literal     */
+/* GBA hardware address (`0x06000000`, `0x02034570`, ...) rather than       */
+/* going through the macro layer that already remaps to the gPort* arrays. */
+/* On real hardware those literals are valid; on the host they would       */
+/* dereference an unmapped low-memory page and SIGSEGV. The host-side       */
+/* DMA / LZ77 / CpuSet helpers run a defensive translation pass through    */
+/* `Port_TranslateHwAddr()` before touching memory: addresses in a known    */
+/* GBA region are remapped to the matching offset inside `gPort*`;         */
+/* addresses outside any known region (i.e. real host pointers from        */
+/* `gPort* + N`) are returned unchanged.                                    */
+/*                                                                          */
+/* This is the single source of truth for the translation table; the       */
+/* `PORT_HW_ADDR(x)` macro in `include/gba/defines.h` (used directly from  */
+/* a few `#ifdef __PORT__` patches in the game source) forwards into here  */
+/* under `__PORT__` for consistency.                                        */
+/* ------------------------------------------------------------------------ */
+void* Port_TranslateHwAddr(uintptr_t addr);
+
+/* ------------------------------------------------------------------------ */
 /* Frame pacing / VBlank.                                                   */
 /*                                                                          */
 /* The GBA runs at exactly 280896 cycles/frame at SYSTEM_CLOCK = 16.78 MHz, */

@@ -62,11 +62,21 @@ static void lz77_decompress(const uint8_t* src, uint8_t* dst) {
 }
 
 void Port_LZ77UnCompVram(const void* src, void* dst) {
-    lz77_decompress((const uint8_t*)src, (uint8_t*)dst);
+    /* The decomp passes literal GBA hardware addresses (e.g.
+     * `0x06000000`) for `dst` whenever it asks the BIOS to drop a
+     * decompressed tile blob straight into VRAM. Translate both
+     * pointers through the host hardware-address translator so the
+     * write lands inside `gPortVram`; real host pointers (from
+     * `gPortVram + N` etc.) pass through unchanged. The same applies
+     * to `src` because some paths point it at an EWRAM literal. */
+    lz77_decompress((const uint8_t*)Port_TranslateHwAddr((uintptr_t)src),
+                    (uint8_t*)Port_TranslateHwAddr((uintptr_t)dst));
 }
 
 void Port_LZ77UnCompWram(const void* src, void* dst) {
-    lz77_decompress((const uint8_t*)src, (uint8_t*)dst);
+    /* See Port_LZ77UnCompVram. */
+    lz77_decompress((const uint8_t*)Port_TranslateHwAddr((uintptr_t)src),
+                    (uint8_t*)Port_TranslateHwAddr((uintptr_t)dst));
 }
 
 /* ---------- CpuSet / CpuFastSet ---------------------------------------- */
@@ -78,6 +88,12 @@ void Port_CpuSet(const void* src, void* dst, uint32_t control) {
     uint32_t count = control & 0x1FFFFFu;
     int fill = (control & CPUSET_FILL_FLAG) != 0;
     int use32 = (control & CPUSET_32BIT_FLAG) != 0;
+    /* Translate both pointers through the host hardware-address
+     * translator so call sites that pass a literal GBA address (e.g.
+     * `CpuSet(src, (void*)0x06000000, ...)`) land inside the matching
+     * `gPort*` array. Real host pointers pass through unchanged. */
+    src = (const void*)Port_TranslateHwAddr((uintptr_t)src);
+    dst = (void*)Port_TranslateHwAddr((uintptr_t)dst);
 
     if (use32) {
         uint32_t* d = (uint32_t*)dst;
@@ -108,6 +124,9 @@ void Port_CpuFastSet(const void* src, void* dst, uint32_t control) {
     /* CpuFastSet always operates on 8-word (32-byte) units of u32. */
     uint32_t count = (control & 0x1FFFFFu) * 8u;
     int fill = (control & CPUSET_FILL_FLAG) != 0;
+    /* See Port_CpuSet for the address-translation rationale. */
+    src = (const void*)Port_TranslateHwAddr((uintptr_t)src);
+    dst = (void*)Port_TranslateHwAddr((uintptr_t)dst);
     uint32_t* d = (uint32_t*)dst;
     if (fill) {
         uint32_t v = *(const uint32_t*)src;

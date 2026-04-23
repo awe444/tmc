@@ -70,7 +70,7 @@ static PORT_ASM_STUB_NORETURN void Port_AsmStubTrap(const char* name) {
 
 /* ---- asm/src/code_08000E44.s (5 symbols) ---- */
 PORT_ASM_STUB(sub_08000E44)
-PORT_ASM_STUB(Random)
+/* `Random` is now a real C port in src/platform/shared/port_random.c. */
 PORT_ASM_STUB(sub_08000E62)
 PORT_ASM_STUB(sub_08000E92)
 PORT_ASM_STUB(LoadResourceAsync)
@@ -82,9 +82,8 @@ PORT_ASM_STUB(SumDropProbabilities2)
 
 /* ---- asm/src/code_08001A7C.s (11 symbols) ---- */
 PORT_ASM_STUB(GetFuserId)
-PORT_ASM_STUB(sub_080026C4)
-PORT_ASM_STUB(sub_080026F2)
-PORT_ASM_STUB(UnpackTextNibbles)
+/* sub_080026C4 / sub_080026F2 are now real C ports in
+ * src/platform/shared/port_text_unpacker.c. */
 PORT_ASM_STUB(GetNextFunction)
 PORT_ASM_STUB(LinearMoveDirectionOLD)
 PORT_ASM_STUB(CalcCollisionDirectionOLD)
@@ -257,14 +256,13 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     LoadResourceAsync,
     PlayerCheckNEastTile,
     ProjectileUpdate,
-    Random,
+    /* `Random` is a real C port now; no force-reference needed. */
     ResetCollisionLayer,
     ResolveCollisionLayer,
     SnapToTile,
     SoundReqClipped,
     SumDropProbabilities,
     SumDropProbabilities2,
-    UnpackTextNibbles,
     UpdateAnimationSingleFrame,
     UpdateAnimationVariableFrames,
     UpdateCollisionLayer,
@@ -278,8 +276,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     sub_080012DC,
     sub_08001318,
     sub_0800132C,
-    sub_080026C4,
-    sub_080026F2,
     sub_080028E0,
     sub_08003FDE,
     sub_080040A2,

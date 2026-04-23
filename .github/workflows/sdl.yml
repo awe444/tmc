@@ -8,6 +8,9 @@ on:
       - 'CMakePresets.json'
       - 'src/platform/**'
       - 'include/platform/**'
+      - 'tools/port/**'
+      - 'data/gfx/**'
+      - 'assets/gfx.json'
       - '.github/workflows/sdl.yml'
   pull_request:
     paths:
@@ -15,6 +18,9 @@ on:
       - 'CMakePresets.json'
       - 'src/platform/**'
       - 'include/platform/**'
+      - 'tools/port/**'
+      - 'data/gfx/**'
+      - 'assets/gfx.json'
       - '.github/workflows/sdl.yml'
   workflow_dispatch:
 
@@ -158,5 +164,73 @@ jobs:
           if [ "$actual" != "$expected" ]; then
             echo "::error::Golden-image hash mismatch for the OFF build at --frames=30."
             echo "::error::See src/platform/shared/golden/README.md for how to update if intentional."
+            exit 1
+          fi
+
+      # PR #2c of the SDL-port roadmap: opt-in extracted-asset
+      # integration. Generate a deterministic 16,777,216-byte all-zero
+      # placeholder baserom (so we exercise the asset pipeline without
+      # shipping copyrighted ROM data), then build with
+      # `-DTMC_BASEROM=...` and smoke-test the result.
+      #
+      # An all-zero baserom is intentionally chosen: the host
+      # `Port_LZ77UnComp*` reads a 4-byte header and `out_size=0` exits
+      # the decompressor immediately, while uncompressed `DmaSet` paths
+      # just copy zeros into VRAM/EWRAM. The visible result is the same
+      # blank backdrop the stub build produces, but the run still
+      # exercises the real `gGfxGroups[]` / `gPaletteGroups[]` table
+      # layout, the per-variant `.ifdef` resolution in
+      # `data/gfx/{gfx,palette}_groups.s`, the `gfx_offsets.h` macro
+      # generation, and the `Port_TranslateHwAddr()` translation hop
+      # that makes `LoadGfxGroup`'s `dest=0x06000000`-style writes land
+      # inside `gPortVram`. Any regression in any of those surfaces as
+      # a build / link / runtime failure here.
+      - name: Generate placeholder baserom
+        run: |
+          mkdir -p build-placeholders
+          python3 tools/port/gen_host_assets.py make-placeholder-baserom \
+              --out build-placeholders/placeholder_baserom.gba
+
+      - name: Configure (TMC_BASEROM=<placeholder>)
+        run: |
+          cmake -S . -B build-baserom -DTMC_GAME_VERSION=${{ matrix.version }} \
+              -DTMC_BASEROM=$(pwd)/build-placeholders/placeholder_baserom.gba \
+              -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (TMC_BASEROM=<placeholder>)
+        run: cmake --build build-baserom --config Release -j
+
+      - name: Smoke test (TMC_BASEROM build, headless, 30 frames)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./build-baserom/tmc_sdl --frames=30 --mute --save-dir=.
+
+      # The placeholder-baserom build copies all-zero asset bytes into
+      # the (already-zero) emulated VRAM/PLTT, so the resulting
+      # framebuffer matches the default ON build's golden hash exactly.
+      # Asserting the equality here means the asset-integration plumbing
+      # is observably side-effect-free with an all-zero blob -- the
+      # exact property the placeholder baserom was designed to exhibit.
+      - name: Golden-image hash check (TMC_BASEROM build)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          actual=$(./build-baserom/tmc_sdl --frames=30 --mute --save-dir=. \
+                       --print-frame-hash 2>/dev/null \
+                       | grep '^frame-hash:' || true)
+          expected=$(grep '^frame-hash:' src/platform/shared/golden/usa_on_frames30.txt || true)
+          echo "actual:   $actual"
+          echo "expected: $expected"
+          if [ -z "$actual" ] || [ -z "$expected" ]; then
+            echo "::error::TMC_BASEROM build did not produce a frame-hash line at --frames=30."
+            exit 1
+          fi
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::TMC_BASEROM placeholder build's frame hash diverged from the default ON build's golden hash."
+            echo "::error::An all-zero placeholder baserom should produce a blank framebuffer identical to the stub build."
             exit 1
           fi
