@@ -914,13 +914,14 @@ void ply_rept(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
  * loads/stores from `mp->tone + index * 12` into `track->tone`,
  * routing each load through `sub_080AF75E` (the ROM-bounds clamp we
  * already skip elsewhere — see the m4a_read_cmd_ptr comment). On the
- * host the `wav` field of ToneData widens from 4 to 8 bytes so a
- * literal 12-byte memcpy would silently truncate `tone.wav`; we use a
- * struct assignment instead, which uses the host's ToneData layout
- * (16 bytes here vs 12 on the GBA) and copies every public field
- * by name. The asm's per-field byte order (type/key/length/pan_sweep
- * → wav → attack/decay/sustain/release) is preserved by the C struct
- * definition in include/gba/m4a.h.
+ * host the `wav` field of ToneData widens from 4 to 8 bytes, so a
+ * literal 12-byte memcpy would silently truncate `tone.wav`; we use
+ * a struct assignment instead so the copy uses the host `ToneData`
+ * layout and copies the full host object representation (including
+ * the widened `wav` pointer) rather than the GBA's 12-byte layout.
+ * The asm's logical field order (type/key/length/pan_sweep → wav →
+ * attack/decay/sustain/release) matches the C struct definition in
+ * `include/gba/m4a.h`.
  *
  * `ply_voice` is `gMPlayJumpTable[12]` (opcode 0xBD), so it is
  * reachable through MPlayMain's running-status path; under the
