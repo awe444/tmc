@@ -168,76 +168,11 @@ const PaletteGroup* gPaletteGroups[208] = {
     PORT_PALG_192, PORT_PALG_8, PORT_PALG_8, /* 16  -> 208 */
 };
 
-/* ----------------------------------------------------------------------- *
- * gUIElementDefinitions[] -- per-UI-element-type dispatch table.
- *
- * The real ROM table is defined in the still-unported `src/ui_data.c`
- * (and lives in unported asm/data on disk). Each entry's
- * `updateFunction` is invoked for every "used" UI element on every
- * frame by `UpdateUIElements()`. The default 256-byte zero-filled
- * weak BSS placeholder in `port_unresolved_stubs.c` therefore
- * NULL-derefs the first time the file-select task creates a UI element
- * (`HandleFileScreenEnter -> sub_080A70AC` calls `CreateUIElement`
- * twice with `UIElementType` 5 and 2; on the next frame
- * `UpdateUIElements` calls `gUIElementDefinitions[type].updateFunction`
- * which is NULL, crashing the file-select screen).
- *
- * For the SDL host build we provide a strong table whose
- * `updateFunction` slot is a no-op (`Port_UIElementUpdateNoOp`). The
- * other fields stay zero, which is fine for the host: `unk_4` (read
- * into `element->unk_1a` in `CreateUIElement`) and `buttonElementId`
- * being zero is a safe default; `DrawUIElements` only fires when
- * `element->unk_0_1 == 1`, which is set by helpers (e.g.
- * `sub_0801CB20`) that index `gSpritePtrs` -- gated separately by the
- * port's sprite-data stubs and not exercised by the file-select
- * task's two type=5/type=2 elements.
- *
- * `UIElementDefinition` is a file-local typedef in `src/ui.c`; the
- * declaration there is `extern UIElementDefinition gUIElementDefinitions[]`.
- * Storage layout/size is irrelevant to the linker (the symbol is
- * looked up by name only), but the **stride** on indexed access must
- * match what `src/ui.c` compiled against. We mirror the exact field
- * layout from `src/ui.c` here so a host-side `sizeof(PortUIElementDefinition)`
- * matches what `src/ui.c` sees as `sizeof(UIElementDefinition)` on the
- * same host. UIElementType currently has 11 values (0..10); 16 entries
- * provides headroom. */
-
-/* Forward declaration of the engine's UIElement struct so we can spell
- * the function-pointer signature without pulling in the full ui.h
- * dependency chain. The field layout is the engine's; we only need the
- * pointer type here. */
-struct UIElement;
-
-typedef struct {
-    uint16_t unk_0;
-    uint16_t unk_2;
-    uint16_t unk_4;
-    uint16_t spriteIndex;
-    void (*updateFunction)(struct UIElement*);
-    uint8_t buttonElementId;
-    uint8_t unk_d;
-    uint8_t unk_e;
-    uint8_t unk_f;
-} PortUIElementDefinition;
-
-static void Port_UIElementUpdateNoOp(struct UIElement* element) {
-    (void)element;
-    /* The real per-type update functions advance frame timers, swap
-     * sprite frames, etc. With no real sprite/animation data wired in
-     * yet, doing nothing is the safe behaviour for the SDL port: the
-     * UI element stays in its initial state and does not trigger any
-     * downstream NULL-deref through gSpritePtrs / gFrameObjLists. */
-}
-
-#define PORT_UIDEF_NOOP                                                                                       \
-    { .unk_0 = 0, .unk_2 = 0, .unk_4 = 0, .spriteIndex = 0, .updateFunction = Port_UIElementUpdateNoOp,       \
-      .buttonElementId = 0, .unk_d = 0, .unk_e = 0, .unk_f = 0 }
-
-PortUIElementDefinition gUIElementDefinitions[16] = {
-    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
-    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
-    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
-    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
-};
+/* gUIElementDefinitions[] has moved to
+ * src/platform/shared/port_globals.c. It needs to be linked
+ * unconditionally regardless of whether `-DTMC_BASEROM=...` is set,
+ * but this TU is replaced by the generated `port_rom_assets.c` in the
+ * baserom-driven build, which does not provide that symbol. See
+ * port_globals.c for the host stand-in and its rationale. */
 
 #endif /* __PORT__ */
