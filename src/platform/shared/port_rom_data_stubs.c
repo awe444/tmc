@@ -168,4 +168,11 @@ const PaletteGroup* gPaletteGroups[208] = {
     PORT_PALG_192, PORT_PALG_8, PORT_PALG_8, /* 16  -> 208 */
 };
 
+/* gUIElementDefinitions[] has moved to
+ * src/platform/shared/port_globals.c. It needs to be linked
+ * unconditionally regardless of whether `-DTMC_BASEROM=...` is set,
+ * but this TU is replaced by the generated `port_rom_assets.c` in the
+ * baserom-driven build, which does not provide that symbol. See
+ * port_globals.c for the host stand-in and its rationale. */
+
 #endif /* __PORT__ */

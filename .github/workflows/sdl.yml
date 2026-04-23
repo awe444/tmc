@@ -82,17 +82,16 @@ jobs:
       # included only to keep the parser exercising the multi-entry
       # path end-to-end.
       #
-      # Known: as soon as TASK_FILE_SELECT runs its first frame,
-      # HandleFileScreenEnter calls ClearTileMaps → MemClear of
+      # Previously, as soon as TASK_FILE_SELECT ran its first frame,
+      # HandleFileScreenEnter called ClearTileMaps → MemClear of
       # gMapDataBottomSpecial/gMapDataTopSpecial (32 KiB each), which
-      # currently overruns the 256-byte stub buffers in
-      # src/platform/shared/port_unresolved_stubs.c and clobbers
+      # overran the 256-byte stub buffers in
+      # src/platform/shared/port_unresolved_stubs.c and clobbered
       # gEEPROMConfig, NULL-deref'ing the very next EEPROMRead in
-      # ReadSaveFileStatus. That SEGV is a port-globals layout bug
-      # (tracked as a follow-up to this PR — proper-sized definitions
-      # for the two map-data stubs); the script tolerates exit code
-      # 139 here so the test still passes, and tightens to require
-      # exit 0 once the underlying bug is fixed.
+      # ReadSaveFileStatus. That follow-up has now been addressed by
+      # giving the two map-data stubs their proper 0x8000-byte size,
+      # so this step now requires exit 0: any SEGV/abort/non-zero
+      # status is treated as a regression.
       - name: Scripted-input smoke test (headless, START presses past the title)
         env:
           SDL_VIDEODRIVER: dummy
@@ -101,20 +100,8 @@ jobs:
           set -euo pipefail
           run_until_title_passed() {
               local label="$1"; shift
-              set +e
               "$@"
-              local rc=$?
-              set -e
-              # 0  = ran to the frame budget without crashing (will be
-              #      the expected outcome once the gMapData* port-globals
-              #      stubs are sized correctly).
-              # 139 = SIGSEGV(11) in EEPROMRead via the gMapData* overrun
-              #      described above; accepted today, tracked as a
-              #      follow-up port-globals fix.
-              case "$rc" in
-                  0|139) echo "[$label] tmc_sdl exited with $rc (accepted)";;
-                  *)     echo "::error::[$label] tmc_sdl exited with unexpected status $rc"; return "$rc";;
-              esac
+              echo "[$label] tmc_sdl exited cleanly"
           }
 
           # Inline `--press=` form. The two real progression presses are

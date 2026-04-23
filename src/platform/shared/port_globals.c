@@ -30,6 +30,7 @@
 #include "player.h"
 #include "room.h"
 #include "screen.h"
+#include "ui.h"
 
 #include <stddef.h>
 
@@ -40,6 +41,81 @@ Screen gScreen;
 RoomControls gRoomControls;
 struct_02000010 gUnk_02000010;
 u32 gRand;
+
+/* HUD / UI subsystem state.
+ *
+ * These were previously 256-byte weak placeholders in
+ * port_unresolved_stubs.c, but the file-select task does
+ * `MemClear(&gHUD, sizeof(gHUD))` (0x4b8 bytes on the host) and
+ * `MemClear(&gUI, sizeof(gUI))` (0x480 bytes), and `UpdateUIElements`
+ * iterates `gHUD.elements[0..MAX_UI_ELEMENTS-1]`. With a 256-byte
+ * stub buffer those overrun adjacent BSS (clobbering e.g.
+ * `gIntroState`) and the loop body reads garbage `used` bits past the
+ * end of the buffer, calling a NULL `updateFunction` pointer. Defining
+ * them with their real struct types here gives the host build BSS of
+ * the correct size, mirroring how `gMain` / `gScreen` are handled. */
+HUD gHUD;
+UI gUI;
+
+/* gUIElementDefinitions[] -- per-UI-element-type dispatch table.
+ *
+ * The real ROM table is defined in unported asm/data on disk. Each
+ * entry's `updateFunction` is invoked for every "used" UI element on
+ * every frame by `UpdateUIElements()`. The default 256-byte zero-filled
+ * weak BSS placeholder previously used in `port_unresolved_stubs.c`
+ * NULL-deref'd the first time the file-select task created a UI element
+ * (`HandleFileScreenEnter -> sub_080A70AC -> CreateUIElement` populated
+ * two slots; on the next frame `UpdateUIElements` called
+ * `gUIElementDefinitions[type].updateFunction` which was NULL).
+ *
+ * We provide a strong host table whose `updateFunction` slot is a
+ * no-op. This lives in `port_globals.c` (rather than the previously
+ * tried `port_rom_data_stubs.c`) so it is unconditionally linked
+ * regardless of whether `-DTMC_BASEROM=...` is set: the baserom-driven
+ * build replaces `port_rom_data_stubs.c` with the generated
+ * `port_rom_assets.c`, which does not (yet) provide this table.
+ *
+ * `UIElementDefinition` is a file-local typedef inside `src/ui.c`
+ * (anonymous struct), so the only cross-TU contract for this symbol is
+ * (a) the linker name `gUIElementDefinitions` and (b) the per-element
+ * stride/layout the engine indexes through. The port-local
+ * `PortUIElementDefinition` below mirrors the engine's field layout
+ * exactly. The function-pointer signature uses `void*` so the type
+ * never references the engine's anonymous `UIElement` typedef, keeping
+ * the host TU self-contained. UIElementType currently has 11 values
+ * (0..10); 16 entries provides headroom. */
+typedef struct {
+    u16 unk_0;
+    u16 unk_2;
+    u16 unk_4;
+    u16 spriteIndex;
+    void (*updateFunction)(void*);
+    u8 buttonElementId;
+    u8 unk_d;
+    u8 unk_e;
+    u8 unk_f;
+} PortUIElementDefinition;
+
+static void Port_UIElementUpdateNoOp(void* element) {
+    (void)element;
+    /* The real per-type update functions advance frame timers, swap
+     * sprite frames, etc. With no real sprite/animation data wired in
+     * yet, doing nothing is the safe behaviour for the SDL port: the
+     * UI element stays in its initial state and does not trigger any
+     * downstream NULL-deref through gSpritePtrs / gFrameObjLists. */
+}
+
+#define PORT_UIDEF_NOOP                                                                                   \
+    {                                                                                                     \
+        .unk_0 = 0, .unk_2 = 0, .unk_4 = 0, .spriteIndex = 0, .updateFunction = Port_UIElementUpdateNoOp, \
+        .buttonElementId = 0, .unk_d = 0, .unk_e = 0, .unk_f = 0                                          \
+    }
+
+PortUIElementDefinition gUIElementDefinitions[16] = {
+    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
+    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
+    PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP, PORT_UIDEF_NOOP,
+};
 
 /* Message subsystem. */
 Message gMessage;
