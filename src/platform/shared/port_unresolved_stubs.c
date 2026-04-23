@@ -227,7 +227,13 @@ PORT_UNRESOLVED_DATA(gGFXSlots);
  * host-side stand-ins so that LoadGfxGroup() short-circuits cleanly
  * during the Nintendo / Capcom logo step instead of NULL-deref'ing on
  * an empty BSS placeholder. See docs/sdl_port.md (PR #2b.4b). */
-PORT_UNRESOLVED_DATA(gHUD);
+/* gHUD has moved to src/platform/shared/port_globals.c, where it is
+ * defined with its real `HUD` struct type so that the host build's
+ * BSS allocation matches sizeof(gHUD) (== 0x4b8 on a 64-bit host).
+ * The 256-byte weak placeholder previously here was overrun by
+ * `MemClear(&gHUD, sizeof(gHUD))` in HandleFileScreenEnter() and the
+ * out-of-bounds reads in `UpdateUIElements` produced a NULL function
+ * pointer call. */
 PORT_UNRESOLVED_DATA(gInteractableObjects);
 PORT_UNRESOLVED_DATA(gIntroState);
 PORT_UNRESOLVED_DATA(gLilypadRails);
@@ -237,8 +243,19 @@ PORT_UNRESOLVED_DATA(gMPlayTracks);
 PORT_UNRESOLVED_DATA(gManagerCount);
 PORT_UNRESOLVED_DATA(gMapBottom);
 PORT_UNRESOLVED_DATA(gMapData);
-PORT_UNRESOLVED_DATA(gMapDataBottomSpecial);
-PORT_UNRESOLVED_DATA(gMapDataTopSpecial);
+/* gMapDataBottomSpecial / gMapDataTopSpecial are the special-tile
+ * scratch buffers for the two map layers. ClearTileMaps() (called
+ * from HandleFileScreenEnter() via gameUtils.c, and from playerUtils.c
+ * map setup) does `MemClear(&gMapDataBottomSpecial, 0x8000)` and
+ * `MemClear(&gMapDataTopSpecial, 0x8000)`, and playerUtils.c indexes
+ * up to gMapDataBottomSpecial[0x2000] + 0x4000 bytes (== byte offset
+ * 0x8000). The 256-byte default placeholder is therefore far too
+ * small: the MemClear overruns into adjacent BSS and clobbers
+ * gEEPROMConfig, which then NULL-derefs on the next EEPROMRead and
+ * crashes the file-select screen. Size both buffers to 0x8000 bytes
+ * (== 0x4000 u16 entries) to match the game's expected extent. */
+char gMapDataBottomSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
+char gMapDataTopSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gMapTop);
 PORT_UNRESOLVED_DATA(gMenu);
 PORT_UNRESOLVED_DATA(gMessageChoices);
@@ -272,8 +289,13 @@ PORT_UNRESOLVED_DATA(gSubtasks);
 PORT_UNRESOLVED_DATA(gTextGfxBuffer);
 PORT_UNRESOLVED_DATA(gTilesForSpecialTiles);
 PORT_UNRESOLVED_DATA(gTranslations);
-PORT_UNRESOLVED_DATA(gUI);
-PORT_UNRESOLVED_DATA(gUIElementDefinitions);
+/* gUI has moved to src/platform/shared/port_globals.c (real `UI`
+ * type) for the same reason as gHUD above. */
+/* gUIElementDefinitions has moved to
+ * src/platform/shared/port_rom_data_stubs.c, which provides a strong
+ * host stand-in whose `updateFunction` slot is a no-op. The previous
+ * 256-byte zero-init weak placeholder NULL-deref'd as soon as the
+ * file-select task created its first UI element. */
 PORT_UNRESOLVED_DATA(gUnk_02000040);
 PORT_UNRESOLVED_DATA(gUnk_020000C0);
 PORT_UNRESOLVED_DATA(gUnk_02001A3C);

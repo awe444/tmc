@@ -30,6 +30,7 @@
 #include "player.h"
 #include "room.h"
 #include "screen.h"
+#include "ui.h"
 
 #include <stddef.h>
 
@@ -40,6 +41,21 @@ Screen gScreen;
 RoomControls gRoomControls;
 struct_02000010 gUnk_02000010;
 u32 gRand;
+
+/* HUD / UI subsystem state.
+ *
+ * These were previously 256-byte weak placeholders in
+ * port_unresolved_stubs.c, but the file-select task does
+ * `MemClear(&gHUD, sizeof(gHUD))` (0x4b8 bytes on the host) and
+ * `MemClear(&gUI, sizeof(gUI))` (0x480 bytes), and `UpdateUIElements`
+ * iterates `gHUD.elements[0..MAX_UI_ELEMENTS-1]`. With a 256-byte
+ * stub buffer those overrun adjacent BSS (clobbering e.g.
+ * `gIntroState`) and the loop body reads garbage `used` bits past the
+ * end of the buffer, calling a NULL `updateFunction` pointer. Defining
+ * them with their real struct types here gives the host build BSS of
+ * the correct size, mirroring how `gMain` / `gScreen` are handled. */
+HUD gHUD;
+UI gUI;
 
 /* Message subsystem. */
 Message gMessage;
