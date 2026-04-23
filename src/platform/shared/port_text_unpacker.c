@@ -77,12 +77,12 @@ void UnpackTextNibbles(void* src, u8* dst) {
 void sub_080026C4(u8* src_nibbles, u8* dst_tile, u8* color_lookup, u32 col) {
     /* Pick the 8x16 tile-strip and the byte within each tile row. */
     u8* dst = dst_tile + ((col >> 3) << 6) + ((col & 6) >> 1);
-    u8 mask = 0xF0;                         /* keep high nibble by default */
-    const u8* colors = color_lookup;        /* low-nibble half of LUT */
+    u8 mask = 0xF0;                  /* keep high nibble by default */
+    const u8* colors = color_lookup; /* low-nibble half of LUT */
     u32 i;
     if (col & 1) {
-        mask = 0x0F;                        /* keep low nibble */
-        colors = color_lookup + 0x10;       /* high-nibble half of LUT */
+        mask = 0x0F;                  /* keep low nibble */
+        colors = color_lookup + 0x10; /* high-nibble half of LUT */
     }
     for (i = 0; i < 16; i++) {
         u8 nibble = *src_nibbles;
