@@ -227,7 +227,7 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 /* `ply_pend`, `ply_rept`, `ply_voice`, `ply_note`, `ply_port`) need   */
 /* `MPlayMain`'s surrounding state (channel-list walking, ROM-address  */
 /* loads against gSongTable, CGB register pokes) and remain stubs      */
-/* until PR #7 parts 2.2.2 / 2.2.3 land.                               */
+/* until PR #7 parts 2.2.2 / 2.3 land.                                 */
 /*                                                                     */
 /* `MPlayMain` is itself a no-op stub and `NUM_MUSIC_PLAYERS == 0`     */
 /* under `__PORT__` (see src/gba/m4a.c), so none of these handlers is  */
