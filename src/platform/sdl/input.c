@@ -270,7 +270,8 @@ void Port_InputPump(void) {
         }
     }
 
-    s_key_mask = (uint16_t)((s_keyboard_mask | poll_gamepad_mask()) & PORT_KEYS_MASK);
+    s_key_mask = (uint16_t)((s_keyboard_mask | poll_gamepad_mask() | Port_ScriptedInputCurrentMask()) &
+                            PORT_KEYS_MASK);
 
     /* Mirror the active-low view of s_key_mask into the emulated
      * REG_KEYINPUT slot (gPortIo + 0x130). The macro REG_KEYINPUT in
