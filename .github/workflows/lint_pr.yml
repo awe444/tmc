@@ -4,8 +4,18 @@ jobs:
   clang-format:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
-    - uses: DoozyX/clang-format-lint-action@v0.8
-      with:
-        source: './src ./include'
-        clangFormatVersion: 10
+      - uses: actions/checkout@v4
+      - name: Install clang-format 14
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-14
+      - name: Run clang-format check
+        run: |
+          shopt -s globstar nullglob
+          files=(src/**/*.c src/**/*.h include/**/*.c include/**/*.h)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No C/H files found under src/ or include/."
+            exit 0
+          fi
+          clang-format-14 --dry-run -Werror "${files[@]}"
+        shell: bash

@@ -1134,14 +1134,71 @@ are tracked here for future contributors.
                 (`NUM_MUSIC_PLAYERS == 0` under `__PORT__`) — the
                 new code is exercised by the smoke-test self-check
                 only.
-              - [ ] **PR #7 part 2.2.2.2.2.2** Host C
-                reimplementation of `ply_note`. Drives the
-                channel-allocation walk against `gSoundInfo`
-                (DirectSound + CGB paths), the priority / track-addr
-                tiebreak, the chan insertion at the head of
-                `track->chan`, the `chan->frequency = MidiKeyToFreq(...)`
-                / `sub_080AFB74(...)` setup, and the
-                `track->flags &= 0xF0` clear of the lower nibble.
+              - [x] **PR #7 part 2.2.2.2.2.2** Promoted `ply_note`
+                to a real C port in `src/platform/shared/m4a_host.c`
+                and rewired the dispatcher to call it via the
+                host-private 3-arg `ply_note_impl(mp, track, gateIdx)`
+                so the gate index extracted from the `>= 0xCF`
+                command byte survives the public 2-arg signature
+                stored in `soundInfo->plynote`. The port mirrors
+                `src/gba/m4a.c`'s file-local `SoundInfo` /
+                `CgbChannel` typedefs in a host-side `M4A_SoundInfo`
+                / `M4A_CgbChannel` overlay (the BSS storage is
+                shared via the existing `u8 gSoundInfo[4096]`
+                symbol, and a `_Static_assert` keeps the BSS
+                comfortably above the host SoundInfo footprint), so
+                the channel-allocation walk against
+                `gSoundInfo->chans[]` / `cgbChannels` works by name
+                and the CgbChannel-only post-rhythmPan fields
+                (`length` / `sweep` / `frequency`) are written
+                through the matching struct type rather than via
+                shared SoundChannel byte offsets (the CgbChannel
+                and SoundChannel layouts diverge past byte 0x14 on
+                the host because SoundChannel embeds `WaveData* wav`
+                and `MusicPlayerTrack* track`, both pointer-widened
+                to 8 bytes). The DirectSound walk preserves the
+                asm's three-tier preference (envelope-dead break,
+                releasing-chan first-time-take + later
+                priority/track-tiebreak, live-chan competition vs.
+                the note's own priority + track ptr); the CGB walk
+                preserves the `cgbChannels[type-1]` slot pick with
+                releasing-vs-active and priority-vs-track tiebreaks.
+                Each chosen chan gets `ClearChain`'d off its old
+                list, spliced at the head of `track->chan`, primed
+                with the active sub-tone's `key`/`velocity`/`wav`/
+                ADSR/echo bytes, fed through `TrkVolPitSet`, and
+                finally given `chan->frequency` from `MidiKeyToFreq`
+                (DirectSound) or `soundInfo->MidiKeyToCgbFreq` (CGB
+                — guarded against the NULL slot on the silent host
+                mixer). The CGB-only `length` + derived `n4`/`sweep`
+                byte pokes the asm performs at `chan + 0x1e` /
+                `chan + 0x1f` land in the corresponding named
+                CgbChannel fields. The lower nibble of `track->flags`
+                (the per-tick VOLSET/VOLCHG/PITSET/PITCHG request
+                bits already consumed by the chan walk + TrkVolPitSet)
+                is cleared on the success path only; the no-suitable-
+                chan drop path leaves the flags untouched, matching
+                the asm. `Port_M4ASelfCheck()` grew a 2.2.2.2.2.2
+                section that exercises eight scenarios — empty-chan
+                immediate alloc, releasing-chan preference over a
+                live high-priority chan, priority-only compare among
+                live chans, the no-candidate drop path, head-of-list
+                insertion against a pre-existing `track->chan`,
+                gateIdx + delta gateTime composition, the CGB
+                allocation slot + `length`/`sweep` pokes, and the
+                full dispatcher path through opcode `0xD0` with
+                running-status latching — and pre-populates
+                `gMPlayJumpTable[34] = RealClearChain` because the
+                self-check runs before `m4aSoundInit` (and therefore
+                before the engine's own `MPlayJumpTableCopy`)
+                installs it. The `--frames=30` golden hashes for
+                both the `=ON` (`0x8f68687253dc1b25`) and `=OFF`
+                (`0xf9b70c534973f325`) builds remain bit-for-bit
+                unchanged because `ply_note` is only reached via
+                `MPlayMain`, which is itself unreachable from the
+                runtime path while `NUM_MUSIC_PLAYERS == 0` under
+                `__PORT__` — only the smoke-test self-check
+                exercises the new code.
             - [ ] **PR #7 part 2.2.2.2.3** Per-track `TrkVolPitSet`
               second loop in `MPlayMain` (the `_080AFAB2..._080AFB60`
               region). Channel-update half stays a no-op when
