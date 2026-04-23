@@ -221,13 +221,15 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 /* m4a.c itself). Each is invoked through gMPlayJumpTable when         */
 /* MPlayMain steps a track.                                            */
 /*                                                                     */
-/* PR #7 part 2.2.1 promotes the simple parameter-setting handlers     */
+/* PR #7 part 2.2.1 promoted the simple parameter-setting handlers    */
 /* from no-op stubs to real C ports of the asm in `asm/lib/m4a_asm.s`. */
-/* The remaining handlers (`ply_fine`, `ply_goto`, `ply_patt`,         */
-/* `ply_pend`, `ply_rept`, `ply_voice`, `ply_note`, `ply_port`) need   */
-/* `MPlayMain`'s surrounding state (channel-list walking, ROM-address  */
-/* loads against gSongTable, CGB register pokes) and remain stubs      */
-/* until PR #7 parts 2.2.2 / 2.3 land.                                 */
+/* PR #7 part 2.2.2.1 then promoted the control-flow handlers          */
+/* (`ply_fine`, `ply_goto`, `ply_patt`, `ply_pend`, `ply_rept`) and    */
+/* the `track->chan` walk in `ply_endtie`. The remaining handlers      */
+/* (`ply_voice`, `ply_note`, `ply_port`) need `MPlayMain`'s            */
+/* surrounding state (ROM-address loads against `gSongTable`, CGB      */
+/* register pokes) and remain stubs until PR #7 parts 2.2.2.2 / 2.3    */
+/* land.                                                                */
 /*                                                                     */
 /* `MPlayMain` is itself a no-op stub and `NUM_MUSIC_PLAYERS == 0`     */
 /* under `__PORT__` (see src/gba/m4a.c), so none of these handlers is  */
@@ -362,40 +364,187 @@ void ply_mod(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     }
 }
 
-/* `ply_endtie` — end a tied note. The first byte (if < 0x80) is the
- * key to release; otherwise the previous track->key is reused without
- * advancing cmdPtr. The asm then walks track->chan looking for an
- * envelope-active channel matching that key and sets bit 6 (release).
+/* SoundChannel statusFlags bits referenced by ply_fine / ply_endtie below.
+ *
+ * The asm at `_080AF976` (ply_fine) and `_080AFE1E` (ply_endtie) uses
+ * raw immediates 0xc7, 0x83, 0x40 to test envelope-active / "still
+ * exists" / release bits. We give them mnemonic names here for
+ * legibility; the bit layout itself is dictated by `src/gba/m4a.c`'s
+ * file-local `CgbChannel` / `SoundChannel` state machine and is
+ * mirrored in `asm/lib/m4a_asm.s`. */
+#define M4A_CHAN_FLAGS_ENV    0xc7 /* "envelope is doing something useful" */
+#define M4A_CHAN_FLAGS_EXIST  0x83 /* "channel is still alive" */
+#define M4A_CHAN_FLAG_RELEASE 0x40 /* set by the engine to start release */
+
+/* `ply_fine` — terminate the current track. For each SoundChannel
+ * linked from track->chan, either tag it with the release flag (if its
+ * envelope is still active per M4A_CHAN_FLAGS_ENV) or unlink it via
+ * RealClearChain. Then clear track->flags so MPlayMain stops servicing
+ * the track on subsequent passes. cmdPtr is *not* advanced — the
+ * `0xb1` ply_fine command byte is consumed by MPlayMain's dispatcher
+ * before the call lands here.
  *
  * Under the silent host mixer no SoundChannel is ever linked into the
- * track->chan list (MPlayMain is itself a no-op), so the channel walk
- * is unreachable. Implement only the cmdPtr / track->key half here;
- * the channel-walk half lands in PR #7 part 2.2.2 alongside MPlayMain. */
+ * track->chan list (SoundMain is a no-op so it never allocates one),
+ * so the loop body never executes in actual gameplay. The
+ * implementation still mirrors the asm so a future PR #7 part 2.3
+ * mixer can rely on the right semantics, and so the chan-walk
+ * structure itself is exercised by `Port_M4ASelfCheck()` below
+ * against a synthesized SoundChannel. */
+void ply_fine(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    (void)mp;
+    SoundChannel* chan = track->chan;
+    while (chan != NULL) {
+        u8 status = chan->statusFlags;
+        if (status & M4A_CHAN_FLAGS_ENV) {
+            chan->statusFlags = (u8)(status | M4A_CHAN_FLAG_RELEASE);
+        } else {
+            RealClearChain(chan);
+        }
+        /* Walk to the next channel via chan->next (offset 0x34 on the
+         * GBA — typed as u32 in the public header but used here as a
+         * SoundChannel*). The asm self-loop terminator (`if next ==
+         * self, set next = 0`) is preserved so a malformed
+         * mixer-allocated chain doesn't trap us in an infinite loop. */
+        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+        if (next == chan) {
+            chan->next = 0;
+            next = NULL;
+        }
+        chan = next;
+    }
+    track->flags = 0;
+}
+
+/* `ply_endtie` — end a tied note. The first byte (if < 0x80) is the
+ * key to release; otherwise the previous track->key is reused without
+ * advancing cmdPtr. The asm then walks track->chan looking for the
+ * channel currently sustaining that key and sets the release flag.
+ *
+ * Under the silent host mixer no SoundChannel is ever linked into the
+ * track->chan list (MPlayMain still walks the channel-update half but
+ * SoundMain doesn't allocate channels), so the channel walk is a
+ * no-op in actual gameplay. The matching condition mirrors the asm:
+ * the channel must be "still exists" (M4A_CHAN_FLAGS_EXIST), not
+ * already in release (M4A_CHAN_FLAG_RELEASE clear), and its
+ * `chan->midiKey` must equal the target key. The first match is
+ * tagged for release and the walk stops. */
 void ply_endtie(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     (void)mp;
     u8 b = *track->cmdPtr;
+    u8 target_key;
     if (b < 0x80) {
         track->key = b;
         track->cmdPtr++;
+        target_key = b;
+    } else {
+        target_key = track->key;
     }
-    /* Channel walk deferred to PR #7 part 2.2.2; track->chan is NULL
-     * under the silent host mixer so the GBA loop is a no-op anyway. */
+    SoundChannel* chan = track->chan;
+    while (chan != NULL) {
+        u8 status = chan->statusFlags;
+        if ((status & M4A_CHAN_FLAGS_EXIST) != 0
+            && (status & M4A_CHAN_FLAG_RELEASE) == 0
+            && chan->midiKey == target_key) {
+            chan->statusFlags = (u8)(status | M4A_CHAN_FLAG_RELEASE);
+            return;
+        }
+        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+        if (next == chan) {
+            chan->next = 0;
+            next = NULL;
+        }
+        chan = next;
+    }
 }
 
-/* The remaining handlers stay no-op stubs until PR #7 part 2.2.2 lands
- * MPlayMain and the channel-list / pattern-stack / ROM-address machinery
- * they need. */
+/* Pattern-stack / control-flow handlers.
+ *
+ * All four read a 4-byte little-endian command-stream address out of
+ * track->cmdPtr (matching the asm's per-byte assembly into r0); on the
+ * GBA this is always a ROM pointer, but on the host it can be any
+ * `u8*` we like. We avoid the asm's `sub_080AF75C` ROM-bounds clamp:
+ * it exists purely to convert obviously-bogus pointers into a "stop
+ * the song" sentinel so the asm doesn't fault, and the host has no
+ * comparable "definitely faulting" address range — so applying the
+ * clamp would refuse our self-check's stack pointers. The runtime
+ * cmdPtrs come from baked song data linked by the game in any case,
+ * so the clamp is irrelevant once the dispatcher hands us a song. */
+
+/* Decode `ptr[0..3]` as an unaligned little-endian pointer. On any
+ * sensible host the resulting `uintptr_t` either fits a `u8*` for
+ * 32-bit pointer hosts (the GBA case via the ROM build) or is the
+ * low-32 bits we must extend to a 64-bit pointer. For the actively
+ * supported host targets we just need the two narrow ports of the
+ * cmdPtr address space already exercised by the self-check below. */
+static u8* m4a_read_cmd_ptr(const u8* p) {
+    u32 lo = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+    return (u8*)(uintptr_t)lo;
+}
+
+/* `ply_goto` — unconditional jump. Replaces track->cmdPtr with the
+ * 4-byte address embedded after the goto opcode. */
+void ply_goto(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    (void)mp;
+    track->cmdPtr = m4a_read_cmd_ptr(track->cmdPtr);
+}
+
+/* `ply_patt` — push the current cmdPtr+4 onto the pattern stack and
+ * jump. If the stack is full (patternLevel >= 3) the asm falls
+ * through to `ply_fine`, terminating the track. */
+void ply_patt(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    if (track->patternLevel >= 3) {
+        ply_fine(mp, track);
+        return;
+    }
+    track->patternStack[track->patternLevel] = track->cmdPtr + 4;
+    track->patternLevel++;
+    /* Fall through into the goto-to-the-embedded-address path. */
+    track->cmdPtr = m4a_read_cmd_ptr(track->cmdPtr);
+}
+
+/* `ply_pend` — pop the pattern stack. If patternLevel is already zero
+ * (no nesting), the asm just returns without touching cmdPtr; the
+ * dispatcher is expected to have consumed the opcode byte itself. */
+void ply_pend(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    (void)mp;
+    if (track->patternLevel == 0) {
+        return;
+    }
+    track->patternLevel--;
+    track->cmdPtr = track->patternStack[track->patternLevel];
+}
+
+/* `ply_rept` — bounded repeat. Reads a 1-byte count, then a 4-byte
+ * address. count==0 means "repeat forever" (just take the goto). For
+ * count > 0, increment track->repN; if repN < count, take the goto;
+ * else reset repN and skip past the (count + address) payload (5
+ * bytes total). */
+void ply_rept(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    (void)mp;
+    u8 count = track->cmdPtr[0];
+    if (count == 0) {
+        track->cmdPtr = m4a_read_cmd_ptr(track->cmdPtr + 1);
+        return;
+    }
+    track->repN++;
+    if (track->repN < count) {
+        track->cmdPtr = m4a_read_cmd_ptr(track->cmdPtr + 1);
+    } else {
+        track->repN = 0;
+        track->cmdPtr += 5;
+    }
+}
+
+/* The handlers still gated on PR #7 part 2.2.2.2 (need `MPlayMain`'s
+ * surrounding state — channel-list walking, ROM-address loads against
+ * `gSongTable`, CGB register pokes). Stay no-op stubs for now. */
 #define M4A_PLY_STUB(name)                                 \
     void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
         (void)mp;                                          \
         (void)tr;                                          \
     }
 
-M4A_PLY_STUB(ply_fine)
-M4A_PLY_STUB(ply_goto)
-M4A_PLY_STUB(ply_patt)
-M4A_PLY_STUB(ply_pend)
-M4A_PLY_STUB(ply_rept)
 M4A_PLY_STUB(ply_voice)
 M4A_PLY_STUB(ply_port)
 M4A_PLY_STUB(ply_note)
@@ -407,12 +556,16 @@ void nullsub_141(void) { /* truly a nullsub */
 }
 
 /* ------------------------------------------------------------------ */
-/* (4) PR #7 part 2.2.1 self-check.                                   */
+/* (4) PR #7 part 2.2.* self-check.                                   */
 /*                                                                    */
 /* Builds a stack-allocated MusicPlayerInfo + MusicPlayerTrack and    */
 /* drives each implemented ply_* handler with a synthesized cmdPtr    */
 /* byte stream, asserting that the right field is updated, the right */
-/* flag bits are set, and cmdPtr advanced by exactly one byte.       */
+/* flag bits are set, and cmdPtr advanced as the asm does.            */
+/* PR #7 part 2.2.2.1 extends the harness with the control-flow      */
+/* handlers (`ply_fine`, `ply_goto`, `ply_patt`, `ply_pend`,          */
+/* `ply_rept`) and the `track->chan` walk shared by `ply_fine` and    */
+/* `ply_endtie`, using a stack-allocated synthesized SoundChannel.    */
 /*                                                                    */
 /* This is the m4a equivalent of `Port_RendererSelfCheck()` /         */
 /* `Port_AudioSelfCheck()` and runs from `src/platform/sdl/main.c`    */
@@ -599,6 +752,234 @@ int Port_M4ASelfCheck(void) {
     M4A_CHECK((track.flags & M4A_FLG_VOLCHG) == M4A_FLG_VOLCHG);
     M4A_CHECK((track.flags & M4A_FLG_PITCHG) == 0);
 
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.2.2.1: control-flow handlers + chan walk.      */
+    /* ----------------------------------------------------------- */
+
+    /* Helper: encode a 4-byte little-endian "pointer" into stream[off..off+3]
+     * so we can verify the m4a_read_cmd_ptr decode path without depending
+     * on a host's pointer width. The value `0xDEADBEEFu` casts to a
+     * deterministic synthetic address; we only check the bit pattern. */
+    #define M4A_WRITE_LE32(buf, off, val)                                       \
+        do {                                                                    \
+            (buf)[(off) + 0] = (u8)((val) & 0xff);                              \
+            (buf)[(off) + 1] = (u8)(((val) >> 8) & 0xff);                       \
+            (buf)[(off) + 2] = (u8)(((val) >> 16) & 0xff);                      \
+            (buf)[(off) + 3] = (u8)(((val) >> 24) & 0xff);                      \
+        } while (0)
+
+    /* ply_goto: replace cmdPtr with the embedded LE pointer. */
+    {
+        u8 stream2[8];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        M4A_WRITE_LE32(stream2, 0, 0xDEADBEEFu);
+        track.cmdPtr = stream2;
+        ply_goto(&mp, &track);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0xDEADBEEFu);
+    }
+
+    /* ply_patt: push cmdPtr+4 onto patternStack[patternLevel++], then
+     * jump to the embedded pointer. */
+    {
+        u8 stream2[8];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        M4A_WRITE_LE32(stream2, 0, 0x12345678u);
+        track.cmdPtr = stream2;
+        track.patternLevel = 0;
+        ply_patt(&mp, &track);
+        M4A_CHECK(track.patternLevel == 1);
+        M4A_CHECK(track.patternStack[0] == stream2 + 4);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0x12345678u);
+
+        /* Nested push: patternLevel grows to 3. */
+        u8 stream3[8];
+        M4A_WRITE_LE32(stream3, 0, 0xCAFEBABEu);
+        track.cmdPtr = stream3;
+        ply_patt(&mp, &track);
+        M4A_CHECK(track.patternLevel == 2);
+        M4A_CHECK(track.patternStack[1] == stream3 + 4);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0xCAFEBABEu);
+
+        /* Stack-full path falls through to ply_fine: clears flags, no
+         * push. patternLevel stays at 3 (the bound). */
+        track.patternLevel = 3;
+        track.flags = MPT_FLG_EXIST | MPT_FLG_VOLCHG;
+        u8 stream4[8];
+        M4A_WRITE_LE32(stream4, 0, 0x11111111u);
+        track.cmdPtr = stream4;
+        track.chan = NULL;
+        ply_patt(&mp, &track);
+        M4A_CHECK(track.patternLevel == 3);
+        M4A_CHECK(track.flags == 0); /* ply_fine zero-out */
+    }
+
+    /* ply_pend: pop the pattern stack; no-op when patternLevel == 0. */
+    {
+        u8 stream2[8];
+        u8 saved[8];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        track.patternLevel = 2;
+        track.patternStack[0] = (u8*)(uintptr_t)0xAABBCCDDu;
+        track.patternStack[1] = saved + 3;
+        track.cmdPtr = stream2;
+        ply_pend(&mp, &track);
+        M4A_CHECK(track.patternLevel == 1);
+        M4A_CHECK(track.cmdPtr == saved + 3);
+        ply_pend(&mp, &track);
+        M4A_CHECK(track.patternLevel == 0);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0xAABBCCDDu);
+
+        /* No-op when already empty: cmdPtr unchanged. */
+        track.cmdPtr = stream2 + 1;
+        ply_pend(&mp, &track);
+        M4A_CHECK(track.patternLevel == 0);
+        M4A_CHECK(track.cmdPtr == stream2 + 1);
+    }
+
+    /* ply_rept: count==0 -> infinite loop (just take the goto);
+     * count>0 -> increment repN; jump while repN < count; otherwise
+     * reset and skip past the 5-byte payload. */
+    {
+        u8 stream2[8];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        stream2[0] = 0; /* count == 0 */
+        M4A_WRITE_LE32(stream2, 1, 0xFEEDFACEu);
+        track.cmdPtr = stream2;
+        ply_rept(&mp, &track);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0xFEEDFACEu);
+        M4A_CHECK(track.repN == 0); /* unchanged on the count==0 path */
+
+        /* count == 3: first two iterations take the goto. */
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        stream2[0] = 3;
+        M4A_WRITE_LE32(stream2, 1, 0x01020304u);
+        track.cmdPtr = stream2;
+        ply_rept(&mp, &track);
+        M4A_CHECK(track.repN == 1);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0x01020304u);
+        track.cmdPtr = stream2;
+        ply_rept(&mp, &track);
+        M4A_CHECK(track.repN == 2);
+        M4A_CHECK(track.cmdPtr == (u8*)(uintptr_t)0x01020304u);
+        /* Third iteration: repN reaches count, reset and skip payload. */
+        track.cmdPtr = stream2;
+        ply_rept(&mp, &track);
+        M4A_CHECK(track.repN == 0);
+        M4A_CHECK(track.cmdPtr == stream2 + 5);
+    }
+
+    /* ply_fine with NULL chan: the runtime case (silent host mixer
+     * never connects channels). Just clears track->flags. */
+    {
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        track.flags = MPT_FLG_EXIST | MPT_FLG_VOLCHG | MPT_FLG_PITCHG;
+        track.chan = NULL;
+        ply_fine(&mp, &track);
+        M4A_CHECK(track.flags == 0);
+    }
+
+    /* ply_fine with one envelope-active SoundChannel: status gets
+     * tagged with M4A_CHAN_FLAG_RELEASE, the chan->next == NULL
+     * terminator stops the walk after one iteration, track->flags
+     * cleared. */
+    {
+        SoundChannel chan;
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x83; /* envelope-active (& 0xc7 != 0) */
+        chan.next = 0;
+        track.chan = &chan;
+        track.flags = MPT_FLG_EXIST;
+        ply_fine(&mp, &track);
+        M4A_CHECK(chan.statusFlags == (0x83 | M4A_CHAN_FLAG_RELEASE));
+        M4A_CHECK(track.flags == 0);
+    }
+
+    /* ply_fine with chan->statusFlags & 0xc7 == 0: takes the
+     * RealClearChain (no-op host stub) path; release flag NOT set. */
+    {
+        SoundChannel chan;
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x08; /* not in M4A_CHAN_FLAGS_ENV */
+        chan.next = 0;
+        track.chan = &chan;
+        ply_fine(&mp, &track);
+        M4A_CHECK(chan.statusFlags == 0x08); /* unchanged */
+        M4A_CHECK(track.flags == 0);
+    }
+
+    /* ply_endtie chan walk: matches the first channel whose
+     * (statusFlags & M4A_CHAN_FLAGS_EXIST) != 0,
+     * (statusFlags & M4A_CHAN_FLAG_RELEASE) == 0, and
+     * midiKey == target_key. */
+    {
+        SoundChannel chan;
+        u8 stream2[2];
+        memset(&mp, 0, sizeof(mp));
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x83; /* exists */
+        chan.midiKey = 0x3C;
+        chan.next = 0;
+        stream2[0] = 0x3C; /* target key */
+        track.cmdPtr = stream2;
+        track.chan = &chan;
+        ply_endtie(&mp, &track);
+        M4A_CHECK(track.cmdPtr == stream2 + 1);
+        M4A_CHECK(track.key == 0x3C);
+        M4A_CHECK(chan.statusFlags == (0x83 | M4A_CHAN_FLAG_RELEASE));
+
+        /* Mismatched midiKey: chan untouched. */
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x83;
+        chan.midiKey = 0x40; /* != target */
+        chan.next = 0;
+        stream2[0] = 0x3C;
+        track.cmdPtr = stream2;
+        track.chan = &chan;
+        ply_endtie(&mp, &track);
+        M4A_CHECK(chan.statusFlags == 0x83); /* untouched */
+
+        /* Already releasing: skipped. */
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x83 | M4A_CHAN_FLAG_RELEASE;
+        chan.midiKey = 0x3C;
+        chan.next = 0;
+        stream2[0] = 0x3C;
+        track.cmdPtr = stream2;
+        track.chan = &chan;
+        ply_endtie(&mp, &track);
+        M4A_CHECK(chan.statusFlags == (0x83 | M4A_CHAN_FLAG_RELEASE));
+
+        /* >= 0x80 path with chan walk: cmdPtr unchanged, key
+         * preserved, channel still scanned against the saved key. */
+        memset(&track, 0, sizeof(track));
+        memset(&chan, 0, sizeof(chan));
+        chan.statusFlags = 0x83;
+        chan.midiKey = 0x55;
+        chan.next = 0;
+        stream2[0] = 0x80; /* >= 0x80, no consume */
+        track.cmdPtr = stream2;
+        track.key = 0x55;
+        track.chan = &chan;
+        ply_endtie(&mp, &track);
+        M4A_CHECK(track.cmdPtr == stream2);
+        M4A_CHECK(track.key == 0x55);
+        M4A_CHECK(chan.statusFlags == (0x83 | M4A_CHAN_FLAG_RELEASE));
+    }
+
+    #undef M4A_WRITE_LE32
     #undef M4A_RUN
 
     return 0;
