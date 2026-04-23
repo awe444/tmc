@@ -184,15 +184,18 @@ void SoundMainBTM(void* addr) {
 
 /* MPlayMain bit layout (mirrored from include/gba/m4a.h /            */
 /* asm/lib/m4a_asm.s).                                                */
-#define M4A_STATUS_OFF      0x80000000u /* mp->status sign bit: no live tracks */
-#define M4A_TEMPO_TICK      150         /* tempoC subtract per inner-loop tick */
-#define M4A_FLG_START       MPT_FLG_START /* 0x40 */
-#define M4A_FLG_EXIST       MPT_FLG_EXIST /* 0x80 */
-#define M4A_RUNSTAT_LO      0xBD        /* runningStatus is updated only for b >= 0xBD */
-#define M4A_NOTE_BASE       0xCF        /* b >= 0xCF: ply_note with gateIdx = b - 0xCF */
-#define M4A_WAIT_BASE       0x80        /* 0x80 <= b <= 0xB0: wait command */
-#define M4A_JUMP_BASE       0xB1        /* 0xB1 <= b <= 0xCE: gMPlayJumpTable[b - 0xB1] */
-#define M4A_JUMP_END        0xB0        /* boundary: b > 0xB0 enters the jump-table path */
+#define M4A_STATUS_OFF                                                                                                \
+    0x80000000u /* mp->status sign bit: no tracks were serviced in this tick (no track had EXIST when iterated). A    \
+                   track that kills itself via ply_fine still has its bit OR'd into acc for the current tick and only \
+                   flips to OFF on the next call. */
+#define M4A_TEMPO_TICK 150          /* tempoC subtract per inner-loop tick */
+#define M4A_FLG_START MPT_FLG_START /* 0x40 */
+#define M4A_FLG_EXIST MPT_FLG_EXIST /* 0x80 */
+#define M4A_RUNSTAT_LO 0xBD         /* runningStatus is updated only for b >= 0xBD */
+#define M4A_NOTE_BASE 0xCF          /* b >= 0xCF: ply_note with gateIdx = b - 0xCF */
+#define M4A_WAIT_BASE 0x80          /* 0x80 <= b <= 0xB0: wait command */
+#define M4A_JUMP_BASE 0xB1          /* 0xB1 <= b <= 0xCE: gMPlayJumpTable[b - 0xB1] */
+#define M4A_JUMP_END 0xB0           /* boundary: b > 0xB0 enters the jump-table path */
 
 /* gClockTable[] (defined in src/gba/m4a.c) is the MIDI-tick-count
  * table indexed by (waitCmd - 0x80). Imported for the dispatcher's
@@ -224,8 +227,8 @@ void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track);
  * dictated by m4a.c's CgbChannel / SoundChannel state machine —
  * not an internal-to-this-file assumption. */
 #ifndef M4A_CHAN_FLAGS_ENV
-#define M4A_CHAN_FLAGS_ENV    0xc7
-#define M4A_CHAN_FLAGS_EXIST  0x83
+#define M4A_CHAN_FLAGS_ENV 0xc7
+#define M4A_CHAN_FLAGS_EXIST 0x83
 #define M4A_CHAN_FLAG_RELEASE 0x40
 #endif
 
@@ -283,6 +286,21 @@ static void m4a_track_start_init(MusicPlayerTrack* track) {
     track->echoVolume = 0;
     track->echoLength = 0;
     track->chan = NULL;
+    /* Clear the embedded ToneData so a reused track doesn't leak
+     * stale wav / ADSR / key bytes into the next ply_voice /
+     * ply_note pass. The asm's Clear64byte covers the first 64 bytes
+     * starting at the track base, which on the GBA includes the
+     * full embedded ToneData (it sits at offset 0x24 and is 0xc
+     * bytes wide). On the host we just zero by name. */
+    track->tone.type = 0;
+    track->tone.key = 0;
+    track->tone.length = 0;
+    track->tone.pan_sweep = 0;
+    track->tone.wav = NULL;
+    track->tone.attack = 0;
+    track->tone.decay = 0;
+    track->tone.sustain = 0;
+    track->tone.release = 0;
     /* Now the asm-matching defaults: */
     track->flags = M4A_FLG_EXIST;
     track->wait = 2;
@@ -385,9 +403,17 @@ static int m4a_dispatch_one(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
         }
     }
     if (cmd_byte >= M4A_NOTE_BASE) {
-        /* ply_note: gateIdx (cmd - 0xCF) is the gate-time table index.
-         * The asm passes it as the first arg; our C ply_note is a
-         * stub today — promoted in PR #7 part 2.2.2.2.2. */
+        /* ply_note path. The asm computes `gateIdx = cmd - 0xCF` and
+         * passes it as the first arg to ply_note (asm signature is
+         * `ply_note(u32 gateIdx, mp, track)`). Our C `ply_note` is a
+         * still a no-op stub from 2.2.2.1 with the m4a.c-declared
+         * `(mp, track)` shape, so the gate index is intentionally
+         * discarded here. PR #7 part 2.2.2.2.2 will land the real
+         * `ply_note` and revisit this dispatch site to thread the
+         * gate index through (likely via a host-private 3-arg
+         * variant called from here, with the 2-arg `ply_note`
+         * symbol kept around as a thin trampoline that reads a
+         * dispatcher-stashed gateIdx). */
         (void)cmd_byte; /* gate index unused while ply_note is a stub */
         ply_note(mp, track);
     } else if (cmd_byte > M4A_JUMP_END) {
@@ -444,14 +470,18 @@ void MPlayMain(MusicPlayerInfo* mp) {
         goto done;
     }
 
-    /* Tempo accumulator: the asm starts by adding tempoI to tempoC,
-     * then runs the inner per-tick loop while the result stays >=
-     * M4A_TEMPO_TICK (150). */
-    u32 tempoC = (u32)mp->tempoC + (u32)mp->tempoI;
-    while (tempoC >= M4A_TEMPO_TICK) {
-        tempoC -= M4A_TEMPO_TICK;
-        mp->tempoC = (u16)tempoC;
-
+    /* Tempo accumulator: the asm sequence is
+     *   (1) tempoC = tempoC + tempoI         (write sum to mp->tempoC)
+     *   (2) while (tempoC >= 150):
+     *         per-track tick work
+     *         clock++, status = acc
+     *         tempoC = mp->tempoC - 150      (subtract AFTER tick)
+     *         mp->tempoC = tempoC
+     * Mirror that ordering — including the post-sum / pre-subtract
+     * write of mp->tempoC — so any handler that reads mp->tempoC
+     * mid-tick observes what the asm would. */
+    mp->tempoC = (u16)((u32)mp->tempoC + (u32)mp->tempoI);
+    while (mp->tempoC >= M4A_TEMPO_TICK) {
         /* Per-track inner loop. */
         u32 acc = 0;
         u32 bit = 1;
@@ -480,8 +510,7 @@ void MPlayMain(MusicPlayerInfo* mp) {
                 track->wait--;
                 m4a_track_lfo_tick(track);
             }
-        next_track:
-            ;
+        next_track:;
         }
 
         mp->clock++;
@@ -491,11 +520,11 @@ void MPlayMain(MusicPlayerInfo* mp) {
         }
         mp->status = acc;
 
-        /* Re-load tempoC for the next iteration's predicate (the
-         * inner loop may have written to it via ply_tempo). */
-        tempoC = mp->tempoC;
+        /* Subtract 150 after the tick (asm: `subs r0, #0x96`). The
+         * inner loop may have written mp->tempoC via ply_tempo, so
+         * re-load before subtracting. */
+        mp->tempoC = (u16)(mp->tempoC - M4A_TEMPO_TICK);
     }
-    mp->tempoC = (u16)tempoC;
 
     /* PR #7 part 2.2.2.2.3 will land the per-track second loop here
      * (TrkVolPitSet + chan-update). For now the second loop is a
@@ -573,8 +602,8 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 
 /* MusicPlayerTrack flag bits used by the ply_* handlers (mirrored from */
 /* include/gba/m4a.h's MPT_FLG_*).                                      */
-#define M4A_FLG_VOLCHG MPT_FLG_VOLCHG /* 0x03 */
-#define M4A_FLG_PITCHG MPT_FLG_PITCHG /* 0x0C */
+#define M4A_FLG_VOLCHG MPT_FLG_VOLCHG                    /* 0x03 */
+#define M4A_FLG_PITCHG MPT_FLG_PITCHG                    /* 0x0C */
 #define M4A_FLG_MODCHG (MPT_FLG_VOLCHG | MPT_FLG_PITCHG) /* 0x0F */
 
 /* Read a single command byte from track->cmdPtr and advance the pointer.
@@ -706,8 +735,8 @@ void ply_mod(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
  * file-local `CgbChannel` / `SoundChannel` state machine and is
  * mirrored in `asm/lib/m4a_asm.s`. */
 #ifndef M4A_CHAN_FLAGS_ENV
-#define M4A_CHAN_FLAGS_ENV    0xc7 /* "envelope is doing something useful" */
-#define M4A_CHAN_FLAGS_EXIST  0x83 /* "channel is still alive" */
+#define M4A_CHAN_FLAGS_ENV 0xc7    /* "envelope is doing something useful" */
+#define M4A_CHAN_FLAGS_EXIST 0x83  /* "channel is still alive" */
 #define M4A_CHAN_FLAG_RELEASE 0x40 /* set by the engine to start release */
 #endif
 
@@ -780,9 +809,8 @@ void ply_endtie(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     SoundChannel* chan = track->chan;
     while (chan != NULL) {
         u8 status = chan->statusFlags;
-        if ((status & M4A_CHAN_FLAGS_EXIST) != 0
-            && (status & M4A_CHAN_FLAG_RELEASE) == 0
-            && chan->midiKey == target_key) {
+        if ((status & M4A_CHAN_FLAGS_EXIST) != 0 && (status & M4A_CHAN_FLAG_RELEASE) == 0 &&
+            chan->midiKey == target_key) {
             chan->statusFlags = (u8)(status | M4A_CHAN_FLAG_RELEASE);
             return;
         }
@@ -910,14 +938,12 @@ void nullsub_141(void) { /* truly a nullsub */
 /* command-byte / field-offset / flag-bit contracts surfaces in CI.   */
 /* ------------------------------------------------------------------ */
 
-#define M4A_CHECK(cond)                                                            \
-    do {                                                                           \
-        if (!(cond)) {                                                             \
-            fprintf(stderr,                                                        \
-                    "[Port_M4ASelfCheck] failed at %s:%d: %s\n",                   \
-                    __FILE__, __LINE__, #cond);                                    \
-            return 1;                                                              \
-        }                                                                          \
+#define M4A_CHECK(cond)                                                                              \
+    do {                                                                                             \
+        if (!(cond)) {                                                                               \
+            fprintf(stderr, "[Port_M4ASelfCheck] failed at %s:%d: %s\n", __FILE__, __LINE__, #cond); \
+            return 1;                                                                                \
+        }                                                                                            \
     } while (0)
 
 #include <stdio.h>
@@ -928,18 +954,18 @@ int Port_M4ASelfCheck(void) {
     MusicPlayerTrack track;
     u8 stream[8];
 
-    /* Helper macro: prime mp/track, point cmdPtr at `stream`, write
-     * `byte` into stream[0], call `handler`, then assert cmdPtr
-     * advanced by exactly one byte. */
-    #define M4A_RUN(handler, byte)                                              \
-        do {                                                                    \
-            memset(&mp, 0, sizeof(mp));                                         \
-            memset(&track, 0, sizeof(track));                                   \
-            stream[0] = (u8)(byte);                                             \
-            track.cmdPtr = stream;                                              \
-            handler(&mp, &track);                                               \
-            M4A_CHECK(track.cmdPtr == stream + 1);                              \
-        } while (0)
+/* Helper macro: prime mp/track, point cmdPtr at `stream`, write
+ * `byte` into stream[0], call `handler`, then assert cmdPtr
+ * advanced by exactly one byte. */
+#define M4A_RUN(handler, byte)                 \
+    do {                                       \
+        memset(&mp, 0, sizeof(mp));            \
+        memset(&track, 0, sizeof(track));      \
+        stream[0] = (u8)(byte);                \
+        track.cmdPtr = stream;                 \
+        handler(&mp, &track);                  \
+        M4A_CHECK(track.cmdPtr == stream + 1); \
+    } while (0)
 
     /* ply_prio: stores raw byte into track->priority. */
     M4A_RUN(ply_prio, 0x42);
@@ -1089,21 +1115,21 @@ int Port_M4ASelfCheck(void) {
     M4A_CHECK((track.flags & M4A_FLG_VOLCHG) == M4A_FLG_VOLCHG);
     M4A_CHECK((track.flags & M4A_FLG_PITCHG) == 0);
 
-    /* ----------------------------------------------------------- */
-    /* PR #7 part 2.2.2.1: control-flow handlers + chan walk.      */
-    /* ----------------------------------------------------------- */
+/* ----------------------------------------------------------- */
+/* PR #7 part 2.2.2.1: control-flow handlers + chan walk.      */
+/* ----------------------------------------------------------- */
 
-    /* Helper: encode a 4-byte little-endian "pointer" into stream[off..off+3]
-     * so we can verify the m4a_read_cmd_ptr decode path without depending
-     * on a host's pointer width. The value `0xDEADBEEFu` casts to a
-     * deterministic synthetic address; we only check the bit pattern. */
-    #define M4A_WRITE_LE32(buf, off, val)                                       \
-        do {                                                                    \
-            (buf)[(off) + 0] = (u8)((val) & 0xff);                              \
-            (buf)[(off) + 1] = (u8)(((val) >> 8) & 0xff);                       \
-            (buf)[(off) + 2] = (u8)(((val) >> 16) & 0xff);                      \
-            (buf)[(off) + 3] = (u8)(((val) >> 24) & 0xff);                      \
-        } while (0)
+/* Helper: encode a 4-byte little-endian "pointer" into stream[off..off+3]
+ * so we can verify the m4a_read_cmd_ptr decode path without depending
+ * on a host's pointer width. The value `0xDEADBEEFu` casts to a
+ * deterministic synthetic address; we only check the bit pattern. */
+#define M4A_WRITE_LE32(buf, off, val)                  \
+    do {                                               \
+        (buf)[(off) + 0] = (u8)((val)&0xff);           \
+        (buf)[(off) + 1] = (u8)(((val) >> 8) & 0xff);  \
+        (buf)[(off) + 2] = (u8)(((val) >> 16) & 0xff); \
+        (buf)[(off) + 3] = (u8)(((val) >> 24) & 0xff); \
+    } while (0)
 
     /* ply_goto: replace cmdPtr with the embedded LE pointer. */
     {
@@ -1359,9 +1385,9 @@ int Port_M4ASelfCheck(void) {
         mp_local.tempoI = 150;
         mp_local.tempoC = 0;
         MPlayMain(&mp_local);
-        M4A_CHECK(mp_local.ident == 0);    /* untouched */
-        M4A_CHECK(mp_local.tempoC == 0);   /* untouched */
-        M4A_CHECK(mp_local.clock == 0);    /* untouched */
+        M4A_CHECK(mp_local.ident == 0);  /* untouched */
+        M4A_CHECK(mp_local.tempoC == 0); /* untouched */
+        M4A_CHECK(mp_local.clock == 0);  /* untouched */
     }
 
     /* status sign-bit set: enters but skips tempo work. ident is  */
@@ -1440,7 +1466,7 @@ int Port_M4ASelfCheck(void) {
          * decrement: 0x18 - 1 = 0x17. */
         M4A_CHECK(track_local.wait == 0x18 - 1);
         M4A_CHECK(track_local.cmdPtr == stream_local + 1); /* opcode consumed */
-        M4A_CHECK(track_local.flags == M4A_FLG_EXIST); /* still alive */
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);     /* still alive */
     }
 
     /* Dispatcher: ply_prio (opcode 0xBA = jump-table[9]). Sets
@@ -1614,12 +1640,12 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track_local.pitX == 0x40);
         M4A_CHECK(track_local.lfoSpeed == 0x16);
         M4A_CHECK(track_local.tone.type == 1);
-        M4A_CHECK(track_local.priority == 0); /* cleared */
+        M4A_CHECK(track_local.priority == 0);          /* cleared */
         M4A_CHECK(track_local.cmdPtr == stream_local); /* untouched */
     }
 
-    #undef M4A_WRITE_LE32
-    #undef M4A_RUN
+#undef M4A_WRITE_LE32
+#undef M4A_RUN
 
     return 0;
 }
