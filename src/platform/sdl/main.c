@@ -38,6 +38,15 @@ static void print_usage(const char* argv0) {
             "  --print-frame-hash   After the final frame, print an FNV-1a 64-bit hash\n"
             "                       of the framebuffer to stdout in the form\n"
             "                       'frame-hash: 0x<hex>' (PR #8: golden-image CI test)\n"
+            "  --press=SPEC         Schedule scripted button presses for the test\n"
+            "                       harness. SPEC is a comma-separated list of\n"
+            "                       'KEYS@FRAME[+DURATION]' entries, where KEYS is one\n"
+            "                       or more of A,B,START,SELECT,UP,DOWN,LEFT,RIGHT,L,R\n"
+            "                       joined with '|'. May be repeated. Examples:\n"
+            "                       --press=START@60+10\n"
+            "                       --press=A@30,B@40,UP|A@120+2\n"
+            "  --input-script=PATH  Load scripted-input entries from a text file\n"
+            "                       (one --press SPEC per non-comment line)\n"
             "  --help               Show this message\n",
             argv0);
 }
@@ -93,6 +102,20 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
         }
         if (strncmp(a, "--screenshot=", 13) == 0) {
             opts->screenshot_path = a + 13;
+            continue;
+        }
+        if (strncmp(a, "--press=", 8) == 0) {
+            if (Port_ScriptedInputParse(a + 8) != 0) {
+                fprintf(stderr, "[tmc_sdl] Failed to parse --press=%s\n", a + 8);
+                return -1;
+            }
+            continue;
+        }
+        if (strncmp(a, "--input-script=", 15) == 0) {
+            if (Port_ScriptedInputLoadFile(a + 15) != 0) {
+                fprintf(stderr, "[tmc_sdl] Failed to load --input-script=%s\n", a + 15);
+                return -1;
+            }
             continue;
         }
         fprintf(stderr, "[tmc_sdl] Unknown option: %s\n", a);
@@ -228,6 +251,15 @@ int main(int argc, char** argv) {
     if (Port_RendererSelfCheck() != 0) {
         fprintf(stderr, "[tmc_sdl] FATAL: software rasterizer self-check failed. "
                         "See src/platform/shared/render.c::Port_RendererSelfCheck().\n");
+        SDL_Quit();
+        return 1;
+    }
+    /* Validate the scripted-input parser/table used by the test harness
+     * (`--press=` / `--input-script=`). Defined in
+     * src/platform/shared/scripted_input.c. */
+    if (Port_ScriptedInputSelfCheck() != 0) {
+        fprintf(stderr, "[tmc_sdl] FATAL: scripted-input self-check failed. "
+                        "See src/platform/shared/scripted_input.c::Port_ScriptedInputSelfCheck().\n");
         SDL_Quit();
         return 1;
     }

@@ -57,6 +57,42 @@ jobs:
         run: |
           ./build/tmc_sdl --frames=30 --mute --save-dir=.
 
+      # Scripted-input smoke test (PR augmenting the test harness with
+      # `--press=` / `--input-script=`). Drives synthetic START presses
+      # at the title-screen idle and runs a longer 300-frame budget so
+      # the scripted-input → REG_KEYINPUT plumbing, the per-VBlank
+      # frame counter, and the file/CLI parsers are all exercised on
+      # every CI run. The build's startup self-check
+      # (`Port_ScriptedInputSelfCheck` in
+      # `src/platform/shared/scripted_input.c`) covers the parser /
+      # table directly; this step additionally confirms the binary
+      # survives a multi-press scenario from end to end without
+      # asserting against a specific frame hash (the title-screen
+      # state machine has port-specific deferrals that are not yet
+      # input-responsive — see docs/sdl_port.md).
+      - name: Scripted-input smoke test (headless, 300 frames + START presses)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          # Inline `--press=` form.
+          ./build/tmc_sdl --frames=300 --mute --save-dir=. \
+              --press='START@60+5,START@120+5,A@180+5,UP|A@240+3'
+          # File-based `--input-script=` form, via a transient script.
+          script=$(mktemp build/scripted-input.XXXXXX.txt)
+          trap 'rm -f "$script"' EXIT
+          cat > "$script" <<'EOF'
+          # Comment lines and blank lines are ignored.
+
+          START@60+5
+          START@120+5
+          A@180+5
+          UP|A@240+3
+          EOF
+          ./build/tmc_sdl --frames=300 --mute --save-dir=. \
+              --input-script="$script"
+
       # PR #8 of the SDL-port roadmap: golden-image strict-equality check.
       #
       # The default build is now `TMC_LINK_GAME_SOURCES=ON` (PR #2b.4b

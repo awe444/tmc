@@ -137,6 +137,94 @@ void Port_InputPump(void);
 uint16_t Port_GetKeyMask(void);
 
 /* ------------------------------------------------------------------------ */
+/* Scripted input (test harness).                                           */
+/*                                                                          */
+/* Lets headless CI runs drive button presses on specific frames so the     */
+/* smoke test can advance past idle screens (title screen, file select,    */
+/* ...) and exercise more game code. Implemented in                        */
+/* `src/platform/shared/scripted_input.c`. See `--press=` /                */
+/* `--input-script=` in `src/platform/sdl/main.c`.                          */
+/*                                                                          */
+/* The mask returned by `Port_ScriptedInputCurrentMask()` is OR'd into the  */
+/* keyboard / gamepad mask by `src/platform/sdl/input.c::Port_InputPump()`, */
+/* so scripted presses appear in the emulated `REG_KEYINPUT` slot through  */
+/* the same code path real input does.                                     */
+/* ------------------------------------------------------------------------ */
+
+/* Bit layout matches the GBA `REG_KEYINPUT` layout used elsewhere in the   */
+/* port (A=0x001 ... L=0x200). Repeated here so callers do not have to     */
+/* pull in include/gba/io_reg.h. */
+#define PORT_SCRIPTED_KEY_A 0x0001u
+#define PORT_SCRIPTED_KEY_B 0x0002u
+#define PORT_SCRIPTED_KEY_SELECT 0x0004u
+#define PORT_SCRIPTED_KEY_START 0x0008u
+#define PORT_SCRIPTED_KEY_RIGHT 0x0010u
+#define PORT_SCRIPTED_KEY_LEFT 0x0020u
+#define PORT_SCRIPTED_KEY_UP 0x0040u
+#define PORT_SCRIPTED_KEY_DOWN 0x0080u
+#define PORT_SCRIPTED_KEY_R 0x0100u
+#define PORT_SCRIPTED_KEY_L 0x0200u
+#define PORT_SCRIPTED_KEYS_MASK 0x03FFu
+
+/**
+ * Schedule `mask` to be held from `start_frame` (inclusive) for `duration`
+ * frames. `start_frame` is 0-based and counts VBlanks since boot (see
+ * `Port_GetFrameCount()`). Returns 0 on success, non-zero if the internal
+ * table is full or the arguments are invalid.
+ */
+int Port_ScriptedInputAdd(uint32_t start_frame, uint32_t duration, uint16_t mask);
+
+/**
+ * Parse one or more scripted-input specs from `spec` and append them to
+ * the internal table. Syntax (whitespace-insensitive):
+ *
+ *     SPEC    := ENTRY (',' ENTRY)*
+ *     ENTRY   := KEYS '@' START [ '+' DURATION ]
+ *     KEYS    := KEY ('|' KEY)*
+ *     KEY     := A | B | START | SELECT | UP | DOWN | LEFT | RIGHT | L | R
+ *     START   := unsigned decimal integer (frame index, 0-based)
+ *     DURATION:= unsigned decimal integer (default: 1)
+ *
+ * Examples: `START@60+10`, `A@30,B@40+5`, `UP|A@120+2`. Returns 0 on
+ * success, non-zero on parse error.
+ */
+int Port_ScriptedInputParse(const char* spec);
+
+/**
+ * Load scripted-input specs from a UTF-8 text file. Lines starting with
+ * `#` and blank lines are ignored; every other line is passed to
+ * `Port_ScriptedInputParse`. Returns 0 on success.
+ */
+int Port_ScriptedInputLoadFile(const char* path);
+
+/** Reset the scripted-input table to empty. */
+void Port_ScriptedInputReset(void);
+
+/** Return the OR of every scheduled mask whose interval covers the
+ *  current frame counter (`Port_GetFrameCount()`). */
+uint16_t Port_ScriptedInputCurrentMask(void);
+
+/** Return the OR of every scheduled mask whose interval covers the
+ *  given frame index. Exposed mainly so tests can drive the lookup
+ *  without depending on the live VBlank counter. */
+uint16_t Port_ScriptedInputMaskForFrame(uint32_t frame);
+
+/**
+ * Headless self-check for the scripted-input parser and table. Exercises
+ * every parser branch (single key, multi-key with `|`, durations, file
+ * loading, error paths) and verifies the resulting frame-indexed mask
+ * matches what was scheduled. Returns 0 on success, non-zero on any
+ * mismatch. Saves and restores the table state so it is safe to call at
+ * any time. Called from `src/platform/sdl/main.c` alongside
+ * `Port_RendererSelfCheck()`.
+ */
+int Port_ScriptedInputSelfCheck(void);
+
+/** Number of VBlanks observed since boot. Wraps at UINT32_MAX (~830 days
+ *  at 59.7274 Hz). Implemented in `interrupts.c`. */
+uint32_t Port_GetFrameCount(void);
+
+/* ------------------------------------------------------------------------ */
 /* Video.                                                                   */
 /* ------------------------------------------------------------------------ */
 

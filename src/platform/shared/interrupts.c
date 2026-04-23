@@ -21,6 +21,7 @@
 
 static volatile int s_quit_requested = 0;
 static volatile int s_frame_budget = 0;
+static volatile uint32_t s_frame_count = 0;
 static uint64_t s_last_vblank_ns = 0;
 
 /* Non-local jump checkpoint installed by Port_RunGameLoop(). The real
@@ -77,6 +78,7 @@ void Port_VBlankIntrWait(void) {
 
 void Port_OnVBlank(void) {
     /* Hook for future mid-frame raster effects / scanline emulation. */
+    s_frame_count++;
     if (s_frame_budget > 0) {
         if (--s_frame_budget == 0) {
             s_quit_requested = 1;
@@ -86,6 +88,10 @@ void Port_OnVBlank(void) {
 
 void Port_SetFrameBudget(int frames) {
     s_frame_budget = (frames > 0) ? frames : 0;
+}
+
+uint32_t Port_GetFrameCount(void) {
+    return s_frame_count;
 }
 
 int Port_ShouldQuit(void) {
