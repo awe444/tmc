@@ -18,12 +18,15 @@
  *   1. Provides host BSS for the four EWRAM globals (sized for the host's
  *      pointer width — m4a.c owns the layout so the GBA struct-size
  *      asserts in `include/gba/m4a.h` are no-ops here per PR #2b.3 wave 1).
- *   2. Provides empty stand-in tables for `gMusicPlayers[]` / `gSongTable[]`
- *      (the real ones live in `data/sound/music_player_table.s` and
- *      `data/sound/song_table.s`, which are unbuilt under SDL). The
+ *   2. Provides strong host BSS for the music-player / track arenas
+ *      (`gMPlayInfos`, `gMPlayInfos2`, `gMPlayTracks`) declared in
+ *      `src/sound.c`, sized to match real usage so that the
  *      `m4aSoundInit()` loop in `src/gba/m4a.c` walks `NUM_MUSIC_PLAYERS`
- *      entries; we redefine that macro to literal 0 in m4a.c under
- *      `__PORT__`, so neither table is dereferenced during init.
+ *      entries (32 under `__PORT__` since PR #7 part 2.2.2.3) and calls
+ *      `MPlayOpen` against valid storage. The empty `gSongTable[]` (the
+ *      real one lives in `data/sound/song_table.s`, which is unbuilt
+ *      under SDL) stays out of reach because the `m4aSongNum*` entry
+ *      points aren't called before the title-screen idle CI exercises.
  *   3. Provides silent strong stubs for every asm-defined symbol that
  *      `src/gba/m4a.c` references. The C half can therefore link cleanly
  *      and `m4aSoundInit()` runs to completion; the result is that the
@@ -95,26 +98,45 @@ u8 gCgbChans[4 * 256] __attribute__((aligned(16)));
 u8 gSoundInfo[4096] __attribute__((aligned(16)));
 
 /* ------------------------------------------------------------------ */
-/* (2) Notes on the song / music-player tables.                       */
+/* (2) Host BSS arenas for the music-player / track tables.           */
 /*                                                                    */
-/* The real `gMusicPlayers[]` and `gSongTable[]` definitions live in  */
-/* `src/sound.c` (already in the leaf set since 2b.3 wave 1) and      */
-/* point at per-player `MusicPlayerInfo` + `MusicPlayerTrack` arenas  */
-/* whose host BSS is provided by the weak `gMPlayInfos` /             */
-/* `gMPlayInfos2` / `gMPlayTracks` placeholders in                    */
-/* `port_unresolved_stubs.c`. We don't touch those tables here.       */
+/* The real `gMusicPlayers[]` / `gSongTable[]` definitions live in    */
+/* `src/sound.c` (in the leaf set since 2b.3 wave 1) and point at     */
+/* per-player `MusicPlayerInfo` + `MusicPlayerTrack` arenas declared  */
+/* there as:                                                          */
+/*     extern MusicPlayerInfo  gMPlayInfos [0x1C];                    */
+/*     extern MusicPlayerInfo  gMPlayInfos2[0x4];                     */
+/*     extern MusicPlayerTrack gMPlayTracks[];                        */
+/* The track arena's high-water-mark is `gMusicPlayers[BGM]`, which   */
+/* uses `&gMPlayTracks[0x46]` with `nTracks = 0xC` (so indices        */
+/* 0x46..0x51, requiring at least 0x52 entries).                      */
 /*                                                                    */
-/* The only m4a.c caller that walks `gMusicPlayers` during boot is    */
-/* `m4aSoundInit()`'s `for (i = 0; i < NUM_MUSIC_PLAYERS; i++)` loop. */
-/* That loop is rendered no-op by redefining `NUM_MUSIC_PLAYERS` to   */
-/* literal 0 under `__PORT__` in `src/gba/m4a.c` itself, so no entry  */
-/* is dereferenced and the stale-MusicPlayerInfo BSS stays at zero    */
-/* (matching freshly-erased EWRAM). The `m4aSongNum*` entry points    */
-/* are never reached during the headless smoke test because           */
-/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`    */
+/* PR #7 part 2.2.2.3 promotes `NUM_MUSIC_PLAYERS` back to its real   */
+/* value (0x20 = 32) under `__PORT__`. With 32 entries the boot path  */
+/* `m4aSoundInit()` walks the full `gMusicPlayers[]` array and calls  */
+/* `MPlayOpen` against each of these BSS slots, so they need to be    */
+/* sized to match real usage rather than left as 256-byte weak        */
+/* placeholders. Provide strong host-side definitions of the proper   */
+/* type and extent here; the matching weak placeholders previously    */
+/* in `port_unresolved_stubs.c` have been removed so these strong     */
+/* definitions resolve uniquely.                                      */
+/*                                                                    */
+/* Even with the loop walked, no audio is produced: the runtime       */
+/* mixer (`SoundMain`) is still a silent stub (PR #7 part 2.3) and    */
+/* `MPlayMain` is reached only off `soundInfo->MPlayMainHead` from    */
+/* inside `SoundMain`, so the dispatcher and `ply_*` handlers ported  */
+/* in 2.2.2.* are still exercised exclusively by the smoke-test       */
+/* `Port_M4ASelfCheck()` harness — the production runtime path runs  */
+/* through `m4aSoundInit()` → `MPlayOpen` (initialises BSS, links     */
+/* `MPlayMainHead`) and stops there. The `m4aSongNum*` entry points  */
+/* remain unreached during the headless smoke test because            */
+/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`   */
 /* state machinery that doesn't activate before the title-screen      */
 /* idle CI exercises.                                                 */
 /* ------------------------------------------------------------------ */
+MusicPlayerInfo  gMPlayInfos [0x1C] __attribute__((aligned(16)));
+MusicPlayerInfo  gMPlayInfos2[0x04] __attribute__((aligned(16)));
+MusicPlayerTrack gMPlayTracks[0x52] __attribute__((aligned(16)));
 
 /* ------------------------------------------------------------------ */
 /* (3) Silent strong stubs for the asm-defined symbols.               */

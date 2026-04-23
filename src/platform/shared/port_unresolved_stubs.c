@@ -232,9 +232,14 @@ PORT_UNRESOLVED_DATA(gGFXSlots);
 PORT_UNRESOLVED_DATA(gInteractableObjects);
 PORT_UNRESOLVED_DATA(gIntroState);
 PORT_UNRESOLVED_DATA(gLilypadRails);
-PORT_UNRESOLVED_DATA(gMPlayInfos);
-PORT_UNRESOLVED_DATA(gMPlayInfos2);
-PORT_UNRESOLVED_DATA(gMPlayTracks);
+/* gMPlayInfos / gMPlayInfos2 / gMPlayTracks have moved to
+ * src/platform/shared/m4a_host.c, which provides strong host BSS of
+ * the proper `MusicPlayerInfo` / `MusicPlayerTrack` types and at the
+ * full extent (0x1C / 0x4 / 0x52 entries) declared in src/sound.c.
+ * The 256-byte weak placeholders previously here were dereferenced
+ * way past their end by `m4aSoundInit()`'s `MPlayOpen` loop once
+ * `NUM_MUSIC_PLAYERS` was promoted from 0 back to 0x20 in
+ * PR #7 part 2.2.2.3 — see docs/sdl_port.md. */
 PORT_UNRESOLVED_DATA(gManagerCount);
 PORT_UNRESOLVED_DATA(gMapBottom);
 PORT_UNRESOLVED_DATA(gMapData);

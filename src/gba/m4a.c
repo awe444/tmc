@@ -148,12 +148,19 @@ extern char gMaxLines[];
 /* The GBA build resolves these via linker-script "constant" symbols
  * (`gNumMusicPlayers = 0x20;` / `gMaxLines = 0;` in linker.ld) where
  * the symbol *address* is the value. The host build doesn't run
- * linker.ld; redefine them as literal constants. NUM_MUSIC_PLAYERS=0
- * makes the `m4aSoundInit()` walk over `gMusicPlayers[]` an empty
- * loop, which is what the silent-mixer stub (PR #7 part 1) needs
- * (the real song / music_player tables under `data/sound/` are not
- * compiled into the SDL build). */
-#define NUM_MUSIC_PLAYERS 0
+ * linker.ld; redefine them as literal constants matching the GBA's
+ * values. NUM_MUSIC_PLAYERS = 0x20 mirrors the real `gNumMusicPlayers`
+ * so the `m4aSoundInit()` walk over `gMusicPlayers[]` runs to
+ * completion against the host BSS arenas
+ * (`gMPlayInfos` / `gMPlayInfos2` / `gMPlayTracks`) provided by
+ * `src/platform/shared/m4a_host.c`. The actual mixer (`SoundMain`)
+ * is still a silent stub, so promoting this back to 0x20 only
+ * affects MusicPlayerInfo / MusicPlayerTrack initialisation and the
+ * `soundInfo->MPlayMainHead` linked list — no audio is produced and
+ * the rasterizer is unaffected (the `--frames=30` golden hashes for
+ * both the default `=ON` and the preserved `=OFF` builds are
+ * bit-for-bit unchanged). See docs/sdl_port.md, PR #7 part 2.2.2.3. */
+#define NUM_MUSIC_PLAYERS 32
 #define MAX_LINES 0
 #else
 #define NUM_MUSIC_PLAYERS ((u16)gNumMusicPlayers)
