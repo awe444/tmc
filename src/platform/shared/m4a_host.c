@@ -446,10 +446,17 @@ static int m4a_dispatch_one(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     return 0;
 }
 
+/* m4a_track_volpit_pass: the second per-track loop in MPlayMain
+ * (`_080AFAB2..._080AFB60` in `asm/lib/m4a_asm.s`). Defined further
+ * down because it touches the file-local `M4A_SoundInfo` /
+ * `M4A_CgbChannel` overlays that aren't introduced until after the
+ * ply_note machinery. PR #7 part 2.2.2.2.3. */
+static void m4a_track_volpit_pass(MusicPlayerInfo* mp);
+
 /* MPlayMain: tempo-stepped command dispatcher. This is the asm's
- * `MPlayMain` top half (`_080AF908..._080AFAB0`), ported verbatim in
- * structure with the channel-update second loop deferred to PR #7
- * part 2.2.2.2.3.
+ * `MPlayMain` top half (`_080AF908..._080AFAB0`), ported verbatim
+ * with the per-track `TrkVolPitSet` second loop
+ * (`_080AFAB2..._080AFB60`, PR #7 part 2.2.2.2.3) appended.
  *
  * `src/gba/m4a.c` forward-declares this as `void MPlayMain();` (K&R
  * empty-parameter list, i.e. "any args") and stores its address into
@@ -535,12 +542,11 @@ void MPlayMain(MusicPlayerInfo* mp) {
         mp->tempoC = (u16)(mp->tempoC - M4A_TEMPO_TICK);
     }
 
-    /* PR #7 part 2.2.2.2.3 will land the per-track second loop here
-     * (TrkVolPitSet + chan-update). For now the second loop is a
-     * no-op — under the silent host mixer track->chan is always
-     * NULL, so the chan-update half would no-op anyway, and the
-     * MPT_FLG_VOLCHG / MPT_FLG_PITCHG bits stay set on the track
-     * until the next tick (which is faithful to a paused mixer). */
+    /* Per-track second loop: TrkVolPitSet + chan-update. Mirrors
+     * asm `_080AFAB2..._080AFB60`. Implemented as a separate helper
+     * because it depends on the `M4A_SoundInfo` / `M4A_CgbChannel`
+     * overlays defined further down. */
+    m4a_track_volpit_pass(mp);
 
 done:
     mp->ident = M4A_ID_NUMBER;
@@ -1110,6 +1116,120 @@ extern u32 MidiKeyToFreq(WaveData* wav, u8 key, u8 fineAdjust);
 /* m4a.c's TrkVolPitSet — invoked just before the chan->frequency
  * setup so the freshly-allocated chan inherits the track's vol/pit. */
 extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.2.2.2.3: m4a_track_volpit_pass                         */
+/*                                                                    */
+/* Port of the asm `MPlayMain` second per-track loop                  */
+/* (`_080AFAB2..._080AFB60` in `asm/lib/m4a_asm.s`). Runs after the   */
+/* tempo-stepped dispatcher loop. For each live track with a pending  */
+/* VOLCHG/PITCHG bit set in the low nibble of `track->flags`:         */
+/*   - Calls `TrkVolPitSet(mp, track)` (the C-defined per-track vol/  */
+/*     pitch recompute in `src/gba/m4a.c`), which folds in modM /     */
+/*     bend / pan and clears the VOLSET / PITSET bits.                */
+/*   - Walks `track->chan` (a SoundChannel linked list rooted on the  */
+/*     track and chained via the `chan->next` u32-ified pointer):      */
+/*       * dead-envelope chan (`!(statusFlags & 0xc7)`) is unlinked    */
+/*         via `ClearChain(chan)`.                                     */
+/*       * else: VOLCHG → `ChnVolSetAsm()` (silent host stub in this   */
+/*         TU); CGB-typed chans additionally OR bit 0 into the         */
+/*         CgbChannel `modify` byte (offset 0x1d) so the next CGB     */
+/*         mixer pass re-pokes the CGB volume regs.                   */
+/*       * PITCHG → newKey = chan->key + (s8)track->keyM, clamped to  */
+/*         >= 0; CGB chans use `soundInfo->MidiKeyToCgbFreq` (when    */
+/*         non-NULL) and OR bit 1 into `modify`; DirectSound chans   */
+/*         use `MidiKeyToFreq(chan->wav, ...)`. Result lands in       */
+/*         `chan->frequency`.                                         */
+/*       * The asm's chan->next == self self-loop break is preserved. */
+/*   - Always clears the lower nibble of `track->flags` after the     */
+/*     per-track work (whether or not a chan list existed).            */
+/*                                                                    */
+/* Under the silent host mixer no `track->chan` ever gets connected   */
+/* by the production runtime path (`NUM_MUSIC_PLAYERS == 0` keeps     */
+/* `MPlayMain` itself out of the live path), so the chan walk is      */
+/* exercised by `Port_M4ASelfCheck()` only. The flag-clear step does  */
+/* run for any synthesized track the dispatcher feeds.                */
+/* ------------------------------------------------------------------ */
+static void m4a_track_volpit_pass(MusicPlayerInfo* mp) {
+    s32 remaining = mp->trackCount;
+    MusicPlayerTrack* track = mp->tracks;
+    M4A_SoundInfo* soundInfo = (M4A_SoundInfo*)gSoundInfo;
+
+    for (; remaining > 0; remaining--, track++) {
+        u8 flags = track->flags;
+        if (!(flags & M4A_FLG_EXIST)) {
+            continue;
+        }
+        if ((flags & 0x0F) == 0) {
+            /* No VOLCHG/PITCHG pending. */
+            continue;
+        }
+
+        /* Per-track recompute (modT folds in, sets volMR/volML, keyM/pitM,
+         * and clears VOLSET/PITSET). */
+        TrkVolPitSet(mp, track);
+
+        /* Chan walk. */
+        SoundChannel* chan = track->chan;
+        while (chan != NULL) {
+            u8 chanStatus = chan->statusFlags;
+            if ((chanStatus & M4A_CHAN_FLAGS_ENV) == 0) {
+                /* envelope dead — unlink from the chain. */
+                ClearChain(chan);
+            } else {
+                u8 cgbType = (u8)(chan->type & 7);
+
+                /* VOLCHG path (track flags & 3). */
+                if (flags & MPT_FLG_VOLCHG) {
+                    ChnVolSetAsm();
+                    if (cgbType != 0) {
+                        /* CgbChannel byte at offset 0x1d (`modify`)
+                         * — same byte as SoundChannel.fw[1] on GBA;
+                         * we go through the M4A_CgbChannel overlay
+                         * because the host SoundChannel layout
+                         * widens past byte 0x14. */
+                        M4A_CgbChannel* cgb = (M4A_CgbChannel*)chan;
+                        cgb->modify = (u8)(cgb->modify | 1);
+                    }
+                }
+
+                /* PITCHG path (track flags & 0xc). */
+                if (flags & MPT_FLG_PITCHG) {
+                    s32 newKey = (s32)chan->key + (s32)(s8)track->keyM;
+                    if (newKey < 0) {
+                        newKey = 0;
+                    }
+                    if (cgbType != 0) {
+                        M4A_CgbChannel* cgb = (M4A_CgbChannel*)chan;
+                        if (soundInfo->MidiKeyToCgbFreq != NULL) {
+                            cgb->frequency = soundInfo->MidiKeyToCgbFreq(cgbType, (u8)newKey, track->pitM);
+                        }
+                        cgb->modify = (u8)(cgb->modify | 2);
+                    } else {
+                        chan->frequency = MidiKeyToFreq(chan->wav, (u8)newKey, track->pitM);
+                    }
+                }
+            }
+
+            /* Walk to the next channel via chan->next (offset 0x34
+             * on GBA — held as a u32 for binary parity with the
+             * asm). The asm's self-loop guard (`if next == chan,
+             * set chan->next = 0`) breaks the cycle the engine
+             * occasionally sets up to mark the tail. */
+            SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+            if (next == chan) {
+                chan->next = 0;
+                next = NULL;
+            }
+            chan = next;
+        }
+
+        /* Clear the lower nibble (VOLSET/VOLCHG/PITSET/PITCHG bits)
+         * of track->flags whether or not a chan list existed. The
+         * asm does this at `_080AFB50` after the chan loop. */
+        track->flags = (u8)(track->flags & 0xF0);
+    }
+}
 
 /* The 3-arg helper. The asm signature is `ply_note(gateIdx, mp, track)`. */
 void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
@@ -2062,7 +2182,12 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track_local.vol == 0x60); /* second update wins */
         M4A_CHECK(track_local.runningStatus == 0xBE);
         M4A_CHECK(track_local.cmdPtr == stream_local + 4);
-        M4A_CHECK((track_local.flags & MPT_FLG_VOLCHG) == MPT_FLG_VOLCHG);
+        /* PR #7 part 2.2.2.2.3: the second loop runs TrkVolPitSet on
+         * the track (which clears VOLSET) and then `flags &= 0xF0`,
+         * so VOLCHG is consumed by the end of the tick. EXIST stays
+         * set. */
+        M4A_CHECK((track_local.flags & 0x0F) == 0);
+        M4A_CHECK((track_local.flags & MPT_FLG_EXIST) == MPT_FLG_EXIST);
     }
 
     /* ply_fine kills the track. With trackCount==1 and ply_fine as
@@ -2124,7 +2249,11 @@ int Port_M4ASelfCheck(void) {
         /* lsc=0x10, (s8)(0x10-0x40) < 0 => r2=(s8)0x10=0x10;
          * newModM = (0x40 * 0x10) >> 6 = 0x10. */
         M4A_CHECK((s8)track_local.modM == 0x10);
-        M4A_CHECK((track_local.flags & MPT_FLG_PITCHG) == MPT_FLG_PITCHG);
+        /* PR #7 part 2.2.2.2.3: the LFO tick set PITCHG; the second
+         * loop then runs TrkVolPitSet (clears PITSET) and `flags
+         * &= 0xF0`, so PITCHG is consumed by the end of the tick. */
+        M4A_CHECK((track_local.flags & 0x0F) == 0);
+        M4A_CHECK((track_local.flags & MPT_FLG_EXIST) == MPT_FLG_EXIST);
     }
 
     /* LFO modulation with lfoDelayC > 0: only delays decrement,
@@ -2609,6 +2738,322 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(si->chans[0].statusFlags == 0x80);
         /* Wait was 1 → decremented to 0 by the LFO step. */
         M4A_CHECK(track_local.wait == 0);
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.2.2.2.3: per-track TrkVolPitSet second loop.  */
+    /*                                                             */
+    /* Verifies the asm `_080AFAB2..._080AFB60` second pass:       */
+    /*   - !EXIST and (flags & 0xF)==0 tracks are skipped.         */
+    /*   - TrkVolPitSet runs (clears VOLSET/PITSET via the C       */
+    /*     impl in src/gba/m4a.c) when the low nibble has a bit.  */
+    /*   - track->flags low nibble is cleared after the per-track  */
+    /*     pass (whether or not chan!=NULL).                       */
+    /*   - chan walk: dead-envelope chan -> ClearChain.            */
+    /*   - chan walk: VOLCHG sets CgbChannel.modify bit 0 on CGB.  */
+    /*   - chan walk: PITCHG drives MidiKeyToFreq for DirectSound  */
+    /*     and MidiKeyToCgbFreq + modify bit 1 for CGB; negative   */
+    /*     newKey clamps to 0.                                     */
+    /*   - chan walk progresses past a NULL terminator.            */
+    /* ----------------------------------------------------------- */
+
+    /* Skip when (flags & 0xF) == 0: track is unchanged. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST; /* low nibble = 0 */
+        track_local.vol = 0xAB;
+        track_local.volMR = 0x55;
+        track_local.volML = 0x66;
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        M4A_CHECK(track_local.volMR == 0x55); /* TrkVolPitSet not run */
+        M4A_CHECK(track_local.volML == 0x66);
+    }
+
+    /* Skip when !EXIST: even with VOLCHG set, untouched. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = MPT_FLG_VOLCHG; /* no EXIST */
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == MPT_FLG_VOLCHG);
+    }
+
+    /* VOLCHG with track->chan == NULL: TrkVolPitSet runs (volMR /
+     * volML get computed from vol/volX/pan/panX), low nibble
+     * cleared, no chan walk. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_VOLCHG;
+        track_local.vol = 0x40;
+        track_local.volX = 0x40;
+        track_local.pan = 0;
+        track_local.panX = 0;
+        m4a_track_volpit_pass(&mp_local);
+        /* Low nibble cleared, EXIST preserved. */
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        /* TrkVolPitSet computes:
+         *   x = (vol * volX) >> 5 = (0x40 * 0x40) >> 5 = 128
+         *   y = 2*pan + panX = 0
+         *   volMR = ((y+128) * x) >> 8 = (128 * 128) >> 8 = 64
+         *   volML = ((127-y) * x) >> 8 = (127 * 128) >> 8 = 63 */
+        M4A_CHECK(track_local.volMR == 64);
+        M4A_CHECK(track_local.volML == 63);
+    }
+
+    /* PITCHG with track->chan == NULL: TrkVolPitSet runs (keyM /
+     * pitM get recomputed), low nibble cleared. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_PITCHG;
+        track_local.keyShift = 1;
+        track_local.keyShiftX = 0;
+        track_local.tune = 0;
+        track_local.bend = 0;
+        track_local.bendRange = 0;
+        track_local.modT = 0;
+        track_local.modM = 0;
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        /* x = ((keyShift << 8) + ...) = 256; keyM = 1, pitM = 0. */
+        M4A_CHECK(track_local.keyM == 1);
+        M4A_CHECK(track_local.pitM == 0);
+    }
+
+    /* VOLCHG with a dead-envelope chan: ClearChain is called (silent
+     * no-op stub here), the chan is walked, the loop terminates via
+     * chan->next == NULL, and the track flags low nibble is cleared. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        SoundChannel chan;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&chan, 0, sizeof(chan));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_VOLCHG;
+        track_local.chan = &chan;
+        chan.statusFlags = 0x08; /* not in M4A_CHAN_FLAGS_ENV (0xc7) */
+        chan.key = 60;
+        chan.next = 0;
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        /* statusFlags untouched by ClearChain stub. */
+        M4A_CHECK(chan.statusFlags == 0x08);
+    }
+
+    /* PITCHG with a live DirectSound chan (type & 7 == 0): the chan
+     * walk computes newKey = chan->key + (s8)track->keyM and writes
+     * MidiKeyToFreq(chan->wav, newKey, track->pitM) into
+     * chan->frequency. */
+    {
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        SoundChannel chan;
+        WaveData wav;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&chan, 0, sizeof(chan));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_PITCHG;
+        track_local.chan = &chan;
+        track_local.keyM = 0;
+        track_local.pitM = 0;
+        /* TrkVolPitSet inputs that produce keyM == 0: leave all the
+         * key/tune/bend/modM fields zero so the recompute stays at 0. */
+        chan.statusFlags = 0x83; /* in M4A_CHAN_FLAGS_ENV */
+        chan.type = 0;           /* DirectSound */
+        chan.key = 60;
+        chan.frequency = 0xDEADBEEF; /* sentinel; will be overwritten */
+        chan.wav = &wav;
+        chan.next = 0;
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        /* MidiKeyToFreq returned a real value (replaced sentinel). */
+        M4A_CHECK(chan.frequency != 0xDEADBEEF);
+    }
+
+    /* PITCHG with negative-key clamp: chan->key + (s8)track->keyM < 0
+     * clamps to 0 before MidiKeyToFreq. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        SoundChannel chan;
+        WaveData wav;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&chan, 0, sizeof(chan));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_PITCHG;
+        track_local.chan = &chan;
+        chan.statusFlags = 0x83;
+        chan.type = 0;
+        chan.key = 5;
+        chan.wav = &wav;
+        chan.next = 0;
+        /* Inject keyM = -10 directly via the post-TrkVolPitSet path:
+         * TrkVolPitSet would overwrite keyM. Bypass by clearing
+         * PITCHG's PITSET bit so TrkVolPitSet's "if (PITSET)" leaves
+         * keyM/pitM untouched. PITCHG = PITSET|something (0x0c =
+         * 0x04|0x08); the bit that gates the recompute is PITSET=0x04
+         * — clear it but leave 0x08 so the second loop still sees
+         * PITCHG. */
+        track_local.flags = M4A_FLG_EXIST | 0x08; /* PITCHG without PITSET */
+        track_local.keyM = (u8)(s8)(-10);
+        m4a_track_volpit_pass(&mp_local);
+
+        /* Reference: clamp(5 + (-10), 0) = 0; MidiKeyToFreq(wav, 0, 0). */
+        u32 expected = MidiKeyToFreq(&wav, 0, 0);
+        M4A_CHECK(chan.frequency == expected);
+    }
+
+    /* VOLCHG + PITCHG with a live CGB chan (type & 7 == 2): the
+     * chan walk uses MidiKeyToCgbFreq and sets CgbChannel.modify
+     * bits 0|1. */
+    {
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        /* Provide a MidiKeyToCgbFreq impl. The asm one is the C
+         * function in src/gba/m4a.c.) */
+        extern u32 MidiKeyToCgbFreq(u8 chanNum, u8 key, u8 fineAdjust);
+        si->MidiKeyToCgbFreq = MidiKeyToCgbFreq;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        M4A_CgbChannel cgb;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&cgb, 0, sizeof(cgb));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        /* PITCHG (high bit of nibble) without PITSET (low bit) so
+         * TrkVolPitSet leaves keyM/pitM untouched. */
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_VOLCHG | 0x08;
+        track_local.chan = (SoundChannel*)&cgb;
+        track_local.keyM = 0;
+        track_local.pitM = 0;
+        cgb.statusFlags = 0x83;
+        cgb.type = 2; /* CGB type 2 */
+        cgb.key = 60;
+        cgb.modify = 0;
+        cgb.frequency = 0;
+        cgb.next = 0;
+        m4a_track_volpit_pass(&mp_local);
+
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        /* modify bit 0 set by VOLCHG path; bit 1 set by PITCHG. */
+        M4A_CHECK(cgb.modify == 3);
+        u32 expectedCgb = MidiKeyToCgbFreq(2, 60, 0);
+        M4A_CHECK(cgb.frequency == expectedCgb);
+    }
+
+    /* PITCHG with a CGB chan but soundInfo->MidiKeyToCgbFreq == NULL:
+     * frequency is left untouched (host port skips the callback
+     * gracefully); modify bit 1 still gets set. */
+    {
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        /* MidiKeyToCgbFreq stays NULL. */
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        M4A_CgbChannel cgb;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&cgb, 0, sizeof(cgb));
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | 0x08; /* PITCHG, no PITSET */
+        track_local.chan = (SoundChannel*)&cgb;
+        cgb.statusFlags = 0x83;
+        cgb.type = 1;
+        cgb.key = 60;
+        cgb.modify = 0;
+        cgb.frequency = 0xDEADBEEF;
+        cgb.next = 0;
+        m4a_track_volpit_pass(&mp_local);
+
+        M4A_CHECK(cgb.frequency == 0xDEADBEEF); /* untouched */
+        M4A_CHECK(cgb.modify == 2);             /* bit 1 still set */
+    }
+
+    /* Single-chan walk with NULL terminator: the walk processes
+     * the chan and exits cleanly on chan->next == 0. (A true
+     * 2-chan chain isn't testable on a 64-bit host because
+     * SoundChannel.next is a u32 and stack addresses don't fit;
+     * the engine's real chan arena exercises the multi-chan path
+     * at runtime, where addresses do fit u32. The self-loop
+     * break in the walker is preserved for asm parity but is
+     * similarly untestable here.) */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        SoundChannel chan_a;
+        WaveData wav;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&chan_a, 0, sizeof(chan_a));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST | MPT_FLG_VOLCHG;
+        track_local.chan = &chan_a;
+        chan_a.statusFlags = 0x83;
+        chan_a.type = 0;
+        chan_a.key = 60;
+        chan_a.wav = &wav;
+        chan_a.next = 0;
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
+        M4A_CHECK(chan_a.statusFlags == 0x83); /* unchanged by walk */
+    }
+
+    /* Multi-track: trackCount=3 with mixed flag states; verify the
+     * loop processes each one independently. */
+    {
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack tracks[3];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(tracks, 0, sizeof(tracks));
+        mp_local.trackCount = 3;
+        mp_local.tracks = tracks;
+        tracks[0].flags = M4A_FLG_EXIST | MPT_FLG_VOLCHG;
+        tracks[1].flags = MPT_FLG_VOLCHG; /* !EXIST -> skip */
+        tracks[2].flags = M4A_FLG_EXIST;  /* low nibble 0 -> skip */
+        m4a_track_volpit_pass(&mp_local);
+        M4A_CHECK(tracks[0].flags == M4A_FLG_EXIST);  /* nibble cleared */
+        M4A_CHECK(tracks[1].flags == MPT_FLG_VOLCHG); /* untouched */
+        M4A_CHECK(tracks[2].flags == M4A_FLG_EXIST);  /* untouched */
     }
 
     /* Restore gSoundInfo to a zero state so any other code that
