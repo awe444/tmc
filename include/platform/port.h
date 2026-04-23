@@ -368,6 +368,28 @@ int Port_AudioPushSamples(const int16_t* samples, int frame_count);
  */
 int Port_AudioSelfCheck(void);
 
+/**
+ * Headless self-check for the m4a host shim (PR #7 part 2.2.1).
+ *
+ * Builds a stack-allocated MusicPlayerInfo + MusicPlayerTrack and
+ * drives each implemented `ply_*` command handler in
+ * `src/platform/shared/m4a_host.c` with a synthesized `cmdPtr` byte
+ * stream. Verifies that every handler reads exactly one byte from
+ * `cmdPtr`, writes the expected value into the matching track / mp
+ * field, and sets the right MPT_FLG_* bits — matching the asm
+ * semantics in `asm/lib/m4a_asm.s`.
+ *
+ * The check uses only stack memory and never touches `gSoundInfo` /
+ * `gMusicPlayers[]` / `gMPlayJumpTable[]`, so it can be invoked at
+ * any time without disturbing m4a's runtime state. Returns 0 on
+ * success, non-zero on any mismatch.
+ *
+ * Only meaningful when `src/gba/m4a.c` and `m4a_host.c` are linked
+ * (i.e. `TMC_LINK_GAME_SOURCES=ON`); the `=OFF` build skips the
+ * call.
+ */
+int Port_M4ASelfCheck(void);
+
 /* ------------------------------------------------------------------------ */
 /* Synchronous DMA helpers.                                                 */
 /*                                                                          */
