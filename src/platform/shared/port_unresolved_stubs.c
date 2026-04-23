@@ -86,18 +86,13 @@ PORT_UNRESOLVED_FUNC(GetTileTypeRelativeToEntity)
 PORT_UNRESOLVED_FUNC(SetActTileAtTilePos)
 PORT_UNRESOLVED_FUNC(SetTile)
 PORT_UNRESOLVED_FUNC(UpdateScrollVram)
-PORT_UNRESOLVED_FUNC(m4aMPlayAllStop)
-PORT_UNRESOLVED_FUNC(m4aMPlayImmInit)
-PORT_UNRESOLVED_FUNC(m4aMPlayTempoControl)
-PORT_UNRESOLVED_FUNC(m4aMPlayVolumeControl)
-PORT_UNRESOLVED_FUNC(m4aSongNumStart)
-PORT_UNRESOLVED_FUNC(m4aSongNumStartOrContinue)
-PORT_UNRESOLVED_FUNC(m4aSongNumStop)
-PORT_UNRESOLVED_FUNC(m4aSoundInit)
-PORT_UNRESOLVED_FUNC(m4aSoundMain)
-PORT_UNRESOLVED_FUNC(m4aSoundVSync)
-PORT_UNRESOLVED_FUNC(m4aSoundVSyncOff)
-PORT_UNRESOLVED_FUNC(m4aSoundVSyncOn)
+/* The unprefixed `m4a*` entry points are now strongly defined by
+ * `src/gba/m4a.c` itself (PR #7 part 1), which is compiled into
+ * `tmc_game_sources` with the asm-only mixer routines stubbed
+ * silently in `src/platform/shared/m4a_host.c`. The weak abort-trap
+ * placeholders that used to live here have been removed; if a regression
+ * drops `src/gba/m4a.c` from the leaf set, the link will fail with a
+ * clear "undefined reference" instead of silently aborting at runtime. */
 /* ram_ClearAndUpdateEntities, ram_CollideAll, ram_DrawDirect,
  * ram_DrawEntities, ram_MakeFadeBuff256, ram_sub_080ADA04, and
  * ram_UpdateEntities have tailored silent overrides in

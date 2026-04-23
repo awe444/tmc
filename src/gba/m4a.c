@@ -144,8 +144,21 @@ extern CgbChannel gCgbChans[];
 extern char gNumMusicPlayers[];
 extern char gMaxLines[];
 
+#ifdef __PORT__
+/* The GBA build resolves these via linker-script "constant" symbols
+ * (`gNumMusicPlayers = 0x20;` / `gMaxLines = 0;` in linker.ld) where
+ * the symbol *address* is the value. The host build doesn't run
+ * linker.ld; redefine them as literal constants. NUM_MUSIC_PLAYERS=0
+ * makes the `m4aSoundInit()` walk over `gMusicPlayers[]` an empty
+ * loop, which is what the silent-mixer stub (PR #7 part 1) needs
+ * (the real song / music_player tables under `data/sound/` are not
+ * compiled into the SDL build). */
+#define NUM_MUSIC_PLAYERS 0
+#define MAX_LINES 0
+#else
 #define NUM_MUSIC_PLAYERS ((u16)gNumMusicPlayers)
 #define MAX_LINES ((u32)gMaxLines)
+#endif
 
 u32 umul3232H32(u32 multiplier, u32 multiplicand);
 void SoundMain(void);
@@ -349,7 +362,13 @@ void MPlayFadeOut(MusicPlayerInfo* mplayInfo, u16 speed) {
 void m4aSoundInit(void) {
     s32 i;
 
+#ifdef __PORT__
+    /* SoundMainRAM is a host BSS buffer (see src/platform/shared/m4a_host.c);
+     * no thumb-mode low-bit to clear. */
+    CpuCopy32((void*)SoundMainRAM, SoundMainRAM_Buffer, sizeof(SoundMainRAM_Buffer));
+#else
     CpuCopy32((void*)((s32)SoundMainRAM & ~1), SoundMainRAM_Buffer, sizeof(SoundMainRAM_Buffer));
+#endif
 
     SoundInit(&gSoundInfo);
     MPlayExtender(gCgbChans);
@@ -553,7 +572,15 @@ void MPlayExtender(CgbChannel* cgbChans) {
 }
 
 void MusicPlayerJumpTableCopy(void) {
+#ifdef __PORT__
+    /* swi 0x2A on the GBA dispatches into the BIOS-resident m4a
+     * MusicPlayerJumpTableCopy. The host has neither the BIOS nor a
+     * working `swi` opcode; call the C reimplementation directly. */
+    extern void* gMPlayJumpTable[];
+    MPlayJumpTableCopy(gMPlayJumpTable);
+#else
     asm("swi 0x2A");
+#endif
 }
 
 void ClearChain(void* x) {
@@ -578,8 +605,16 @@ void SoundInit(SoundInfo* soundInfo) {
         SOUND_A_FIFO_RESET | SOUND_A_TIMER_0 | SOUND_A_LEFT_OUTPUT | SOUND_A_RIGHT_OUTPUT | SOUND_ALL_MIX_FULL;
     REG_SOUNDBIAS_H = (REG_SOUNDBIAS_H & 0x3F) | 0x40;
 
+#ifdef __PORT__
+    /* DMA1 SRC/DST registers point at the PCM FIFO + buffer on the
+     * GBA. The host has no DMA controller, no FIFO, and the (s32)
+     * truncation of a 64-bit pointer is undefined. Skip the writes —
+     * the host mixer (PR #7 part 2) won't use REG_DMA1{S,D}AD. */
+    (void)soundInfo;
+#else
     REG_DMA1SAD = (s32)soundInfo->pcmBuffer;
     REG_DMA1DAD = (s32)&REG_FIFO_A;
+#endif
 
     SOUND_INFO_PTR = soundInfo;
     CpuFill32(0, soundInfo, sizeof(SoundInfo));
@@ -688,7 +723,11 @@ void SoundClear(void) {
     while (i > 0) {
         ((SoundChannel*)chan)->statusFlags = 0;
         i--;
+#ifdef __PORT__
+        chan = (void*)((uintptr_t)chan + sizeof(SoundChannel));
+#else
         chan = (void*)((s32)chan + sizeof(SoundChannel));
+#endif
     }
 
     chan = soundInfo->cgbChannels;
@@ -700,7 +739,11 @@ void SoundClear(void) {
             soundInfo->CgbOscOff(i);
             ((CgbChannel*)chan)->statusFlags = 0;
             i++;
+#ifdef __PORT__
+            chan = (void*)((uintptr_t)chan + sizeof(CgbChannel));
+#else
             chan = (void*)((s32)chan + sizeof(CgbChannel));
+#endif
         }
     }
 
@@ -738,8 +781,15 @@ void m4aSoundVSyncOn(void) {
     soundInfo->pcmDmaCounter = 0;
     soundInfo->ident = ident - 10;
 
+#ifndef __PORT__
+    /* VCOUNT spin-wait synchronises the timer/DMA reset with the
+     * VBlank window on the GBA. The host has neither a free-running
+     * VCOUNT register nor a hardware timer to align with — the
+     * SDL audio callback drives mixing on its own clock (PR #7
+     * part 2). Skipping the spin avoids an infinite loop. */
     while (REG_VCOUNT_8 == 0x9f) {}
     while (REG_VCOUNT_8 != 0x9f) {}
+#endif
 
     REG_TM0CNT_L = -(0x44940 / soundInfo->pcmSamplesPerVBlank);
     REG_TM0CNT_H = 0x80;
@@ -1290,7 +1340,9 @@ void CgbSound(void) {
         if (channels->modify & CGB_CHANNEL_MO_PIT) {
             if (ch < 4 && (channels->type & TONEDATA_TYPE_FIX)) {
                 int dac_pwm_rate = REG_SOUNDBIAS_H;
+#ifndef __PORT__
                 asm("" ::: "r0");
+#endif
                 if (dac_pwm_rate < 0x40) // if PWM rate = 32768 Hz
                     channels->frequency = (channels->frequency + 2) & 0x7fc;
                 else if (dac_pwm_rate < 0x80) // if PWM rate = 65536 Hz
