@@ -6,10 +6,16 @@
  * The ring uses `_Atomic size_t` indices in acquire/release ordering so
  * the producer (game / m4a tick) and the consumer (SDL audio callback,
  * running on its own thread) can communicate without taking a lock.
- * On hosts where C11 atomics are unavailable for some reason the file
- * falls back to plain `volatile` indices, which is still safe under the
- * SPSC discipline because only the producer writes the write index and
- * only the consumer writes the read index.
+ * The overflow/underflow diagnostic counters are also `_Atomic` (with
+ * relaxed ordering) so the public `*Count()` accessors can be sampled
+ * concurrently without UB.
+ *
+ * C11 `<stdatomic.h>` is *required* — there is no `volatile`-only
+ * fallback because plain `volatile` is not sufficient for cross-thread
+ * synchronisation in standard C and would leave the producer/consumer
+ * data exchange a data race on weak memory models. The two host
+ * platforms supported by this port (Linux, macOS) both ship a C11
+ * compiler in their toolchains.
  *
  * Tracking: docs/sdl_port.md, PR #7 part 2.1.
  */
@@ -17,23 +23,16 @@
 
 #include <string.h>
 
-#if !defined(__STDC_NO_ATOMICS__) && (__STDC_VERSION__ >= 201112L)
+#if defined(__STDC_NO_ATOMICS__) || (__STDC_VERSION__ < 201112L)
+#error "audio_ring.c requires a C11 compiler with <stdatomic.h> support"
+#endif
+
 #include <stdatomic.h>
-#define PORT_AR_ATOMIC_INDEX _Atomic size_t
+
 #define PORT_AR_LOAD_ACQ(p) atomic_load_explicit((p), memory_order_acquire)
 #define PORT_AR_LOAD_RLX(p) atomic_load_explicit((p), memory_order_relaxed)
 #define PORT_AR_STORE_REL(p, v) atomic_store_explicit((p), (v), memory_order_release)
 #define PORT_AR_STORE_RLX(p, v) atomic_store_explicit((p), (v), memory_order_relaxed)
-#else
-/* SPSC fallback: a single producer writes only `s_write`, a single
- * consumer writes only `s_read`. Tagging both as `volatile` is enough
- * to prevent the compiler from caching them across the loop. */
-#define PORT_AR_ATOMIC_INDEX volatile size_t
-#define PORT_AR_LOAD_ACQ(p) (*(p))
-#define PORT_AR_LOAD_RLX(p) (*(p))
-#define PORT_AR_STORE_REL(p, v) (*(p) = (v))
-#define PORT_AR_STORE_RLX(p, v) (*(p) = (v))
-#endif
 
 /* Compile-time check that the capacity is a power of two so the
  * modulo at the wrap point can be a single mask. */
@@ -48,17 +47,21 @@ static int16_t s_buffer[PORT_AUDIO_RING_CAPACITY];
  * "available read" count is `write - read`; the "available write"
  * count is `CAPACITY - (write - read)`. Wraparound of either index
  * is fine because both move by the same amount. */
-static PORT_AR_ATOMIC_INDEX s_read = 0;
-static PORT_AR_ATOMIC_INDEX s_write = 0;
+static _Atomic size_t s_read = 0;
+static _Atomic size_t s_write = 0;
 
-static uint64_t s_overflow_samples = 0;
-static uint64_t s_underflow_samples = 0;
+/* Diagnostic counters. Updated from the producer (`s_overflow_samples`)
+ * and the consumer (`s_underflow_samples`); read by either thread via
+ * the public `*Count()` accessors. Relaxed ordering is fine — the
+ * counters carry no happens-before relationship with the ring data. */
+static _Atomic uint_fast64_t s_overflow_samples = 0;
+static _Atomic uint_fast64_t s_underflow_samples = 0;
 
 void Port_AudioRingReset(void) {
     PORT_AR_STORE_RLX(&s_read, 0);
     PORT_AR_STORE_RLX(&s_write, 0);
-    s_overflow_samples = 0;
-    s_underflow_samples = 0;
+    atomic_store_explicit(&s_overflow_samples, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_underflow_samples, 0, memory_order_relaxed);
     /* Clear the buffer so any latent reads see deterministic silence. */
     memset(s_buffer, 0, sizeof s_buffer);
 }
@@ -82,7 +85,7 @@ size_t Port_AudioRingPush(const int16_t* samples, size_t count) {
     size_t free_slots = PORT_AUDIO_RING_CAPACITY - (w - r);
     size_t to_write = count <= free_slots ? count : free_slots;
     if (to_write < count) {
-        s_overflow_samples += (uint64_t)(count - to_write);
+        atomic_fetch_add_explicit(&s_overflow_samples, (uint_fast64_t)(count - to_write), memory_order_relaxed);
     }
     /* Two-segment copy so we wrap cleanly at the buffer end. */
     size_t head = w & PORT_AR_MASK;
@@ -120,44 +123,48 @@ size_t Port_AudioRingPull(int16_t* out, size_t count) {
     if (to_read < count) {
         size_t shortfall = count - to_read;
         memset(out + to_read, 0, shortfall * sizeof(int16_t));
-        s_underflow_samples += (uint64_t)shortfall;
+        atomic_fetch_add_explicit(&s_underflow_samples, (uint_fast64_t)shortfall, memory_order_relaxed);
     }
     return to_read;
 }
 
 uint64_t Port_AudioRingOverflowCount(void) {
-    return s_overflow_samples;
+    return (uint64_t)atomic_load_explicit(&s_overflow_samples, memory_order_relaxed);
 }
 
 uint64_t Port_AudioRingUnderflowCount(void) {
-    return s_underflow_samples;
+    return (uint64_t)atomic_load_explicit(&s_underflow_samples, memory_order_relaxed);
 }
 
 /* ------------------------------------------------------------------ */
 /* Headless self-check (PR #7 part 2.1).                              */
 /*                                                                    */
 /* Exercises every branch of the push / pull / overflow / underflow / */
-/* wrap paths without touching SDL. Saves and restores the ring state */
-/* so it is safe to call from the smoke-test path even after the      */
-/* audio device has been opened. Counterpart of                       */
+/* wrap paths without touching SDL.                                   */
+/*                                                                    */
+/* IMPORTANT: this routine temporarily mutates the shared ring state  */
+/* (buffer + indices + counters) and then restores it. It is therefore */
+/* only safe to call while the audio path is quiescent — i.e. before  */
+/* `Port_AudioInit()`, after `Port_AudioShutdown()`, or while         */
+/* playback has been paused via `SDL_PauseAudioDevice` *and* no        */
+/* producer thread is running. The smoke-test path in                  */
+/* `src/platform/sdl/main.c` invokes it before `Port_AudioInit()` so  */
+/* the contract holds there. Counterpart of                           */
 /* `Port_RendererSelfCheck()` for the audio plumbing.                 */
 /* ------------------------------------------------------------------ */
 
 #include "platform/port.h"
 
-#define PORT_AR_SELFCHECK_REPORT(msg) \
-    do {                              \
-        return -1;                    \
-    } while (0)
-
 int Port_AudioSelfCheck(void) {
-    /* Snapshot the live state so we can restore it on exit. */
+    /* Snapshot the live state so we can restore it on exit. The
+     * single-threaded "quiescent" precondition (see comment above)
+     * means these reads are race-free. */
     int16_t saved_buffer[PORT_AUDIO_RING_CAPACITY];
     memcpy(saved_buffer, s_buffer, sizeof saved_buffer);
     size_t saved_read = PORT_AR_LOAD_RLX(&s_read);
     size_t saved_write = PORT_AR_LOAD_RLX(&s_write);
-    uint64_t saved_overflow = s_overflow_samples;
-    uint64_t saved_underflow = s_underflow_samples;
+    uint_fast64_t saved_overflow = atomic_load_explicit(&s_overflow_samples, memory_order_relaxed);
+    uint_fast64_t saved_underflow = atomic_load_explicit(&s_underflow_samples, memory_order_relaxed);
 
     int rc = 0;
 
@@ -315,13 +322,12 @@ int Port_AudioSelfCheck(void) {
     }
 
 restore:
-    /* Restore the live ring state so any caller that had data queued
-     * before the self-check doesn't lose it (currently nobody does,
-     * but the contract is "safe to call any time"). */
+    /* Restore the live ring state. Quiescent precondition (see the
+     * function's docstring) means these stores are race-free. */
     memcpy(s_buffer, saved_buffer, sizeof saved_buffer);
     PORT_AR_STORE_RLX(&s_read, saved_read);
     PORT_AR_STORE_RLX(&s_write, saved_write);
-    s_overflow_samples = saved_overflow;
-    s_underflow_samples = saved_underflow;
+    atomic_store_explicit(&s_overflow_samples, saved_overflow, memory_order_relaxed);
+    atomic_store_explicit(&s_underflow_samples, saved_underflow, memory_order_relaxed);
     return rc;
 }

@@ -28,10 +28,11 @@ extern "C" {
 
 /**
  * Capacity of the ring in *interleaved S16 samples* (i.e. one stereo
- * frame counts as 2 samples). Sized to comfortably hold ~4 vblanks
- * worth of audio at the GBA m4a default rate of 13379 Hz stereo
- * (~896 stereo frames, ~1792 samples) with several factors of
- * headroom. Must be a power of two so the modulo can be a mask.
+ * frame counts as 2 samples). 16384 interleaved samples = 8192 stereo
+ * frames, which at the GBA m4a default rate of 13379 Hz is ~0.61 s of
+ * audio (~36 vblanks at 59.7274 Hz) — comfortably above any
+ * per-vblank producer / per-callback consumer drain. Must be a power
+ * of two so the modulo can be a mask.
  */
 #define PORT_AUDIO_RING_CAPACITY 16384u
 

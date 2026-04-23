@@ -28,12 +28,26 @@ static int s_sample_rate = PORT_AUDIO_DEFAULT_RATE;
 /* The SDL audio thread invokes this on its own clock. We pull S16
  * stereo samples out of the SPSC ring; any shortfall is zero-filled
  * by `Port_AudioRingPull` itself, so the SDL stream is always fully
- * written even when the producer is silent. */
+ * written even when the producer is silent.
+ *
+ * SDL's `len` is in bytes and the stereo S16 frame size is 4 bytes;
+ * we round the request down to whole stereo frames and explicitly
+ * zero any odd trailing byte(s) so the entire SDL buffer is always
+ * deterministically initialised even if the device negotiates a
+ * pathological `len` that isn't frame-aligned. */
 static void ring_drain_audio_callback(void* userdata, Uint8* stream, int len) {
     (void)userdata;
-    /* `len` is in bytes; the ring deals in S16 samples. */
-    size_t sample_count = (size_t)len / sizeof(int16_t);
-    Port_AudioRingPull((int16_t*)stream, sample_count);
+    if (len <= 0) {
+        return;
+    }
+    /* Ensure determinism for any byte the ring won't touch. */
+    SDL_memset(stream, 0, (size_t)len);
+    /* Round down to whole stereo frames (4 bytes each). */
+    size_t whole_frames_bytes = (size_t)len & ~(size_t)3;
+    size_t sample_count = whole_frames_bytes / sizeof(int16_t);
+    if (sample_count > 0) {
+        Port_AudioRingPull((int16_t*)stream, sample_count);
+    }
 }
 
 int Port_AudioInit(void) {

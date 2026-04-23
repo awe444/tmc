@@ -353,9 +353,16 @@ int Port_AudioPushSamples(const int16_t* samples, int frame_count);
 /**
  * Headless self-check for the audio ring buffer plumbing (PR #7
  * part 2.1). Exercises push / pull / overflow / underflow / wrap
- * paths without touching SDL, so it runs identically with or without
- * an open audio device. Saves and restores the ring state so it is
- * safe to call alongside the other smoke-test self-checks.
+ * paths without touching SDL.
+ *
+ * This routine temporarily mutates the shared audio ring state
+ * (buffer + indices + counters) while running its checks, then
+ * restores it. It therefore requires the audio path to be quiescent:
+ * call it only before `Port_AudioInit()`, after `Port_AudioShutdown()`,
+ * or while playback is paused via `SDL_PauseAudioDevice` *and* no
+ * producer thread is running. The smoke-test path in
+ * `src/platform/sdl/main.c` invokes it before `Port_AudioInit()` so
+ * the contract holds there.
  *
  * Returns 0 on success, non-zero on any mismatch.
  */

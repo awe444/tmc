@@ -931,9 +931,10 @@ are tracked here for future contributors.
     - [x] **PR #7 part 2.1** SDL audio ring-buffer plumbing. Adds a
       single-producer / single-consumer fixed-capacity ring of
       interleaved S16 stereo PCM in `src/platform/shared/audio_ring.{h,c}`,
-      sized to ~4 vblanks worth of audio at the m4a default rate
-      (16384 samples; well above the per-callback drain). The SDL
-      audio callback in `src/platform/sdl/audio.c` no longer ignores
+      sized at 16384 interleaved samples (8192 stereo frames at the
+      m4a default rate of 13379 Hz ≈ 0.61 s ≈ ~36 vblanks at
+      59.7274 Hz — comfortably above any per-vblank producer /
+      per-callback consumer drain). The SDL audio callback in `src/platform/sdl/audio.c` no longer ignores
       its `stream` argument — it drains the ring and zero-fills any
       shortfall, so until parts 2.2 / 2.3 land a real producer the
       audible behaviour stays silence (same as the previous
@@ -949,10 +950,13 @@ are tracked here for future contributors.
       verifier for the push / pull / overflow / underflow / wrap
       paths that runs alongside `Port_RendererSelfCheck()` /
       `Port_ScriptedInputSelfCheck()` in
-      `src/platform/sdl/main.c` and so executes on every CI smoke
-      test, including the `--mute` headless one). The ring uses C11
-      `<stdatomic.h>` acquire/release ordering on the head and tail
-      indices with a `volatile`-fallback for older toolchains. The
+      `src/platform/sdl/main.c`, before `Port_AudioInit()` so its
+      "ring must be quiescent" precondition holds — and so executes
+      on every CI smoke test, including the `--mute` headless one).
+      The ring requires C11 `<stdatomic.h>`: acquire/release ordering
+      on the head/tail indices and relaxed ordering on the diagnostic
+      overflow/underflow counters so they can be sampled concurrently
+      without UB. The
       `--frames=30` golden hashes for both the default `=ON` and the
       preserved `=OFF` builds are bit-for-bit unchanged
       (`0x8f68687253dc1b25` and `0xf9b70c534973f325`) because no
