@@ -390,6 +390,14 @@ endif()
 # link time. Defined as 1/0 so `#if TMC_LINK_GAME_SOURCES` works too.
 if(TMC_LINK_GAME_SOURCES)
     target_compile_definitions(tmc_sdl PRIVATE TMC_LINK_GAME_SOURCES=1)
+    # PR #7 part 1: `m4a_host.c` provides host BSS + asm-stub
+    # implementations for the symbols `src/gba/m4a.c` references from
+    # `asm/lib/m4a_asm.s` and from the GBA linker script. It is only
+    # meaningful when `src/gba/m4a.c` is itself linked (i.e. when
+    # `TMC_LINK_GAME_SOURCES=ON`); under `=OFF` it would dangle on
+    # `gMPlayJumpTableTemplate` (defined in m4a.c). The unprefixed
+    # silent stubs in `m4a_stub.c` cover the `=OFF` build's needs.
+    target_sources(tmc_sdl PRIVATE src/platform/shared/m4a_host.c)
 else()
     target_compile_definitions(tmc_sdl PRIVATE TMC_LINK_GAME_SOURCES=0)
 endif()
@@ -522,6 +530,16 @@ set(TMC_GAME_LEAF_SOURCES
     src/backgroundAnimations.c
     src/common.c
     src/cutscene.c
+    # PR #7 part 1: bring `src/gba/m4a.c` (the C half of the m4a sound
+    # engine) into the SDL build. The asm-defined mixer routines from
+    # `asm/lib/m4a_asm.s` (`SoundMain`, `MPlayMain`, the `ply_*`
+    # command handlers, `umul3232H32`, `MPlayJumpTableCopy`) and the
+    # four EWRAM globals (`gSoundInfo`, `gMPlayJumpTable`, `gCgbChans`,
+    # `gMPlayMemAccArea`) are satisfied by silent strong stubs / host
+    # BSS in `src/platform/shared/m4a_host.c`. The mixer is intentionally
+    # silent for now (see docs/sdl_port.md PR #7 part 1); PR #7 part 2
+    # will replace those stubs with a real host C reimplementation.
+    src/gba/m4a.c
     # 2b.4b: the full remaining src/**/*.c tree. All of these compile
     # cleanly under `__PORT__` with the SDL build flags; the link step
     # resolves any still-missing BSS globals / script + enemy / m4a

@@ -840,6 +840,94 @@ are tracked here for future contributors.
   `EEPROM_OUT_OF_RANGE`.
 - [ ] **PR #7.** Bring `src/gba/m4a.c` into the SDL build, hook the
   emulated sound FIFOs into `src/platform/sdl/audio.c` so songs play.
+  - [x] **PR #7 part 1.** Bring `src/gba/m4a.c` into the SDL build
+    (compile + link with a silent mixer). Added
+    `src/platform/shared/m4a_host.c` providing strong silent stubs
+    for every symbol exported by `asm/lib/m4a_asm.s` that
+    `src/gba/m4a.c` references — the `SoundMain` / `SoundMainBTM` /
+    `SoundMainRAM` mixer entry points, `MPlayMain`, `RealClearChain`,
+    `MPlayJumpTableCopy` (re-implemented in C, walks
+    `gMPlayJumpTableTemplate[]`), `umul3232H32` (re-implemented in
+    C, computes the high 32 bits of a 32×32→64 multiply that
+    `MidiKeyToFreq` needs), `TrackStop`, `ChnVolSetAsm`,
+    `clear_modM`, `nullsub_141`, and the asm-defined `ply_*` command
+    handlers (`ply_fine` / `ply_goto` / `ply_patt` / `ply_pend` /
+    `ply_rept` / `ply_prio` / `ply_tempo` / `ply_keysh` / `ply_voice`
+    / `ply_vol` / `ply_pan` / `ply_bend` / `ply_bendr` / `ply_lfodl`
+    / `ply_modt` / `ply_tune` / `ply_port` / `ply_note` / `ply_endtie`
+    / `ply_lfos` / `ply_mod`). Also provides host BSS for the four
+    EWRAM globals that `linker.ld` places at fixed offsets on the
+    GBA: `gMPlayJumpTable[36]`, `gCgbChans` (4 channels, generously
+    sized), `gMPlayMemAccArea[256]`, and `gSoundInfo` (4 KiB,
+    comfortably above the host's `sizeof(SoundInfo)` upper bound —
+    the `SoundInfo` typedef is file-local to `m4a.c`, so the
+    backing storage uses a plain byte array sized to dominate the
+    GBA layout).
+
+    `src/gba/m4a.c` itself was patched under `__PORT__` for the
+    handful of GBA-isms that don't survive a 64-bit host build:
+    * `NUM_MUSIC_PLAYERS` / `MAX_LINES` redefined to literal `0` —
+      these come from `linker.ld` "constant" symbols whose
+      *address* is the value, which the host build doesn't have.
+      With `NUM_MUSIC_PLAYERS == 0`, the `m4aSoundInit()` walk over
+      `gMusicPlayers[]` becomes an empty loop and the per-player
+      `MPlayOpen` calls don't fire (so the unported
+      `data/sound/music_player_table.s` arena layout doesn't matter).
+    * `(void*)((s32)SoundMainRAM & ~1)` — the GBA pointer-to-thumb
+      low-bit clear — replaced with a plain `(void*)SoundMainRAM`
+      cast (the host stub buffer is plain BSS, no thumb bit).
+    * `MusicPlayerJumpTableCopy()`'s bare `asm("swi 0x2A")`
+      replaced with a direct call to the host-side
+      `MPlayJumpTableCopy(gMPlayJumpTable)` C reimplementation.
+    * `REG_DMA1SAD = (s32)soundInfo->pcmBuffer; REG_DMA1DAD = (s32)&REG_FIFO_A;`
+      — pointer-to-`s32` truncation that's UB on a 64-bit host —
+      skipped under `__PORT__`. The host has no DMA controller and
+      no PCM FIFO, so the writes would be no-ops in `gPortIo` anyway.
+    * `(void*)((s32)chan + sizeof(...))` byte-arithmetic in
+      `SoundClear()` replaced with `(uintptr_t)` for 64-bit safety.
+    * The two `while (REG_VCOUNT_8 != 0x9f) {}` spin-waits in
+      `m4aSoundVSyncOn()` skipped under `__PORT__`. The host has
+      no free-running VCOUNT register and the SDL audio callback
+      drives mixing on its own clock (PR #7 part 2), so the spin
+      isn't aligning with anything — it would just hang forever.
+    * The `asm("" ::: "r0")` register-clobber hint inside `CgbSound`
+      skipped under `__PORT__` (no `r0` register on x86_64).
+
+    Wired into `CMakeLists.txt`: `src/gba/m4a.c` joins
+    `TMC_GAME_LEAF_SOURCES`, `m4a_host.c` joins `tmc_sdl` only when
+    `TMC_LINK_GAME_SOURCES=ON` (when `=OFF`, m4a.c is absent so
+    `gMPlayJumpTableTemplate` would dangle). The unprefixed `m4a*`
+    silent stubs in `m4a_stub.c` are now `__attribute__((weak))` so
+    the strong defs from `src/gba/m4a.c` win at link time when both
+    are present; the weak fallbacks keep the `=OFF` build's contract
+    (`InitSound` no longer SIGABRTs against the
+    `Port_UnresolvedTrap` weak placeholders) intact. The matching
+    weak `m4aSound*` / `m4aSongNum*` / `m4aMPlay*` entries in
+    `port_unresolved_stubs.c` were removed since they're now strongly
+    resolved (any future regression that drops `src/gba/m4a.c` from
+    the leaf set will fail with a clear "undefined reference" instead
+    of silently abort-trapping at runtime).
+
+    Result: `m4aSoundInit()` runs to completion and primes the
+    `SoundInfo` struct + the m4a IO regs in `gPortIo` with their
+    expected boot-time values; every `m4aSong*` / `m4aMPlay*` entry
+    point becomes a real (non-stub) function. No audio is produced
+    yet — the asm-stubbed mixer accumulates nothing into the (host)
+    PCM FIFO. Default `=ON`, `=OFF`, and placeholder-`TMC_BASEROM`
+    builds all link cleanly; their `--frames=30` golden hashes are
+    bit-for-bit unchanged
+    (`0x8f68687253dc1b25` for `=ON` and `=BASEROM`,
+    `0xf9b70c534973f325` for `=OFF`); the scripted-input
+    title-screen smoke test (`--frames=700` driving `START` past the
+    title) still exits 0.
+  - [ ] **PR #7 part 2.** Replace the asm-only mixer stubs in
+    `m4a_host.c` with a host C reimplementation of `SoundMain` /
+    `SoundMainBTM` / `MPlayMain` / the asm `ply_*` command handlers,
+    so the m4a state machine actually advances songs. Wire the
+    accumulated PCM into `src/platform/sdl/audio.c`'s SDL audio
+    callback ring buffer (replacing the current `silent_audio_callback`)
+    and have `m4aSoundVSync` drive the per-vblank PCM advance. This
+    is where audio actually starts playing.
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two
