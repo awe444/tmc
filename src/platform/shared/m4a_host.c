@@ -1164,19 +1164,20 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
     if (tone->type & (TONEDATA_TYPE_RHY | TONEDATA_TYPE_SPL)) {
         u8 subKey;
         if (tone->type & TONEDATA_TYPE_SPL) {
-            /* Key split: tone.attack..release reused as a `u8*`
-             * pointer to a key→subTone-index table. The 4 bytes of
-             * `attack/decay/sustain/release` are reinterpreted via
-             * a host-friendly accessor that mirrors the asm's
-             * `ldr [r5, #0x2c]` 4-byte load. On a 64-bit host this
-             * is a 32-bit truncated pointer; the self-check sets
-             * the table address explicitly via the embedded helper. */
-            const u8* keyTable = (const u8*)(uintptr_t)(
-                ((u32)tone->attack)
-                | ((u32)tone->decay << 8)
-                | ((u32)tone->sustain << 16)
-                | ((u32)tone->release << 24));
-            subKey = keyTable[key];
+            /* Key split: the asm reuses tone.attack..release as a
+             * `u8*` to a key→subTone-index table (`ldr [r5, #0x2c]`
+             * 4-byte load). On a 64-bit host that 32-bit value
+             * cannot hold a real pointer, so dereferencing it is
+             * undefined and would almost certainly crash on any
+             * SPL tone we encountered outside a synthetic harness.
+             * No real song data routed through the host mixer is
+             * known to use the SPL path (TMC's tone bank has no
+             * SPL tones), so defensively bail out instead of
+             * fabricating a sub-key. If host SPL support ever
+             * matters, the fix is to add a real ToneData* side
+             * field to the host overlay and populate it from a
+             * GBA→host pointer table. */
+            return;
         } else {
             subKey = key;
         }
@@ -1233,9 +1234,13 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         } else if (slot->priority < notePriority) {
             chosenCGB = slot; /* lower priority → evict */
         } else if (slot->priority == notePriority) {
-            /* Tie-break by track ptr: evict if existing track ptr
-             * is >= our track. */
-            if ((uintptr_t)(u32)slot->track >= (uintptr_t)track) {
+            /* Tie-break by track ptr using the same 32-bit form on
+             * both sides (slot->track is stored as a 32-bit value
+             * in the host overlay to mirror the GBA ABI), so the
+             * comparison is meaningful on 64-bit hosts where a
+             * raw `(uintptr_t)track` would dwarf any value held
+             * in `slot->track`. */
+            if ((uintptr_t)(u32)slot->track >= (uintptr_t)(u32)(uintptr_t)track) {
                 chosenCGB = slot;
             } else {
                 return;
@@ -1345,6 +1350,13 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         chan->track = track;
 
         chan->gateTime = track->gateTime;
+        /* The asm seeds chan+0x10..0x13 (gateTime/midiKey/velocity/
+         * priority) with a 4-byte load from track+4 (gateTime/key/
+         * velocity/runningStatus) before overwriting priority. So
+         * chan->midiKey / chan->velocity inherit the just-decoded
+         * key/velocity operands from the track. */
+        chan->midiKey = track->key;
+        chan->velocity = track->velocity;
         chan->priority = (u8)notePriority;
         chan->key = dispatchKey;
         chan->rhythmPan = (u8)forcedRelease;
@@ -1358,8 +1370,7 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         chan->echoLength = track->echoLength;
         ChnVolSetAsm();
 
-        chan->frequency = MidiKeyToFreq(
-            (WaveData*)subTone->wav, (u8)freqKey, track->pitM);
+        chan->frequency = MidiKeyToFreq((WaveData*)subTone->wav, (u8)freqKey, track->pitM);
 
         chan->statusFlags = 0x80;
     } else {
@@ -1386,6 +1397,11 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         cgb->track = (u32)(uintptr_t)track;
 
         cgb->gateTime = track->gateTime;
+        /* See the matching DirectSound path: the asm's 4-byte
+         * track+4 → chan+0x10 store seeds midiKey/velocity from
+         * the just-decoded operands. */
+        cgb->midiKey = track->key;
+        cgb->velocity = track->velocity;
         cgb->priority = (u8)notePriority;
         cgb->key = dispatchKey;
         cgb->rhythmPan = (u8)forcedRelease;
@@ -1416,8 +1432,7 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         cgb->sweep = n4;
 
         if (soundInfo->MidiKeyToCgbFreq != NULL) {
-            cgb->frequency = soundInfo->MidiKeyToCgbFreq(
-                (u8)cgbType, (u8)freqKey, track->pitM);
+            cgb->frequency = soundInfo->MidiKeyToCgbFreq((u8)cgbType, (u8)freqKey, track->pitM);
         }
 
         cgb->statusFlags = 0x80;
@@ -2316,9 +2331,9 @@ int Port_M4ASelfCheck(void) {
         track_local.tone = my_tone;
         track_local.priority = 0x10;
         track_local.flags = MPT_FLG_VOLSET | MPT_FLG_PITSET; /* lower nibble bits to clear */
-        stream_local[0] = 0x3C; /* key */
-        stream_local[1] = 0x40; /* velocity */
-        stream_local[2] = 0x80; /* sentinel: skip gateTime delta */
+        stream_local[0] = 0x3C;                              /* key */
+        stream_local[1] = 0x40;                              /* velocity */
+        stream_local[2] = 0x80;                              /* sentinel: skip gateTime delta */
         track_local.cmdPtr = stream_local;
         ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
 
@@ -2350,11 +2365,11 @@ int Port_M4ASelfCheck(void) {
         M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
         memset(si, 0, sizeof(*si));
         si->maxChannels = 3;
-        si->chans[0].statusFlags = 0x83;       /* envelope-active */
-        si->chans[0].priority = 0x05;          /* low → would otherwise win */
+        si->chans[0].statusFlags = 0x83;        /* envelope-active */
+        si->chans[0].priority = 0x05;           /* low → would otherwise win */
         si->chans[1].statusFlags = 0x83 | 0x40; /* releasing */
         si->chans[1].priority = 0xFF;
-        si->chans[2].statusFlags = 0x83;       /* envelope-active, high prio */
+        si->chans[2].statusFlags = 0x83; /* envelope-active, high prio */
         si->chans[2].priority = 0x80;
 
         MusicPlayerInfo mp_local;
