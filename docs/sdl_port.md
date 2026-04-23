@@ -1095,6 +1095,53 @@ are tracked here for future contributors.
               `mp->tone` bank for the self-check and a
               channel-allocation walk against `gSoundInfo` for
               `ply_note`'s "find an idle SoundChannel" search.
+              Broken into two substeps so each lands as a focused,
+              independently-testable change.
+              - [x] **PR #7 part 2.2.2.2.2.1** Promoted `ply_voice`
+                from a no-op stub to a real C port of
+                `asm/lib/m4a_asm.s::ply_voice` in
+                `src/platform/shared/m4a_host.c`. Reads a single
+                voice-index byte from `track->cmdPtr`, advances the
+                pointer by 1, then copies `mp->tone[index]` into
+                `track->tone`. The asm does it as 3 back-to-back
+                4-byte loads/stores from `mp->tone + index * 12`;
+                the host port uses a struct assignment instead so
+                the wider `wav` pointer field on 64-bit hosts
+                survives intact (a literal 12-byte memcpy would
+                truncate it). `Port_M4ASelfCheck()` grew a
+                `ply_voice` section that synthesizes a
+                stack-allocated `ToneData[3]` bank with
+                distinguishing per-slot patterns, runs `ply_voice`
+                standalone for indices 0 and 1 (asserting every
+                public ToneData field is copied across and `cmdPtr`
+                advances by 1), and then drives the same handler
+                through `MPlayMain`'s dispatcher path via opcode
+                `0xBD` (= `M4A_JUMP_BASE + 12`) followed by a wait
+                command, asserting that the dispatcher consumes the
+                voice-index operand byte, latches `runningStatus =
+                0xBD`, and lands the tone copy from `bank[2]` into
+                the live track. The remaining handler in this
+                substep family (`ply_note`) stays a no-op stub
+                because it needs the channel-allocation walk
+                against `gSoundInfo` (`->maxChannels` /
+                `->cgbChannels` / `->chans[]`); that lands in
+                2.2.2.2.2.2 below. The `--frames=30` golden hashes
+                for both the default `=ON` and the preserved `=OFF`
+                builds are bit-for-bit unchanged
+                (`0x8f68687253dc1b25` and `0xf9b70c534973f325`)
+                because `ply_voice` is reached only via `MPlayMain`,
+                which is itself invisible to the runtime path
+                (`NUM_MUSIC_PLAYERS == 0` under `__PORT__`) — the
+                new code is exercised by the smoke-test self-check
+                only.
+              - [ ] **PR #7 part 2.2.2.2.2.2** Host C
+                reimplementation of `ply_note`. Drives the
+                channel-allocation walk against `gSoundInfo`
+                (DirectSound + CGB paths), the priority / track-addr
+                tiebreak, the chan insertion at the head of
+                `track->chan`, the `chan->frequency = MidiKeyToFreq(...)`
+                / `sub_080AFB74(...)` setup, and the
+                `track->flags &= 0xF0` clear of the lower nibble.
             - [ ] **PR #7 part 2.2.2.2.3** Per-track `TrkVolPitSet`
               second loop in `MPlayMain` (the `_080AFAB2..._080AFB60`
               region). Channel-update half stays a no-op when
