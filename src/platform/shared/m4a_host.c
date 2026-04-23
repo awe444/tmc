@@ -1131,8 +1131,8 @@ extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 /*     track and chained via the `chan->next` u32-ified pointer):      */
 /*       * dead-envelope chan (`!(statusFlags & 0xc7)`) is unlinked    */
 /*         via `ClearChain(chan)`.                                     */
-/*       * else: VOLCHG → `ChnVolSetAsm(chan, track)` (silent stub on  */
-/*         the host); CGB-typed chans additionally OR bit 0 into the   */
+/*       * else: VOLCHG → `ChnVolSetAsm()` (silent host stub in this   */
+/*         TU); CGB-typed chans additionally OR bit 0 into the         */
 /*         CgbChannel `modify` byte (offset 0x1d) so the next CGB     */
 /*         mixer pass re-pokes the CGB volume regs.                   */
 /*       * PITCHG → newKey = chan->key + (s8)track->keyM, clamped to  */
@@ -1202,13 +1202,11 @@ static void m4a_track_volpit_pass(MusicPlayerInfo* mp) {
                     if (cgbType != 0) {
                         M4A_CgbChannel* cgb = (M4A_CgbChannel*)chan;
                         if (soundInfo->MidiKeyToCgbFreq != NULL) {
-                            cgb->frequency = soundInfo->MidiKeyToCgbFreq(
-                                cgbType, (u8)newKey, track->pitM);
+                            cgb->frequency = soundInfo->MidiKeyToCgbFreq(cgbType, (u8)newKey, track->pitM);
                         }
                         cgb->modify = (u8)(cgb->modify | 2);
                     } else {
-                        chan->frequency = MidiKeyToFreq(
-                            chan->wav, (u8)newKey, track->pitM);
+                        chan->frequency = MidiKeyToFreq(chan->wav, (u8)newKey, track->pitM);
                     }
                 }
             }
@@ -2889,10 +2887,10 @@ int Port_M4ASelfCheck(void) {
         track_local.pitM = 0;
         /* TrkVolPitSet inputs that produce keyM == 0: leave all the
          * key/tune/bend/modM fields zero so the recompute stays at 0. */
-        chan.statusFlags = 0x83;        /* in M4A_CHAN_FLAGS_ENV */
-        chan.type = 0;                  /* DirectSound */
+        chan.statusFlags = 0x83; /* in M4A_CHAN_FLAGS_ENV */
+        chan.type = 0;           /* DirectSound */
         chan.key = 60;
-        chan.frequency = 0xDEADBEEF;    /* sentinel; will be overwritten */
+        chan.frequency = 0xDEADBEEF; /* sentinel; will be overwritten */
         chan.wav = &wav;
         chan.next = 0;
         m4a_track_volpit_pass(&mp_local);
@@ -2906,12 +2904,11 @@ int Port_M4ASelfCheck(void) {
     {
         MusicPlayerInfo mp_local;
         MusicPlayerTrack track_local;
-        SoundChannel chan, chan_ref;
+        SoundChannel chan;
         WaveData wav;
         memset(&mp_local, 0, sizeof(mp_local));
         memset(&track_local, 0, sizeof(track_local));
         memset(&chan, 0, sizeof(chan));
-        memset(&chan_ref, 0, sizeof(chan_ref));
         memset(&wav, 0, sizeof(wav));
         wav.freq = 0x10000000u;
         mp_local.trackCount = 1;
@@ -2965,7 +2962,7 @@ int Port_M4ASelfCheck(void) {
         track_local.keyM = 0;
         track_local.pitM = 0;
         cgb.statusFlags = 0x83;
-        cgb.type = 2;            /* CGB type 2 */
+        cgb.type = 2; /* CGB type 2 */
         cgb.key = 60;
         cgb.modify = 0;
         cgb.frequency = 0;
@@ -3009,20 +3006,22 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(cgb.modify == 2);             /* bit 1 still set */
     }
 
-    /* Multi-chan walk: NULL-terminated 2-chan chain via chan->next.
-     * The walk processes both chans in order and terminates on NULL.
-     * (The self-loop break in the walker is preserved for parity
-     * with the asm but isn't testable on a 64-bit host because
-     * SoundChannel.next is a u32 and stack addresses don't fit.) */
+    /* Single-chan walk with NULL terminator: the walk processes
+     * the chan and exits cleanly on chan->next == 0. (A true
+     * 2-chan chain isn't testable on a 64-bit host because
+     * SoundChannel.next is a u32 and stack addresses don't fit;
+     * the engine's real chan arena exercises the multi-chan path
+     * at runtime, where addresses do fit u32. The self-loop
+     * break in the walker is preserved for asm parity but is
+     * similarly untestable here.) */
     {
         MusicPlayerInfo mp_local;
         MusicPlayerTrack track_local;
-        SoundChannel chan_a, chan_b;
+        SoundChannel chan_a;
         WaveData wav;
         memset(&mp_local, 0, sizeof(mp_local));
         memset(&track_local, 0, sizeof(track_local));
         memset(&chan_a, 0, sizeof(chan_a));
-        memset(&chan_b, 0, sizeof(chan_b));
         memset(&wav, 0, sizeof(wav));
         wav.freq = 0x10000000u;
         mp_local.trackCount = 1;
@@ -3033,14 +3032,7 @@ int Port_M4ASelfCheck(void) {
         chan_a.type = 0;
         chan_a.key = 60;
         chan_a.wav = &wav;
-        /* chan_a.next is u32; widening from a stack pointer would
-         * truncate. Verify the walk progresses past chan_a using
-         * a dead-envelope second chan reachable via uintptr_t →
-         * u32 truncation: skip by leaving NULL termination. The
-         * 2-chan walk is exercised by the engine's real chan
-         * arena (where addresses fit u32) at runtime. */
         chan_a.next = 0;
-        (void)chan_b;
         m4a_track_volpit_pass(&mp_local);
         M4A_CHECK(track_local.flags == M4A_FLG_EXIST);
         M4A_CHECK(chan_a.statusFlags == 0x83); /* unchanged by walk */

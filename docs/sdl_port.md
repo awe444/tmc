@@ -1215,13 +1215,13 @@ are tracked here for future contributors.
               `track->chan` and for each chan either calls
               `ClearChain` (envelope-dead) or, for live chans,
               dispatches the `VOLCHG` / `PITCHG` work — `ChnVolSetAsm`
-              (still a silent stub) plus a `+= 1` poke into the
+              (still a silent stub) plus a `|= 1` bit-set into the
               CgbChannel `modify` byte for CGB-typed chans, then
               `chan->frequency = MidiKeyToFreq(chan->wav, key+keyM,
               pitM)` for DirectSound or the soundInfo-installed
               `MidiKeyToCgbFreq(type, key+keyM, pitM)` for CGB
-              (with a NULL-callback graceful skip), and a `+= 2`
-              poke into `modify` for the CGB PITCHG case. The CGB
+              (with a NULL-callback graceful skip), and a `|= 2`
+              bit-set into `modify` for the CGB PITCHG case. The CGB
               field accesses route through the existing
               `M4A_CgbChannel` overlay (introduced in 2.2.2.2.2.2)
               because the host SoundChannel layout diverges past
