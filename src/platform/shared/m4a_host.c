@@ -91,8 +91,8 @@ void* gMPlayJumpTable[36];
  * inside SoundInfo) suitably aligned for any future SIMD path the
  * host mixer might want; nothing in m4a.c relies on a specific
  * alignment beyond `u32`. */
-u8 gCgbChans[4 * 256]    __attribute__((aligned(16)));
-u8 gSoundInfo[4096]      __attribute__((aligned(16)));
+u8 gCgbChans[4 * 256] __attribute__((aligned(16)));
+u8 gSoundInfo[4096] __attribute__((aligned(16)));
 
 /* ------------------------------------------------------------------ */
 /* (2) Notes on the song / music-player tables.                       */
@@ -130,7 +130,7 @@ u8 gSoundInfo[4096]      __attribute__((aligned(16)));
 /* ------------------------------------------------------------------ */
 
 /* Forward-decl the m4a internal types we need parameter syntax for.  */
-typedef struct MusicPlayerInfo  MusicPlayerInfo;
+typedef struct MusicPlayerInfo MusicPlayerInfo;
 typedef struct MusicPlayerTrack MusicPlayerTrack;
 
 /* `extern char SoundMainRAM[]` in m4a.c is the source of a            */
@@ -140,20 +140,49 @@ typedef struct MusicPlayerTrack MusicPlayerTrack;
 char SoundMainRAM[0x380] __attribute__((aligned(4))) = { 0 };
 
 /* The mixer entry points. */
-void SoundMain(void)    { /* PR #7 part 2: software mixer */ }
-void SoundMainBTM(void) { /* PR #7 part 2: bottom-half mixer */ }
+void SoundMain(void) { /* PR #7 part 2: software mixer */
+}
+
+/* `SoundMainBTM` is dual-role on the GBA: as the `gMPlayJumpTable[35]`
+ * target (see `gMPlayJumpTableTemplate[]` in m4a.c), it is invoked via
+ * the `Clear64byte(void* addr)` C wrapper and its first action is to
+ * zero exactly 64 bytes at `addr` before continuing into the bottom-half
+ * mixer. The C callers (`MPlayOpen`, `m4aMPlayImmInit`) rely on that
+ * 64-byte clear to initialise per-track state — leaving it as an empty
+ * stub leaves `MusicPlayerInfo` / `MusicPlayerTrack` fields with stale
+ * values from previous calls.
+ *
+ * Implement the 64-byte clear here (the bottom-half mixer step is left
+ * for PR #7 part 2). The signature uses `void*` so the same function
+ * can serve both call sites: SoundMain's argumentless invocation passes
+ * a stale arg register that we ignore, and the Clear64byte path passes
+ * the buffer pointer. */
+void SoundMainBTM(void* addr) {
+    if (addr != NULL) {
+        u32* p = (u32*)addr;
+        int i;
+        for (i = 0; i < 16; i++) {
+            p[i] = 0;
+        }
+    }
+    /* PR #7 part 2: bottom-half mixer step goes here. */
+}
 
 /* The per-music-player main step routine — installed into            */
 /* `soundInfo->MPlayMainHead` by `MPlayOpen` and walked by             */
 /* `SoundMain`. With NUM_MUSIC_PLAYERS == 0 on the host it never       */
 /* runs anyway, but it is taken by-address.                            */
-void MPlayMain(void) { /* PR #7 part 2: walks active MusicPlayerInfo list */ }
+void MPlayMain(void) { /* PR #7 part 2: walks active MusicPlayerInfo list */
+}
 
-/* `RealClearChain` / `Clear64byte` jump-table targets installed at    */
-/* `gMPlayJumpTable[34..35]`. The C wrappers `ClearChain` /            */
-/* `Clear64byte` in m4a.c dispatch through the table; we satisfy the   */
-/* by-address requirement with safe in-place implementations.          */
-void RealClearChain(void* x)  { (void)x; }
+/* `RealClearChain` is the `gMPlayJumpTable[34]` target invoked by the  */
+/* `ClearChain(void* x)` C wrapper. On the GBA the asm walks a linked   */
+/* list of channels rooted at `x` and unlinks each one. Under the       */
+/* silent host mixer no channel is ever linked into the list, so the    */
+/* unlink-walk has nothing to do; the safe stand-in is a no-op.         */
+void RealClearChain(void* x) {
+    (void)x;
+}
 
 /* `MPlayJumpTableCopy` populates `gMPlayJumpTable[]` from the          */
 /* `gMPlayJumpTableTemplate[]` defined in m4a.c. The asm impl walks    */
@@ -180,10 +209,14 @@ u32 umul3232H32(u32 multiplier, u32 multiplicand) {
 /* `TrackStop` / `ChnVolSetAsm` / `clear_modM` — installed in           */
 /* gMPlayJumpTable or called directly from m4a.c.                       */
 void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
-    (void)mplayInfo; (void)track;
+    (void)mplayInfo;
+    (void)track;
 }
-void ChnVolSetAsm(void) { /* PR #7 part 2 */ }
-void clear_modM(MusicPlayerTrack* track) { (void)track; }
+void ChnVolSetAsm(void) { /* PR #7 part 2 */
+}
+void clear_modM(MusicPlayerTrack* track) {
+    (void)track;
+}
 
 /* The ARM-asm `ply_*` command handlers (the C-defined ones live in    */
 /* m4a.c itself). Each is invoked through gMPlayJumpTable when         */
@@ -191,8 +224,11 @@ void clear_modM(MusicPlayerTrack* track) { (void)track; }
 /* stubs above, none of these are actually reached at runtime, but     */
 /* the gMPlayJumpTableTemplate[] in m4a.c takes their addresses, so    */
 /* they must link. */
-#define M4A_PLY_STUB(name) \
-    void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { (void)mp; (void)tr; }
+#define M4A_PLY_STUB(name)                                 \
+    void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
+        (void)mp;                                          \
+        (void)tr;                                          \
+    }
 
 M4A_PLY_STUB(ply_fine)
 M4A_PLY_STUB(ply_goto)
@@ -219,4 +255,5 @@ M4A_PLY_STUB(ply_mod)
 #undef M4A_PLY_STUB
 
 /* `nullsub_141` is referenced as the engine's no-op slot. */
-void nullsub_141(void) { /* truly a nullsub */ }
+void nullsub_141(void) { /* truly a nullsub */
+}

@@ -56,36 +56,48 @@ void Port_SoundReq(int song) {
  * build (which doesn't link `src/gba/m4a.c`) and are marked `weak` so
  * the strong versions in m4a.c win at link time when both are present.
  * See docs/sdl_port.md (PR #7). */
+
+/* Match the guard pattern used by `port_unresolved_stubs.c` so the file
+ * still builds under toolchains that don't understand `__attribute__`
+ * (the stubs simply become strong defs there — at worst a duplicate-
+ * symbol link error if `src/gba/m4a.c` is also linked in, which is the
+ * mode where the warning is desired anyway). */
+#if defined(__GNUC__) || defined(__clang__)
+#define PORT_WEAK __attribute__((weak))
+#else
+#define PORT_WEAK
+#endif
+
 struct MusicPlayerInfo;
-__attribute__((weak)) void m4aSoundInit(void) { /* silent */
+PORT_WEAK void m4aSoundInit(void) { /* silent */
 }
-__attribute__((weak)) void m4aSoundMain(void) { /* silent */
+PORT_WEAK void m4aSoundMain(void) { /* silent */
 }
-__attribute__((weak)) void m4aSoundVSync(void) { /* silent */
+PORT_WEAK void m4aSoundVSync(void) { /* silent */
 }
-__attribute__((weak)) void m4aSoundVSyncOn(void) { /* silent */
+PORT_WEAK void m4aSoundVSyncOn(void) { /* silent */
 }
-__attribute__((weak)) void m4aSoundVSyncOff(void) { /* silent */
+PORT_WEAK void m4aSoundVSyncOff(void) { /* silent */
 }
-__attribute__((weak)) void m4aMPlayAllStop(void) { /* silent */
+PORT_WEAK void m4aMPlayAllStop(void) { /* silent */
 }
-__attribute__((weak)) void m4aSongNumStart(unsigned short n) {
+PORT_WEAK void m4aSongNumStart(unsigned short n) {
     (void)n;
 }
-__attribute__((weak)) void m4aSongNumStartOrContinue(unsigned short n) {
+PORT_WEAK void m4aSongNumStartOrContinue(unsigned short n) {
     (void)n;
 }
-__attribute__((weak)) void m4aSongNumStop(unsigned short n) {
+PORT_WEAK void m4aSongNumStop(unsigned short n) {
     (void)n;
 }
-__attribute__((weak)) void m4aMPlayImmInit(struct MusicPlayerInfo* mp) {
+PORT_WEAK void m4aMPlayImmInit(struct MusicPlayerInfo* mp) {
     (void)mp;
 }
-__attribute__((weak)) void m4aMPlayTempoControl(struct MusicPlayerInfo* mp, unsigned short tempo) {
+PORT_WEAK void m4aMPlayTempoControl(struct MusicPlayerInfo* mp, unsigned short tempo) {
     (void)mp;
     (void)tempo;
 }
-__attribute__((weak)) void m4aMPlayVolumeControl(struct MusicPlayerInfo* mp, unsigned short trackBits, unsigned short volume) {
+PORT_WEAK void m4aMPlayVolumeControl(struct MusicPlayerInfo* mp, unsigned short trackBits, unsigned short volume) {
     (void)mp;
     (void)trackBits;
     (void)volume;
