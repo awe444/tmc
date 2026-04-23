@@ -213,12 +213,21 @@ extern const u8 gClockTable[];
 void ClearChain(void* x);
 void FadeOutBody(MusicPlayerInfo* mp);
 
-/* Forward decl for `ply_note` / `ply_voice`. `ply_voice` was promoted
- * from a no-op stub to a real C port in PR #7 part 2.2.2.2.2.1;
- * `ply_note` stays a stub until 2.2.2.2.2.2 (it needs the channel-
- * allocation walk against `gSoundInfo`). The dispatcher needs the
- * prototype so the call site below typechecks. */
+/* Forward decl for `ply_note` / `ply_voice` / `ply_note_impl`.
+ * `ply_voice` was promoted to a real C port in PR #7 part 2.2.2.2.2.1
+ * and `ply_note` was promoted in PR #7 part 2.2.2.2.2.2. The public
+ * 2-arg `ply_note(mp, track)` symbol is the one stored into
+ * `soundInfo->plynote` by `m4a.c::SoundInit`; it forwards into the
+ * host-private 3-arg `ply_note_impl(mp, track, gateIdx)` with a
+ * default `gateIdx = 0` (the asm reads `gClockTable[gateIdx]` into
+ * `track->gateTime`, which only matters when the dispatcher reaches
+ * `ply_note` via a `>= 0xCF` opcode encoding the gate index — every
+ * other call path observes the no-op `gClockTable[0] = 0`). The
+ * dispatcher in `m4a_dispatch_one` calls `ply_note_impl` directly so
+ * the gate index extracted from the command byte survives the
+ * 2-arg public signature. */
 void ply_note(MusicPlayerInfo* mp, MusicPlayerTrack* track);
+void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx);
 void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 
 /* SoundChannel statusFlags bits referenced by the chan walks. The
@@ -407,17 +416,15 @@ static int m4a_dispatch_one(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     if (cmd_byte >= M4A_NOTE_BASE) {
         /* ply_note path. The asm computes `gateIdx = cmd - 0xCF` and
          * passes it as the first arg to ply_note (asm signature is
-         * `ply_note(u32 gateIdx, mp, track)`). Our C `ply_note` is a
-         * still a no-op stub from 2.2.2.1 with the m4a.c-declared
-         * `(mp, track)` shape, so the gate index is intentionally
-         * discarded here. PR #7 part 2.2.2.2.2 will land the real
-         * `ply_note` and revisit this dispatch site to thread the
-         * gate index through (likely via a host-private 3-arg
-         * variant called from here, with the 2-arg `ply_note`
-         * symbol kept around as a thin trampoline that reads a
-         * dispatcher-stashed gateIdx). */
-        (void)cmd_byte; /* gate index unused while ply_note is a stub */
-        ply_note(mp, track);
+         * `ply_note(u32 gateIdx, mp, track)`). PR #7 part 2.2.2.2.2.2
+         * promotes ply_note to a real C port in `ply_note_impl`,
+         * which takes the gate index as an explicit 3rd arg. The
+         * public 2-arg `ply_note` symbol stays around as a thin
+         * wrapper (with gateIdx=0) for the engine's
+         * `soundInfo->plynote` slot, but the dispatcher calls the
+         * 3-arg helper directly so the gate index isn't lost. */
+        u32 gateIdx = (u32)(cmd_byte - M4A_NOTE_BASE);
+        ply_note_impl(mp, track, gateIdx);
     } else if (cmd_byte > M4A_JUMP_END) {
         /* 0xB1..0xCE -> gMPlayJumpTable[cmd - 0xB1]. mp->cmd holds
          * the index for the asm's command-byte introspection path
@@ -937,11 +944,11 @@ void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     track->tone = mp->tone[voice];
 }
 
-/* The handlers still gated on later 2.2.2.2.2 substeps (`ply_note`
- * needs the channel-allocation walk against `gSoundInfo`) and on
- * PR #7 part 2.3 (`ply_port` needs the CGB register pokes that the
- * host mixer doesn't have a backing-store for yet). Stay no-op
- * stubs for now. */
+/* The remaining gated handler is `ply_port` (needs the CGB register
+ * pokes that the host mixer doesn't have a backing-store for yet —
+ * PR #7 part 2.3). `ply_note` was promoted to a real C port in PR #7
+ * part 2.2.2.2.2.2 (the implementation lives below this stub block,
+ * after the SoundInfo / CgbChannel host mirrors it depends on). */
 #define M4A_PLY_STUB(name)                                 \
     void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
         (void)mp;                                          \
@@ -949,9 +956,483 @@ void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     }
 
 M4A_PLY_STUB(ply_port)
-M4A_PLY_STUB(ply_note)
 
 #undef M4A_PLY_STUB
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.2.2.2.2.2: ply_note.                                  */
+/*                                                                    */
+/* Host C reimplementation of `asm/lib/m4a_asm.s::ply_note`. The asm  */
+/* signature is `ply_note(u32 gateIdx, MusicPlayerInfo* mp,           */
+/* MusicPlayerTrack* track)` (gateIdx in r0, mp in r1, track in r2);  */
+/* the C-defined `void ply_note(MusicPlayerInfo*, MusicPlayerTrack*)` */
+/* declared by m4a.c is the one stored into `soundInfo->plynote`, so  */
+/* we expose that 2-arg public symbol as a thin wrapper around the    */
+/* host-private 3-arg `ply_note_impl` that the dispatcher calls       */
+/* directly.                                                          */
+/*                                                                    */
+/* The asm performs three big things:                                 */
+/*   1. Operand decode: read up to three optional bytes from          */
+/*      `track->cmdPtr` (key, velocity, gate-time delta), all of      */
+/*      which are absent if the next byte is >= 0x80 (running-status  */
+/*      reuse). gateTime is initialised from `gClockTable[gateIdx]`   */
+/*      first, then the optional delta is added.                      */
+/*   2. Tone resolution: handle key-split / rhythm tone tables. For   */
+/*      a plain DirectSound or CGB tone, the active sub-tone is just  */
+/*      `&track->tone`. The key-split / rhythm paths overload the     */
+/*      `tone.attack..release` bytes as a u8* sub-key table and       */
+/*      `tone.wav` as a `ToneData[]` pointer — those overloads don't  */
+/*      survive a 64-bit host's pointer width (the bytes can't hold   */
+/*      a real pointer), so we reproduce the asm's logical behaviour  */
+/*      using host-friendly fields instead: when the active tone has  */
+/*      `TONEDATA_TYPE_RHY | TONEDATA_TYPE_SPL` set we walk through   */
+/*      via the same byte-offset trick the asm uses and rely on the   */
+/*      caller to set `tone.wav` to a real `ToneData*`. Self-check    */
+/*      exercises both the plain and rhythm paths.                    */
+/*   3. Channel allocation: walk `soundInfo->cgbChannels[type-1]`     */
+/*      for CGB voices (sub-tone type & 7 in 1..6), or scan           */
+/*      `soundInfo->chans[0..maxChannels)` for a free DirectSound     */
+/*      channel (preferring envelope-dead, then releasing, then       */
+/*      lower-priority chans; ties broken by track-ptr ordering).     */
+/*      The chosen chan is pulled out of any existing list via        */
+/*      `ClearChain`, inserted at the head of `track->chan`,          */
+/*      bound back to the track via `chan->track = track`, primed     */
+/*      with the resolved key / velocity / wav / ADSR, and given a    */
+/*      starting `chan->frequency` from `MidiKeyToFreq` (DirectSound) */
+/*      or `soundInfo->MidiKeyToCgbFreq` (CGB).                       */
+/*                                                                    */
+/* Finally, `track->flags &= 0xF0` clears the lower nibble's per-tick */
+/* request flags (VOLSET, VOLCHG, PITSET, PITCHG) — the chan walk     */
+/* above and the post-ply_note `TrkVolPitSet` step have already       */
+/* applied them.                                                      */
+/*                                                                    */
+/* On the silent host mixer this is reached only via the dispatcher   */
+/* (which itself is reached only via Port_M4ASelfCheck because        */
+/* NUM_MUSIC_PLAYERS == 0 keeps MPlayMain out of the production       */
+/* path). Both code paths and the self-check exercise the same C      */
+/* implementation.                                                    */
+/* ------------------------------------------------------------------ */
+
+/* Mirror of the file-local SoundInfo / CgbChannel typedefs from
+ * src/gba/m4a.c. They aren't exposed in include/gba/m4a.h, so we
+ * redeclare them here for the host port to walk by name. The two
+ * typedefs are identical to m4a.c's (same field names, same C
+ * types), so both TUs see the same struct layout and the
+ * `extern SoundInfo gSoundInfo;` resolution against the byte-array
+ * BSS symbol below works cleanly.
+ *
+ * Keep these in sync with src/gba/m4a.c::CgbChannel / SoundInfo. */
+typedef void (*m4a_CgbSoundFunc)(void);
+typedef void (*m4a_CgbOscOffFunc)(u8);
+typedef u32 (*m4a_MidiKeyToCgbFreqFunc)(u8, u8, u8);
+typedef void (*m4a_ExtVolPitFunc)(void);
+
+typedef struct M4A_CgbChannel {
+    u8 statusFlags;
+    u8 type;
+    u8 rightVolume;
+    u8 leftVolume;
+    u8 attack;
+    u8 decay;
+    u8 sustain;
+    u8 release;
+    u8 key;
+    u8 envelopeVolume;
+    u8 envelopeGoal;
+    u8 envelopeCounter;
+    u8 echoVolume;
+    u8 echoLength;
+    u8 unk0;
+    u8 unk1;
+    u8 gateTime;
+    u8 midiKey;
+    u8 velocity;
+    u8 priority;
+    u8 rhythmPan;
+    u8 unk2[3];
+    u8 unk3;
+    u8 sustainGoal;
+    u8 n4;
+    u8 pan;
+    u8 panMask;
+    u8 modify;
+    u8 length;
+    u8 sweep;
+    u32 frequency;
+    u32* nextWave;
+    u32* currentWave;
+    u32 track;
+    u32 prev;
+    u32 next;
+    u8 unk4[8];
+} M4A_CgbChannel;
+
+#define M4A_MAX_DIRECTSOUND_CHANNELS 12
+#define M4A_PCM_DMA_BUF_SIZE 1584
+
+typedef struct M4A_SoundInfo {
+    u32 ident;
+    u8 pcmDmaCounter;
+    u8 reverb;
+    u8 maxChannels;
+    u8 masterVolume;
+    u8 frequency;
+    u8 mode;
+    u8 c15;
+    u8 pcmDmaPeriod;
+    u8 maxLines;
+    u8 gap[3];
+    s32 pcmSamplesPerVBlank;
+    s32 pcmFreqency;
+    s32 divFreq;
+    M4A_CgbChannel* cgbChannels;
+    MPlayMainFunc MPlayMainHead;
+    void* intp;
+    m4a_CgbSoundFunc CgbSound;
+    m4a_CgbOscOffFunc CgbOscOff;
+    m4a_MidiKeyToCgbFreqFunc MidiKeyToCgbFreq;
+    void* MPlayJumpTable;
+    void* plynote;
+    m4a_ExtVolPitFunc ExtVolPit;
+    u8 gap2[16];
+    SoundChannel chans[M4A_MAX_DIRECTSOUND_CHANNELS];
+    s8 pcmBuffer[M4A_PCM_DMA_BUF_SIZE];
+} M4A_SoundInfo;
+
+/* `gSoundInfo` is declared up top as `u8 gSoundInfo[4096]`. m4a.c sees
+ * it as the file-local `SoundInfo` typedef; we cast through this host
+ * mirror to walk by name. A static-assert keeps the BSS allocation
+ * comfortably above the host SoundInfo footprint. */
+_Static_assert(sizeof(M4A_SoundInfo) <= 4096, "gSoundInfo BSS too small for host SoundInfo");
+
+/* m4a.c's MidiKeyToFreq — used for DirectSound chans. */
+extern u32 MidiKeyToFreq(WaveData* wav, u8 key, u8 fineAdjust);
+/* m4a.c's TrkVolPitSet — invoked just before the chan->frequency
+ * setup so the freshly-allocated chan inherits the track's vol/pit. */
+extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
+
+/* The 3-arg helper. The asm signature is `ply_note(gateIdx, mp, track)`. */
+void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
+    M4A_SoundInfo* soundInfo = (M4A_SoundInfo*)gSoundInfo;
+
+    /* (1) Operand decode. */
+    /* gateTime = gClockTable[gateIdx]. The asm: `ldrb r0, [r1]` after
+     * `r1 = &gClockTable[gateIdx]`. gClockTable is 49 entries; the
+     * dispatcher hands gateIdx in [0..48]. */
+    track->gateTime = gClockTable[gateIdx];
+
+    /* Optional bytes from track->cmdPtr: key, velocity, gateTime delta.
+     * Each is gated on `< 0x80` (running-status sentinel). */
+    u8* cp = track->cmdPtr;
+    u8 b0 = cp[0];
+    if (b0 < 0x80) {
+        track->key = b0;
+        cp++;
+        u8 b1 = cp[0];
+        if (b1 < 0x80) {
+            track->velocity = b1;
+            cp++;
+            u8 b2 = cp[0];
+            if (b2 < 0x80) {
+                track->gateTime = (u8)(track->gateTime + b2);
+                cp++;
+            }
+        }
+        track->cmdPtr = cp;
+    }
+
+    /* (2) Tone resolution.
+     *
+     * `subTone` points at the active ToneData. For plain tones it's
+     * `&track->tone`; for key-split / rhythm tones it's an entry in a
+     * sub-tone table.
+     *
+     * `forcedRelease` (asm: sp[0x14]) is the rhythm-pan override that
+     * gets stamped into chan->rhythmPan; it stays 0 unless we enter
+     * the rhythm path AND the sub-tone has TONEDATA_P_S_PAN set in
+     * its pan_sweep byte.
+     *
+     * `key` (asm: r3) starts as `track->key` (after the operand
+     * update above) and is reassigned to the sub-tone's `key` field
+     * on the rhythm path.
+     */
+    ToneData* tone = &track->tone;
+    ToneData* subTone;
+    u32 forcedRelease = 0;
+    u8 key = track->key;
+
+    if (tone->type & (TONEDATA_TYPE_RHY | TONEDATA_TYPE_SPL)) {
+        u8 subKey;
+        if (tone->type & TONEDATA_TYPE_SPL) {
+            /* Key split: tone.attack..release reused as a `u8*`
+             * pointer to a key→subTone-index table. The 4 bytes of
+             * `attack/decay/sustain/release` are reinterpreted via
+             * a host-friendly accessor that mirrors the asm's
+             * `ldr [r5, #0x2c]` 4-byte load. On a 64-bit host this
+             * is a 32-bit truncated pointer; the self-check sets
+             * the table address explicitly via the embedded helper. */
+            const u8* keyTable = (const u8*)(uintptr_t)(
+                ((u32)tone->attack)
+                | ((u32)tone->decay << 8)
+                | ((u32)tone->sustain << 16)
+                | ((u32)tone->release << 24));
+            subKey = keyTable[key];
+        } else {
+            subKey = key;
+        }
+        /* tone.wav is a ToneData* (pointing to the sub-tones
+         * array) on this path. */
+        ToneData* subBank = (ToneData*)tone->wav;
+        subTone = &subBank[subKey];
+        /* If the resolved sub-tone is itself a rhythm/key-split
+         * tone, the asm bails (no recursion). */
+        if (subTone->type & (TONEDATA_TYPE_RHY | TONEDATA_TYPE_SPL)) {
+            return;
+        }
+        if (tone->type & TONEDATA_TYPE_RHY) {
+            /* Rhythm: optional pan override + key from sub-tone. */
+            if (subTone->pan_sweep & 0x80) {
+                /* sp[0x14] = (pan_sweep - 0xC0) << 1. */
+                forcedRelease = (u32)(((s32)subTone->pan_sweep - 0xC0) << 1) & 0xff;
+            }
+            key = subTone->key;
+        }
+    } else {
+        subTone = tone;
+    }
+
+    /* The dispatched key (asm sp[8]) is the post-resolution key. */
+    u8 dispatchKey = key;
+
+    /* The note's allocation priority is the track's priority plus the
+     * mp-wide priority bias (mp->priority), saturated at 0xFF.
+     * (asm: `r0 = track->priority + mp->priority; if r0 > 0xff: r0 = 0xff`) */
+    u32 notePriority = (u32)track->priority + (u32)mp->priority;
+    if (notePriority > 0xff) {
+        notePriority = 0xff;
+    }
+
+    /* (3) Channel allocation. */
+    u32 cgbType = subTone->type & 7;
+
+    SoundChannel* chosenDS = NULL;
+    M4A_CgbChannel* chosenCGB = NULL;
+
+    if (cgbType != 0) {
+        /* CGB path: a single fixed channel chosen by voice type. */
+        M4A_CgbChannel* cgb = soundInfo->cgbChannels;
+        if (cgb == NULL) {
+            return;
+        }
+        M4A_CgbChannel* slot = &cgb[cgbType - 1];
+        u8 sf = slot->statusFlags;
+        if ((sf & M4A_CHAN_FLAGS_ENV) == 0) {
+            chosenCGB = slot; /* envelope dead → take it */
+        } else if (sf & M4A_CHAN_FLAG_RELEASE) {
+            chosenCGB = slot; /* releasing → preempt */
+        } else if (slot->priority < notePriority) {
+            chosenCGB = slot; /* lower priority → evict */
+        } else if (slot->priority == notePriority) {
+            /* Tie-break by track ptr: evict if existing track ptr
+             * is >= our track. */
+            if ((uintptr_t)(u32)slot->track >= (uintptr_t)track) {
+                chosenCGB = slot;
+            } else {
+                return;
+            }
+        } else {
+            return;
+        }
+    } else {
+        /* DirectSound path: scan soundInfo->chans[0..maxChannels). */
+        SoundChannel* best = NULL;
+        u32 bestPriority = notePriority;
+        uintptr_t bestTrack = (uintptr_t)track;
+        u32 hasReleasingCandidate = 0;
+
+        u8 maxChans = soundInfo->maxChannels;
+        for (u8 i = 0; i < maxChans; i++) {
+            SoundChannel* c = &soundInfo->chans[i];
+            u8 sf = c->statusFlags;
+            if ((sf & M4A_CHAN_FLAGS_ENV) == 0) {
+                /* Envelope-dead chan: take immediately, asm's
+                 * `_080AFD40` direct branch (the inner-loop scan
+                 * doesn't continue once a free chan is found). */
+                best = c;
+                break;
+            }
+            if (sf & M4A_CHAN_FLAG_RELEASE) {
+                /* Releasing chan: prefer over any non-releasing. */
+                if (!hasReleasingCandidate) {
+                    hasReleasingCandidate = 1;
+                    bestPriority = c->priority;
+                    bestTrack = (uintptr_t)c->track;
+                    best = c;
+                } else {
+                    if (c->priority < bestPriority) {
+                        bestPriority = c->priority;
+                        bestTrack = (uintptr_t)c->track;
+                        best = c;
+                    } else if (c->priority == bestPriority) {
+                        uintptr_t ct = (uintptr_t)c->track;
+                        if (ct > bestTrack) {
+                            bestTrack = ct;
+                            best = c;
+                        }
+                    }
+                }
+            } else if (!hasReleasingCandidate) {
+                /* Non-releasing, no releasing candidate yet: compete
+                 * on priority + track-ptr tiebreak vs. our note. */
+                if (c->priority < bestPriority) {
+                    bestPriority = c->priority;
+                    bestTrack = (uintptr_t)c->track;
+                    best = c;
+                } else if (c->priority == bestPriority) {
+                    uintptr_t ct = (uintptr_t)c->track;
+                    if (ct > bestTrack) {
+                        bestTrack = ct;
+                        best = c;
+                    }
+                }
+            }
+        }
+
+        if (best == NULL) {
+            return; /* no candidate → drop the note */
+        }
+        chosenDS = best;
+    }
+
+    /* Install the chosen chan into track->chan (head of list).
+     *
+     * The two cases (DirectSound vs. CGB) differ in struct layout
+     * past byte 0x14 (CgbChannel has its own n4/pan/panMask/... block
+     * where SoundChannel has count/fw/wav, and the trailing prev/next/
+     * track u32s land at different host offsets due to embedded
+     * pointers in SoundChannel). The fields up through `rhythmPan`
+     * (offset 0x14), plus `echoVolume`/`echoLength` (0x0C/0x0D) and
+     * `frequency` (offset 0x20 in both), are byte-identical on host;
+     * the diverging post-rhythmPan fields are written through the
+     * matching struct type. */
+
+    /* lfo + TrkVolPitSet are common to both paths and don't touch
+     * the chan pointer. */
+    track->lfoDelayC = track->lfoDelay;
+    if (track->lfoDelay != 0) {
+        clear_modM(track);
+    }
+    TrkVolPitSet(mp, track);
+
+    /* Compute the freq seed: r3 = chan->key + (s8)track->keyM,
+     * clamped to >= 0. (chan->key isn't yet set; both the asm and
+     * us use the resolved dispatchKey here.) */
+    s32 freqKey = (s32)dispatchKey + (s32)(s8)track->keyM;
+    if (freqKey < 0) {
+        freqKey = 0;
+    }
+
+    if (chosenDS != NULL) {
+        SoundChannel* chan = chosenDS;
+
+        ClearChain(chan);
+        chan->prev = 0;
+        chan->next = (u32)(uintptr_t)track->chan;
+        if (track->chan != NULL) {
+            track->chan->prev = (u32)(uintptr_t)chan;
+        }
+        track->chan = chan;
+        chan->track = track;
+
+        chan->gateTime = track->gateTime;
+        chan->priority = (u8)notePriority;
+        chan->key = dispatchKey;
+        chan->rhythmPan = (u8)forcedRelease;
+        chan->type = subTone->type;
+        chan->wav = subTone->wav;
+        chan->attack = subTone->attack;
+        chan->decay = subTone->decay;
+        chan->sustain = subTone->sustain;
+        chan->release = subTone->release;
+        chan->echoVolume = track->echoVolume;
+        chan->echoLength = track->echoLength;
+        ChnVolSetAsm();
+
+        chan->frequency = MidiKeyToFreq(
+            (WaveData*)subTone->wav, (u8)freqKey, track->pitM);
+
+        chan->statusFlags = 0x80;
+    } else {
+        M4A_CgbChannel* cgb = chosenCGB;
+
+        /* CgbChannel-side install: same field semantics, different
+         * trailing-field layout. The asm's ClearChain takes a void*
+         * and walks bytes; on the host it's a no-op stub. */
+        ClearChain(cgb);
+        cgb->prev = 0;
+        cgb->next = (u32)(uintptr_t)track->chan;
+        if (track->chan != NULL) {
+            /* Old head's prev field. The host SoundChannel.prev is
+             * a u32 at SoundChannel offset 0x40 (after pointer-
+             * widened wav/currentPointer/track). track->chan is a
+             * SoundChannel*, so we use named-field access. */
+            track->chan->prev = (u32)(uintptr_t)cgb;
+        }
+        /* track->chan is typed SoundChannel*. The CgbChannel install
+         * stores the cgb-typed pointer here; downstream walks treat
+         * the head as opaque bytes anyway (see m4a_chan_gate_tick),
+         * so the type punning is faithful to the asm. */
+        track->chan = (SoundChannel*)cgb;
+        cgb->track = (u32)(uintptr_t)track;
+
+        cgb->gateTime = track->gateTime;
+        cgb->priority = (u8)notePriority;
+        cgb->key = dispatchKey;
+        cgb->rhythmPan = (u8)forcedRelease;
+        cgb->type = subTone->type;
+        cgb->attack = subTone->attack;
+        cgb->decay = subTone->decay;
+        cgb->sustain = subTone->sustain;
+        cgb->release = subTone->release;
+        cgb->echoVolume = track->echoVolume;
+        cgb->echoLength = track->echoLength;
+        ChnVolSetAsm();
+
+        /* CGB-only byte pokes: the asm writes subTone->length and a
+         * derived n4 byte at chan + 0x1e / chan + 0x1f. On the
+         * CgbChannel host layout those bytes land in `length` and
+         * `sweep` respectively (CgbChannel.length at 0x1E,
+         * CgbChannel.sweep at 0x1F per src/gba/m4a.c). */
+        cgb->length = subTone->length;
+        u8 ps = subTone->pan_sweep;
+        u8 n4 = 0;
+        if (ps & 0x80) {
+            n4 = 8;
+        } else if (ps & 0x70) {
+            n4 = 8;
+        } else {
+            n4 = ps;
+        }
+        cgb->sweep = n4;
+
+        if (soundInfo->MidiKeyToCgbFreq != NULL) {
+            cgb->frequency = soundInfo->MidiKeyToCgbFreq(
+                (u8)cgbType, (u8)freqKey, track->pitM);
+        }
+
+        cgb->statusFlags = 0x80;
+    }
+
+    /* Final: clear the lower nibble of track->flags. */
+    track->flags &= 0xF0;
+}
+
+/* The public 2-arg ply_note that m4a.c stores into soundInfo->plynote.
+ * Calls into ply_note_impl with gateIdx=0 (gClockTable[0] = 0, so
+ * the gateTime initialisation is a no-op). */
+void ply_note(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    ply_note_impl(mp, track, 0);
+}
 
 /* `nullsub_141` is referenced as the engine's no-op slot. */
 void nullsub_141(void) { /* truly a nullsub */
@@ -1782,6 +2263,344 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track_local.runningStatus == 0xBD);
         M4A_CHECK(track_local.wait == 0); /* 1 - 1 = 0 after tick */
     }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.2.2.2.2.2: ply_note.                           */
+    /*                                                             */
+    /* Verifies the standalone handler against synthesized         */
+    /* SoundInfo / SoundChannel arrays. Each sub-test sets up a    */
+    /* fresh SoundInfo (cast over the host gSoundInfo BSS via the  */
+    /* host-mirror M4A_SoundInfo struct), wires up an active tone, */
+    /* runs ply_note_impl, and asserts the channel-allocation walk */
+    /* picked the right slot, the chan was inserted at             */
+    /* track->chan, and the ADSR / wav / frequency / lower-nibble  */
+    /* flag bits all match the asm contract.                       */
+    /*                                                             */
+    /* ply_note calls `ClearChain(chan)`, which dispatches through */
+    /* `gMPlayJumpTable[34]` (the m4a engine's RealClearChain      */
+    /* slot). That table isn't populated until `m4aSoundInit()` is */
+    /* called by the engine, which happens AFTER Port_M4ASelfCheck */
+    /* returns — so install the pointer manually here. The         */
+    /* equivalent install in production happens via the            */
+    /* `gMPlayJumpTableTemplate[]` copy in `m4a.c::SoundInit`. */
+    /* ----------------------------------------------------------- */
+    {
+        extern void RealClearChain(void* x);
+        gMPlayJumpTable[34] = (void*)RealClearChain;
+    }
+
+    {
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+
+        /* Empty-chan immediate alloc: with one envelope-dead chan,
+         * ply_note picks chans[0] without bothering to scan further. */
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 4;
+        /* All chans envelope-dead by default (statusFlags = 0). */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        ToneData my_tone;
+        WaveData my_wav;
+        u8 stream_local[8];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&my_tone, 0, sizeof(my_tone));
+        memset(&my_wav, 0, sizeof(my_wav));
+        my_wav.freq = 0x10000000u; /* arbitrary nonzero base freq */
+        my_tone.type = 0;          /* DirectSound (cgbType == 0) */
+        my_tone.attack = 0xA0;
+        my_tone.decay = 0xB0;
+        my_tone.sustain = 0xC0;
+        my_tone.release = 0xD0;
+        my_tone.wav = &my_wav;
+        track_local.tone = my_tone;
+        track_local.priority = 0x10;
+        track_local.flags = MPT_FLG_VOLSET | MPT_FLG_PITSET; /* lower nibble bits to clear */
+        stream_local[0] = 0x3C; /* key */
+        stream_local[1] = 0x40; /* velocity */
+        stream_local[2] = 0x80; /* sentinel: skip gateTime delta */
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        M4A_CHECK(track_local.cmdPtr == stream_local + 2); /* key + velocity consumed */
+        M4A_CHECK(track_local.key == 0x3C);
+        M4A_CHECK(track_local.velocity == 0x40);
+        /* gateTime = gClockTable[0] (= 0) — stays 0 since no delta. */
+        M4A_CHECK(track_local.chan == &si->chans[0]);
+        M4A_CHECK(si->chans[0].track == &track_local);
+        M4A_CHECK(si->chans[0].statusFlags == 0x80);
+        M4A_CHECK(si->chans[0].key == 0x3C);
+        M4A_CHECK(si->chans[0].priority == 0x10);
+        M4A_CHECK(si->chans[0].attack == 0xA0);
+        M4A_CHECK(si->chans[0].decay == 0xB0);
+        M4A_CHECK(si->chans[0].sustain == 0xC0);
+        M4A_CHECK(si->chans[0].release == 0xD0);
+        M4A_CHECK(si->chans[0].wav == &my_wav);
+        M4A_CHECK(si->chans[0].next == 0); /* no prior head */
+        M4A_CHECK(si->chans[0].prev == 0);
+        M4A_CHECK(si->chans[0].frequency != 0); /* MidiKeyToFreq ran */
+        /* track->flags &= 0xF0: lower nibble cleared. */
+        M4A_CHECK((track_local.flags & 0x0f) == 0);
+    }
+
+    {
+        /* Releasing-chan preference: chans[0] is envelope-active +
+         * not releasing, chans[1] is releasing → ply_note picks
+         * chans[1] (releasing wins over high-priority active). */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 3;
+        si->chans[0].statusFlags = 0x83;       /* envelope-active */
+        si->chans[0].priority = 0x05;          /* low → would otherwise win */
+        si->chans[1].statusFlags = 0x83 | 0x40; /* releasing */
+        si->chans[1].priority = 0xFF;
+        si->chans[2].statusFlags = 0x83;       /* envelope-active, high prio */
+        si->chans[2].priority = 0x80;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        WaveData wav;
+        u8 stream_local[4];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        track_local.tone.type = 0;
+        track_local.tone.wav = &wav;
+        track_local.priority = 0x40;
+        stream_local[0] = 0x80; /* no key/velocity/delta */
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        M4A_CHECK(track_local.chan == &si->chans[1]);
+        M4A_CHECK(si->chans[1].statusFlags == 0x80); /* reset to fresh "ready" */
+    }
+
+    {
+        /* Priority compare among non-releasing chans: chans[0]
+         * priority 0x80 (>= notePriority 0x40 → not evictable),
+         * chans[1] priority 0x10 (< 0x40 → evict). */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 3;
+        si->chans[0].statusFlags = 0x83;
+        si->chans[0].priority = 0x80;
+        si->chans[1].statusFlags = 0x83;
+        si->chans[1].priority = 0x10;
+        si->chans[2].statusFlags = 0x83;
+        si->chans[2].priority = 0x90;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        WaveData wav;
+        u8 stream_local[4];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        track_local.tone.type = 0;
+        track_local.tone.wav = &wav;
+        track_local.priority = 0x40;
+        stream_local[0] = 0x80;
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        M4A_CHECK(track_local.chan == &si->chans[1]);
+    }
+
+    {
+        /* No suitable chan: all chans envelope-active + high
+         * priority → ply_note drops the note (track->chan stays
+         * at its initial value, no statusFlags writes). */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 2;
+        si->chans[0].statusFlags = 0x83;
+        si->chans[0].priority = 0xFF;
+        si->chans[1].statusFlags = 0x83;
+        si->chans[1].priority = 0xFF;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        u8 stream_local[4];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        track_local.tone.type = 0;
+        track_local.priority = 0x10;
+        track_local.flags = MPT_FLG_VOLSET; /* should NOT be cleared on drop */
+        stream_local[0] = 0x80;
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        M4A_CHECK(track_local.chan == NULL);
+        M4A_CHECK(si->chans[0].statusFlags == 0x83); /* untouched */
+        M4A_CHECK(si->chans[1].statusFlags == 0x83);
+        /* Lower nibble flag NOT cleared on the drop path. */
+        M4A_CHECK((track_local.flags & 0x0f) != 0);
+    }
+
+    {
+        /* Head-of-list insertion: when track->chan already points
+         * at an existing chan, the newly-allocated one becomes the
+         * new head and chains forward to the old head. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 2;
+
+        SoundChannel oldHead;
+        memset(&oldHead, 0, sizeof(oldHead));
+        oldHead.statusFlags = 0x83;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        WaveData wav;
+        u8 stream_local[4];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        track_local.tone.type = 0;
+        track_local.tone.wav = &wav;
+        track_local.chan = &oldHead; /* simulate prior allocation */
+        stream_local[0] = 0x80;
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        M4A_CHECK(track_local.chan == &si->chans[0]);
+        /* chan->next stores oldHead address, truncated to u32 — which
+         * is faithful to the m4a SoundChannel layout. */
+        M4A_CHECK(si->chans[0].next == (u32)(uintptr_t)&oldHead);
+        M4A_CHECK(oldHead.prev == (u32)(uintptr_t)&si->chans[0]);
+        M4A_CHECK(si->chans[0].prev == 0); /* new head has no predecessor */
+    }
+
+    {
+        /* gateIdx + delta: gateTime = gClockTable[gateIdx] + delta. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 1;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        WaveData wav;
+        u8 stream_local[6];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        track_local.tone.type = 0;
+        track_local.tone.wav = &wav;
+        stream_local[0] = 0x3C; /* key */
+        stream_local[1] = 0x40; /* velocity */
+        stream_local[2] = 0x05; /* gateTime delta */
+        stream_local[3] = 0x80;
+        track_local.cmdPtr = stream_local;
+        /* gateIdx 1 → gClockTable[1] = 1; + 5 = 6. */
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/1);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 3);
+        M4A_CHECK(track_local.gateTime == (u8)(gClockTable[1] + 5));
+        M4A_CHECK(si->chans[0].gateTime == track_local.gateTime);
+    }
+
+    {
+        /* CGB path: tone.type & 7 in {1..6} routes to soundInfo->
+         * cgbChannels[type-1]. With a synthesized cgb-chan slot,
+         * verify chan picked, MidiKeyToCgbFreq invoked, etc. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 1;
+        M4A_CgbChannel cgb[4];
+        memset(cgb, 0, sizeof(cgb));
+        si->cgbChannels = cgb;
+
+        /* Leave si->MidiKeyToCgbFreq = NULL: the host port skips
+         * the frequency lookup gracefully, so chan->frequency stays
+         * at its memset(0) initial value and the rest of the chan
+         * install path is what's exercised. */
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        u8 stream_local[4];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        track_local.tone.type = 2; /* CGB type 2 → cgbChannels[1] */
+        track_local.tone.length = 0x20;
+        track_local.tone.pan_sweep = 0x44;
+        track_local.tone.attack = 0xA1;
+        track_local.tone.decay = 0xA2;
+        track_local.tone.sustain = 0xA3;
+        track_local.tone.release = 0xA4;
+        track_local.priority = 0x30;
+        stream_local[0] = 0x3C; /* key */
+        stream_local[1] = 0x80;
+        track_local.cmdPtr = stream_local;
+        ply_note_impl(&mp_local, &track_local, /*gateIdx=*/0);
+
+        SoundChannel* picked = (SoundChannel*)&cgb[1];
+        M4A_CHECK(track_local.chan == picked);
+        M4A_CHECK(cgb[1].statusFlags == 0x80);
+        M4A_CHECK(cgb[1].type == 2);
+        M4A_CHECK(cgb[1].key == 0x3C);
+        M4A_CHECK(cgb[1].priority == 0x30);
+        M4A_CHECK(cgb[1].attack == 0xA1);
+        M4A_CHECK(cgb[1].release == 0xA4);
+        /* CGB-only byte pokes: subTone->length lands in cgb->length,
+         * derived n4 byte lands in cgb->sweep (CgbChannel host
+         * layout — see m4a.c). */
+        M4A_CHECK(cgb[1].length == 0x20);
+        /* pan_sweep 0x44: not & 0x80, but & 0x70 → n4 = 8. */
+        M4A_CHECK(cgb[1].sweep == 8);
+        M4A_CHECK(cgb[1].track == (u32)(uintptr_t)&track_local);
+        /* MidiKeyToCgbFreq was NULL → frequency stays 0. */
+        M4A_CHECK(cgb[1].frequency == 0);
+    }
+
+    {
+        /* Dispatcher: opcode 0xCF (= M4A_NOTE_BASE) drives ply_note
+         * with gateIdx = 0; opcode 0xD0 with gateIdx = 1. Use a
+         * fresh SoundInfo with a single empty chan and verify the
+         * note lands and runningStatus latches. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        si->maxChannels = 2;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        WaveData wav;
+        u8 stream_local[8];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        memset(&wav, 0, sizeof(wav));
+        wav.freq = 0x10000000u;
+        mp_local.ident = M4A_ID_NUMBER;
+        mp_local.tempoI = 150;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST;
+        track_local.tone.type = 0;
+        track_local.tone.wav = &wav;
+        stream_local[0] = 0xD0; /* gateIdx = 1 */
+        stream_local[1] = 0x3C; /* key */
+        stream_local[2] = 0x40; /* velocity */
+        stream_local[3] = 0x80; /* end of operands; wait command */
+        stream_local[4] = 0x81; /* wait, gClockTable[1] = 1 */
+        track_local.cmdPtr = stream_local;
+        MPlayMain(&mp_local);
+
+        /* runningStatus latched at 0xD0 (>= 0xBD). */
+        M4A_CHECK(track_local.runningStatus == 0xD0);
+        M4A_CHECK(track_local.chan == &si->chans[0]);
+        M4A_CHECK(si->chans[0].key == 0x3C);
+        M4A_CHECK(si->chans[0].statusFlags == 0x80);
+        /* Wait was 1 → decremented to 0 by the LFO step. */
+        M4A_CHECK(track_local.wait == 0);
+    }
+
+    /* Restore gSoundInfo to a zero state so any other code that
+     * looks at it post-self-check sees a clean slate (matches the
+     * zero-fill that m4aSoundInit will perform when the engine
+     * boots). */
+    memset(gSoundInfo, 0, sizeof(gSoundInfo));
 
 #undef M4A_WRITE_LE32
 #undef M4A_RUN
