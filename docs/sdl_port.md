@@ -1008,7 +1008,64 @@ are tracked here for future contributors.
         `ply_endtie`. Promote `NUM_MUSIC_PLAYERS` back to its real
         value in `src/gba/m4a.c` once the dispatcher can drive a
         synthesized song through to completion under
-        `Port_M4ASelfCheck()`'s harness.
+        `Port_M4ASelfCheck()`'s harness. Broken into three substeps so
+        each lands as a focused, independently-testable change.
+        - [x] **PR #7 part 2.2.2.1** Promoted the control-flow `ply_*`
+          handlers in `src/platform/shared/m4a_host.c` from no-op
+          stubs to real C ports of `asm/lib/m4a_asm.s`: `ply_fine`,
+          `ply_goto`, `ply_patt`, `ply_pend`, `ply_rept`, and the
+          `track->chan` walk in `ply_endtie` (plus the matching
+          chan-walk inside `ply_fine` itself). All four pattern-stack
+          handlers decode the command stream's 4-byte little-endian
+          target addresses through a single `m4a_read_cmd_ptr`
+          helper that intentionally skips the asm's `sub_080AF75C`
+          ROM-bounds clamp — the clamp on the GBA exists only to
+          protect against obviously-bogus pointers in low memory and
+          has no host equivalent (and would otherwise reject the
+          self-check's synthetic addresses). The `ply_patt`
+          stack-overflow path mirrors the asm's tail-call into
+          `ply_fine`, and `ply_rept` matches the asm's `count == 0
+          ⇒ infinite loop` / `repN < count ⇒ goto` / else `reset
+          and skip 5 bytes` pattern. The chan-walk shared between
+          `ply_fine` and `ply_endtie` reads chan->statusFlags /
+          chan->midiKey / chan->next directly through the public
+          `SoundChannel` typedef, with a NULL terminator and an
+          asm-matching self-loop guard (`if next == self, set next
+          = 0`); under the silent host mixer no `SoundChannel` is
+          ever connected to a track so the loop body is a runtime
+          no-op, but it is exercised end-to-end by
+          `Port_M4ASelfCheck()` against a synthesized
+          stack-allocated `SoundChannel`. The self-check now covers:
+          ply_goto bit-pattern decode; ply_patt push + nested push +
+          stack-full fall-through to ply_fine; ply_pend pop +
+          empty-stack no-op; ply_rept count==0 / count>0 across all
+          three iterations of a 3-repeat loop; ply_fine NULL-chan +
+          envelope-active chan + envelope-inactive (RealClearChain)
+          chan; ply_endtie's chan walk for matched key, mismatched
+          key, already-releasing chan, and the `>= 0x80` reuse path.
+          The remaining handlers (`ply_voice`, `ply_note`,
+          `ply_port`) stay no-op stubs because they need either
+          `MPlayMain`'s surrounding state (ROM-address loads against
+          `gSongTable`, channel allocation) or the CGB register
+          pokes that PR #7 part 2.3 will introduce. The `--frames=30`
+          golden hashes for both the default `=ON` and the preserved
+          `=OFF` builds are bit-for-bit unchanged
+          (`0x8f68687253dc1b25` and `0xf9b70c534973f325`) because the
+          handlers are reached only via `MPlayMain`, which is itself
+          still a no-op stub and `NUM_MUSIC_PLAYERS == 0` under
+          `__PORT__` — so on the running game the new code is
+          exercised by the smoke-test self-check only.
+        - [ ] **PR #7 part 2.2.2.2** Host C reimplementation of
+          `MPlayMain`'s dispatcher loop + `ply_voice` / `ply_note`
+          and the per-track `TrkVolPitSet` second loop. Gated so the
+          channel-update half stays a no-op when `track->chan` is
+          NULL (the silent host mixer case).
+        - [ ] **PR #7 part 2.2.2.3** Promote `NUM_MUSIC_PLAYERS` back
+          to its real value in `src/gba/m4a.c` once the dispatcher
+          can drive a synthesized song through to completion under
+          `Port_M4ASelfCheck()`'s harness. Verify golden hashes stay
+          stable (the silent mixer keeps audio off, so the
+          rasterizer should be unaffected).
     - [ ] **PR #7 part 2.3** Host C reimplementation of `SoundMain` /
       `SoundMainBTM` so DirectSound + CGB channels accumulate samples
       into a per-frame PCM scratchpad that is then pushed through
