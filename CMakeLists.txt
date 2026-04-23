@@ -218,6 +218,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
     src/platform/shared/port_text_unpacker.c
+    src/platform/shared/port_text_data_stubs.c
     src/platform/shared/render.c
 )
 
