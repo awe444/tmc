@@ -82,9 +82,8 @@ PORT_ASM_STUB(SumDropProbabilities2)
 
 /* ---- asm/src/code_08001A7C.s (11 symbols) ---- */
 PORT_ASM_STUB(GetFuserId)
-PORT_ASM_STUB(sub_080026C4)
-PORT_ASM_STUB(sub_080026F2)
-PORT_ASM_STUB(UnpackTextNibbles)
+/* sub_080026C4 / sub_080026F2 are now real C ports in
+ * src/platform/shared/port_text_unpacker.c. */
 PORT_ASM_STUB(GetNextFunction)
 PORT_ASM_STUB(LinearMoveDirectionOLD)
 PORT_ASM_STUB(CalcCollisionDirectionOLD)
@@ -264,7 +263,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     SoundReqClipped,
     SumDropProbabilities,
     SumDropProbabilities2,
-    UnpackTextNibbles,
     UpdateAnimationSingleFrame,
     UpdateAnimationVariableFrames,
     UpdateCollisionLayer,
@@ -278,8 +276,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     sub_080012DC,
     sub_08001318,
     sub_0800132C,
-    sub_080026C4,
-    sub_080026F2,
     sub_080028E0,
     sub_08003FDE,
     sub_080040A2,
