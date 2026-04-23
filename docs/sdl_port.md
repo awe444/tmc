@@ -1199,14 +1199,77 @@ are tracked here for future contributors.
                 runtime path while `NUM_MUSIC_PLAYERS == 0` under
                 `__PORT__` — only the smoke-test self-check
                 exercises the new code.
-            - [ ] **PR #7 part 2.2.2.2.3** Per-track `TrkVolPitSet`
-              second loop in `MPlayMain` (the `_080AFAB2..._080AFB60`
-              region). Channel-update half stays a no-op when
-              `track->chan == NULL` (the silent host mixer case);
-              the `TrkVolPitSet(mp, track)` call itself runs
-              unconditionally on tracks with `MPT_FLG_VOLCHG`/
-              `MPT_FLG_PITCHG` set, exercising the C-defined
-              `TrkVolPitSet` from `src/gba/m4a.c`.
+            - [x] **PR #7 part 2.2.2.2.3** Promoted the per-track
+              second loop in `MPlayMain`
+              (`_080AFAB2..._080AFB60` in `asm/lib/m4a_asm.s`) from
+              a deferred no-op to a real C port in
+              `src/platform/shared/m4a_host.c`. Implemented as a
+              `m4a_track_volpit_pass()` static helper invoked from
+              `MPlayMain` immediately after the tempo-stepped
+              dispatcher loop. For each `EXIST` track with a pending
+              `VOLCHG`/`PITCHG` bit in the low nibble of
+              `track->flags`: calls the C-defined `TrkVolPitSet`
+              from `src/gba/m4a.c` (which itself folds in modM /
+              bend / pan, computes `volMR`/`volML` and `keyM`/`pitM`,
+              and clears the `VOLSET`/`PITSET` bits); then walks
+              `track->chan` and for each chan either calls
+              `ClearChain` (envelope-dead) or, for live chans,
+              dispatches the `VOLCHG` / `PITCHG` work — `ChnVolSetAsm`
+              (still a silent stub) plus a `+= 1` poke into the
+              CgbChannel `modify` byte for CGB-typed chans, then
+              `chan->frequency = MidiKeyToFreq(chan->wav, key+keyM,
+              pitM)` for DirectSound or the soundInfo-installed
+              `MidiKeyToCgbFreq(type, key+keyM, pitM)` for CGB
+              (with a NULL-callback graceful skip), and a `+= 2`
+              poke into `modify` for the CGB PITCHG case. The CGB
+              field accesses route through the existing
+              `M4A_CgbChannel` overlay (introduced in 2.2.2.2.2.2)
+              because the host SoundChannel layout diverges past
+              byte 0x14. The negative-key clamp (`newKey < 0 → 0`)
+              and the `chan->next == self` self-loop break are
+              both preserved verbatim from the asm. The lower
+              nibble of `track->flags` is cleared after each
+              per-track pass, including the `track->chan == NULL`
+              short-circuit branch — matching the asm's
+              `_080AFB50` fall-through. `Port_M4ASelfCheck()` grew
+              a 2.2.2.2.3 section that exercises ten scenarios:
+              the !EXIST skip, the (flags & 0xF) == 0 skip, the
+              `track->chan == NULL` VOLCHG path (with TrkVolPitSet
+              math verified against the produced `volMR`/`volML`),
+              the same for PITCHG (with `keyM`/`pitM`), the dead-
+              envelope chan ClearChain path, the live DirectSound
+              chan PITCHG path landing a real `MidiKeyToFreq`
+              result into `chan->frequency`, the negative-key
+              clamp routed through a separately-injected `keyM`
+              (with a `MidiKeyToFreq` reference comparison), the
+              live CGB chan VOLCHG+PITCHG path verifying both
+              `MidiKeyToCgbFreq` is invoked and `modify` ends up
+              `0b11`, the NULL `MidiKeyToCgbFreq` graceful-skip
+              path (frequency untouched, modify still `0b10`), a
+              NULL-terminated multi-chan walk progressing past
+              `chan_a`, and a 3-track multi-track pass with mixed
+              flag states. Two pre-existing 2.2.2.2.1 dispatcher
+              tests had to be updated: the `ply_vol` and LFO
+              `modT==0` tests previously asserted that
+              `MPT_FLG_VOLCHG` / `MPT_FLG_PITCHG` *remained* set on
+              the track after `MPlayMain` returned (because the
+              second loop was a no-op stub). With the second loop
+              now consuming the low nibble, those assertions now
+              check `(flags & 0x0F) == 0` and that `MPT_FLG_EXIST`
+              is preserved. The asm's `chan->next == self` self-
+              loop break is preserved in the walker for parity but
+              isn't testable on a 64-bit host because
+              `SoundChannel.next` is a `u32` and stack addresses
+              don't fit; the engine's real chan arena (where
+              addresses fit `u32`) exercises that path at runtime.
+              The `--frames=30` golden hashes for both the default
+              `=ON` (`0x8f68687253dc1b25`) and the preserved
+              `=OFF` (`0xf9b70c534973f325`) builds remain
+              bit-for-bit unchanged because the second loop is
+              reached only via `MPlayMain`, which is itself
+              unreachable from the runtime path while
+              `NUM_MUSIC_PLAYERS == 0` under `__PORT__` — only the
+              smoke-test self-check exercises the new code.
         - [ ] **PR #7 part 2.2.2.3** Promote `NUM_MUSIC_PLAYERS` back
           to its real value in `src/gba/m4a.c` once the dispatcher
           can drive a synthesized song through to completion under
