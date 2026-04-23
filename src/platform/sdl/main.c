@@ -263,6 +263,17 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    /* PR #7 part 2.1: validate the host-side audio ring buffer that the
+     * future m4a host mixer will feed into the SDL audio device. The
+     * check runs without touching SDL so it executes identically with
+     * `--mute` or `TMC_ENABLE_AUDIO=OFF`. Defined in
+     * src/platform/shared/audio_ring.c. */
+    if (Port_AudioSelfCheck() != 0) {
+        fprintf(stderr, "[tmc_sdl] FATAL: audio ring-buffer self-check failed. "
+                        "See src/platform/shared/audio_ring.c::Port_AudioSelfCheck().\n");
+        SDL_Quit();
+        return 1;
+    }
 
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
         SDL_Quit();

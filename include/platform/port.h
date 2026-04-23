@@ -307,11 +307,59 @@ int Port_RendererSelfCheck(void);
 /* Audio.                                                                   */
 /* ------------------------------------------------------------------------ */
 
-/** Open SDL audio (silent stub mixer for now). */
+/** Open SDL audio. The device drains an SPSC ring buffer that the
+ *  host m4a mixer feeds via `Port_AudioPushSamples()`. While no
+ *  producer is wired in (PR #7 part 2.2 / 2.3) the consumer underflows
+ *  to zero-fill, so the device plays silence — same audible behaviour
+ *  as the original silent-callback stub but with the data path that
+ *  the real mixer will plug into already in place. */
 int Port_AudioInit(void);
 
-/** Close SDL audio. */
+/** Close SDL audio. Idempotent. */
 void Port_AudioShutdown(void);
+
+/**
+ * Negotiated SDL audio sample rate in Hz, or `PORT_AUDIO_DEFAULT_RATE`
+ * if the device has not been opened yet (`--mute`, `TMC_ENABLE_AUDIO=OFF`,
+ * or when running before `Port_AudioInit()`). The host mixer uses this
+ * to compute how many stereo frames it needs to produce per VBlank.
+ *
+ * Always reflects two channels of interleaved S16 samples — the only
+ * format the SDL device is opened with.
+ */
+int Port_AudioGetSampleRate(void);
+
+/**
+ * Default SDL audio sample rate the device is opened with. Matches the
+ * GBA m4a default of 13379 Hz so the existing engine timing translates
+ * 1:1; `SDL_OpenAudioDevice` may negotiate a different value, which
+ * `Port_AudioGetSampleRate()` will then reflect.
+ */
+#define PORT_AUDIO_DEFAULT_RATE 13379
+
+/**
+ * Push `frame_count` interleaved S16 stereo frames (so 2 * frame_count
+ * samples) into the audio device's ring buffer. Producer-only; safe to
+ * call from the game/audio thread (e.g. from `m4aSoundVSync` or its
+ * host equivalent). If the ring is too full to take everything, the
+ * tail is dropped — the audio device prefers an underflow-to-silence
+ * over blocking the game thread. The drop counter is exposed via the
+ * shared ring buffer header (`audio_ring.h`) for diagnostics.
+ *
+ * Returns the number of stereo frames actually accepted.
+ */
+int Port_AudioPushSamples(const int16_t* samples, int frame_count);
+
+/**
+ * Headless self-check for the audio ring buffer plumbing (PR #7
+ * part 2.1). Exercises push / pull / overflow / underflow / wrap
+ * paths without touching SDL, so it runs identically with or without
+ * an open audio device. Saves and restores the ring state so it is
+ * safe to call alongside the other smoke-test self-checks.
+ *
+ * Returns 0 on success, non-zero on any mismatch.
+ */
+int Port_AudioSelfCheck(void);
 
 /* ------------------------------------------------------------------------ */
 /* Synchronous DMA helpers.                                                 */

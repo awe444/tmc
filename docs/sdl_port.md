@@ -928,6 +928,46 @@ are tracked here for future contributors.
     callback ring buffer (replacing the current `silent_audio_callback`)
     and have `m4aSoundVSync` drive the per-vblank PCM advance. This
     is where audio actually starts playing.
+    - [x] **PR #7 part 2.1** SDL audio ring-buffer plumbing. Adds a
+      single-producer / single-consumer fixed-capacity ring of
+      interleaved S16 stereo PCM in `src/platform/shared/audio_ring.{h,c}`,
+      sized to ~4 vblanks worth of audio at the m4a default rate
+      (16384 samples; well above the per-callback drain). The SDL
+      audio callback in `src/platform/sdl/audio.c` no longer ignores
+      its `stream` argument — it drains the ring and zero-fills any
+      shortfall, so until parts 2.2 / 2.3 land a real producer the
+      audible behaviour stays silence (same as the previous
+      `silent_audio_callback` stub) but the data path the host mixer
+      will plug into is now in place. New public API in
+      `include/platform/port.h`: `Port_AudioPushSamples(samples,
+      frame_count)` (producer entry point — the m4a host code will
+      call this from `m4aSoundVSync` once 2.2 lands),
+      `Port_AudioGetSampleRate()` (returns the negotiated SDL rate so
+      the future mixer knows how many stereo frames to produce per
+      VBlank, defaulting to `PORT_AUDIO_DEFAULT_RATE = 13379` when
+      audio isn't open), and `Port_AudioSelfCheck()` (a headless
+      verifier for the push / pull / overflow / underflow / wrap
+      paths that runs alongside `Port_RendererSelfCheck()` /
+      `Port_ScriptedInputSelfCheck()` in
+      `src/platform/sdl/main.c` and so executes on every CI smoke
+      test, including the `--mute` headless one). The ring uses C11
+      `<stdatomic.h>` acquire/release ordering on the head and tail
+      indices with a `volatile`-fallback for older toolchains. The
+      `--frames=30` golden hashes for both the default `=ON` and the
+      preserved `=OFF` builds are bit-for-bit unchanged
+      (`0x8f68687253dc1b25` and `0xf9b70c534973f325`) because no
+      producer pushes anything yet — the entire change is invisible
+      to the rasterizer.
+    - [ ] **PR #7 part 2.2** Host C reimplementation of `MPlayMain` and
+      the asm `ply_*` command handlers in `m4a_host.c` so the m4a
+      state machine actually advances songs against the
+      `MusicPlayerInfo` / `MusicPlayerTrack` structures (no PCM
+      output yet — `SoundMain` stays silent).
+    - [ ] **PR #7 part 2.3** Host C reimplementation of `SoundMain` /
+      `SoundMainBTM` so DirectSound + CGB channels accumulate samples
+      into a per-frame PCM scratchpad that is then pushed through
+      `Port_AudioPushSamples` from `m4aSoundVSync`. This is where
+      audio actually plays.
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two
