@@ -126,6 +126,28 @@ tmc_sdl [options]
                        `frame-hash: 0x<16 hex>`. The CI golden-image
                        check (PR #8) consumes this; see
                        `src/platform/shared/golden/README.md`.
+  --press=SPEC         Schedule scripted button presses for the test
+                       harness so headless runs can drive synthetic
+                       input (e.g. press START at the title screen).
+                       SPEC is a comma-separated list of
+                       `KEYS@FRAME[+DURATION]` entries, where KEYS is
+                       one or more of A, B, START, SELECT, UP, DOWN,
+                       LEFT, RIGHT, L, R joined with `|`. FRAME is a
+                       0-based VBlank index; DURATION (default 1) is
+                       the number of frames the keys are held. May be
+                       repeated. Examples:
+                         --press=START@60+10
+                         --press='A@30,B@40,UP|A@120+2'
+                         --press='A|B|SELECT|START@200+8'   # soft reset
+                       Implemented in
+                       `src/platform/shared/scripted_input.c`; the
+                       resulting mask is OR'd into the keyboard /
+                       gamepad mask in `src/platform/sdl/input.c` so it
+                       reaches the game through the normal
+                       `REG_KEYINPUT` path.
+  --input-script=PATH  Load `--press` SPECs from a text file (one per
+                       non-comment line; lines starting with `#` and
+                       blank lines are ignored).
 ```
 
 ## Controls
