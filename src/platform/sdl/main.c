@@ -276,6 +276,20 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    /* PR #7 part 2.2.1: validate the m4a host shim's ply_* command
+     * handlers. Only meaningful when the game library (and therefore
+     * src/gba/m4a.c + src/platform/shared/m4a_host.c) is linked in;
+     * the =OFF build skips the call. Defined in
+     * src/platform/shared/m4a_host.c. */
+#if TMC_LINK_GAME_SOURCES
+    if (Port_M4ASelfCheck() != 0) {
+        fprintf(stderr, "[tmc_sdl] FATAL: m4a host-shim self-check failed. "
+                        "See src/platform/shared/m4a_host.c::Port_M4ASelfCheck().\n");
+        SDL_Quit();
+        return 1;
+    }
+#endif
+
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
         SDL_Quit();
         return 1;
