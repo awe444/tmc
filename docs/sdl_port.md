@@ -207,6 +207,44 @@ makes `LoadGfxGroup`'s `dest=0x06000000`-style writes land inside
 `gPortVram` rather than SIGSEGVing on an unmapped low page. CI runs
 this build on every push so the asset pipeline does not bit-rot.
 
+### Debug build (`-O0`) with assets
+
+The default configure uses `RelWithDebInfo` (`-O2 -g -DNDEBUG`), which
+inlines aggressively and is hard to step through in `gdb` / `lldb`.
+For a source-level-debugging build pass `-DCMAKE_BUILD_TYPE=Debug`
+on the same command line as `-DTMC_BASEROM=`:
+
+```sh
+cmake -S . -B build-debug -DTMC_GAME_VERSION=USA \
+                          -DTMC_BASEROM=/path/to/baserom.gba \
+                          -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug -j
+gdb --args ./build-debug/tmc_sdl
+```
+
+This produces `-O0 -g` for `tmc_sdl`, `tmc_game_sources`, and
+`tmc_unresolved_stubs`. The `sdl-debug` CMakePreset is the same
+configuration without `TMC_BASEROM` (asset stubs only).
+
+To investigate a crash that only happens after several frames of
+gameplay, attach `gdb` to the running process or run under it:
+
+```sh
+# Reach the crash interactively, then 'bt' for a backtrace.
+gdb -ex run --args ./build-debug/tmc_sdl
+
+# Or capture a core dump (Linux):
+ulimit -c unlimited
+./build-debug/tmc_sdl
+gdb ./build-debug/tmc_sdl core
+```
+
+Switching back to the optimized build is a matter of dropping the
+`-DCMAKE_BUILD_TYPE=Debug` flag (or passing `-DCMAKE_BUILD_TYPE=Release`
+explicitly for `-O3 -DNDEBUG`). The build directory is keyed off
+`CMAKE_BUILD_TYPE` only via the cache, so it is safe to keep
+`build-debug/` and `build/` side by side without re-configuring.
+
 ### What's still stubbed
 
 Even with `TMC_BASEROM` set, a few neighbouring asset paths remain

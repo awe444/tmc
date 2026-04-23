@@ -222,7 +222,7 @@ void sub_0802805C(LikeLikeEntity* this) {
 
 void LikeLike_ReleasePlayer(LikeLikeEntity* this) {
 // This matches but ugly
-#ifndef NON_MATCHING
+#if !defined(NON_MATCHING) && !defined(__PORT__)
     register u32 tmp asm("r3");
 #else
     u32 tmp;

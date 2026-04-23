@@ -20,6 +20,23 @@ project(tmc_sdl
     LANGUAGES C
 )
 
+# Default to RelWithDebInfo (= `-O2 -g -DNDEBUG`) when the user does not
+# pick a configuration on a single-config generator. This preserves the
+# historical out-of-the-box behaviour (`-O2 -g`) of this CMakeLists while
+# still letting `-DCMAKE_BUILD_TYPE=Debug` produce a real `-O0 -g` build
+# for source-level debugging (see docs/sdl_port.md, "Debug build" section).
+# Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) pick
+# the configuration at build time, so we leave CMAKE_BUILD_TYPE untouched
+# in that case.
+get_property(_tmc_is_multi_config GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _tmc_is_multi_config AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "RelWithDebInfo" CACHE STRING
+        "Build configuration. Use Debug for an -O0 source-level-debugging build."
+        FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS
+        Debug Release RelWithDebInfo MinSizeRel)
+endif()
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
@@ -377,9 +394,11 @@ endif()
 # so strict-aliasing must stay off for any future PR that links it. We
 # enable the same flag here so the platform layer matches. Only GCC /
 # Clang are supported (Windows / MSVC builds are out of scope -- see
-# docs/sdl_port.md).
+# docs/sdl_port.md). Optimization / debug-info flags come from the
+# active `CMAKE_BUILD_TYPE` (defaulted to RelWithDebInfo above) so that
+# `-DCMAKE_BUILD_TYPE=Debug` produces a real `-O0 -g` build instead of
+# being silently overridden by a hardcoded `-O2 -g` here.
 target_compile_options(tmc_sdl PRIVATE
-    -O2 -g
     -Wall
     -Wno-multichar
     -Wno-parentheses
@@ -1094,7 +1113,6 @@ target_compile_definitions(tmc_game_sources PRIVATE
     ${TMC_VERSION_DEFINES}
 )
 target_compile_options(tmc_game_sources PRIVATE
-    -O2 -g
     -Wall
     -Wno-multichar
     -Wno-parentheses
@@ -1134,7 +1152,7 @@ target_compile_definitions(tmc_unresolved_stubs PRIVATE
     ${TMC_VERSION_DEFINES}
 )
 target_compile_options(tmc_unresolved_stubs PRIVATE
-    -O2 -g -Wall -Wno-unused-parameter -Wno-unused-function
+    -Wall -Wno-unused-parameter -Wno-unused-function
     -fno-strict-aliasing
 )
 add_dependencies(tmc_sdl tmc_unresolved_stubs)
