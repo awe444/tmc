@@ -377,10 +377,13 @@ void ply_mod(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
 #define M4A_CHAN_FLAG_RELEASE 0x40 /* set by the engine to start release */
 
 /* `ply_fine` — terminate the current track. For each SoundChannel
- * linked from track->chan, either tag it with the release flag (if its
- * envelope is still active per M4A_CHAN_FLAGS_ENV) or unlink it via
- * RealClearChain. Then clear track->flags so MPlayMain stops servicing
- * the track on subsequent passes. cmdPtr is *not* advanced — the
+ * linked from track->chan, optionally tag it with the release flag
+ * (if its envelope is still active per M4A_CHAN_FLAGS_ENV) and then
+ * always call RealClearChain to unlink it. Mirrors the asm at
+ * `_080AF716`/`_080AF724`: the 0xc7 test gates the release-bit OR but
+ * the bl to RealClearChain is unconditional. Then clear track->flags
+ * so MPlayMain stops servicing the track on subsequent passes.
+ * cmdPtr is *not* advanced — the
  * `0xb1` ply_fine command byte is consumed by MPlayMain's dispatcher
  * before the call lands here.
  *
@@ -398,9 +401,8 @@ void ply_fine(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
         u8 status = chan->statusFlags;
         if (status & M4A_CHAN_FLAGS_ENV) {
             chan->statusFlags = (u8)(status | M4A_CHAN_FLAG_RELEASE);
-        } else {
-            RealClearChain(chan);
         }
+        RealClearChain(chan);
         /* Walk to the next channel via chan->next (offset 0x34 on the
          * GBA — typed as u32 in the public header but used here as a
          * SoundChannel*). The asm self-loop terminator (`if next ==
@@ -422,10 +424,10 @@ void ply_fine(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
  * channel currently sustaining that key and sets the release flag.
  *
  * Under the silent host mixer no SoundChannel is ever linked into the
- * track->chan list (MPlayMain still walks the channel-update half but
- * SoundMain doesn't allocate channels), so the channel walk is a
- * no-op in actual gameplay. The matching condition mirrors the asm:
- * the channel must be "still exists" (M4A_CHAN_FLAGS_EXIST), not
+ * track->chan list during normal gameplay, so this channel walk is a
+ * no-op there. The host-side chan-walk logic is currently exercised
+ * only via `Port_M4ASelfCheck()`. The matching condition mirrors the
+ * asm: the channel must be "still exists" (M4A_CHAN_FLAGS_EXIST), not
  * already in release (M4A_CHAN_FLAG_RELEASE clear), and its
  * `chan->midiKey` must equal the target key. The first match is
  * tagged for release and the walk stops. */
@@ -902,8 +904,10 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track.flags == 0);
     }
 
-    /* ply_fine with chan->statusFlags & 0xc7 == 0: takes the
-     * RealClearChain (no-op host stub) path; release flag NOT set. */
+    /* ply_fine with chan->statusFlags & 0xc7 == 0: RealClearChain
+     * (no-op host stub) is still called unconditionally per the asm,
+     * but the release flag is NOT set because the M4A_CHAN_FLAGS_ENV
+     * gate is closed. */
     {
         SoundChannel chan;
         memset(&mp, 0, sizeof(mp));
