@@ -50,42 +50,46 @@ jobs:
       - name: Build
         run: cmake --build build --config Release -j
 
-      # Scripted-input smoke test: drive synthetic START presses through
-      # the actual title-screen state machine so CI exercises the full
-      # boot → "PRESS START" → file-select handoff path on every run.
+      # Scripted-input smoke test: drive synthetic input through the
+      # actual title-screen + file-select state machines so CI exercises
+      # the full boot → "PRESS START" → file-select → New File → on-screen
+      # keyboard → "type A" → END-confirm path on every run.
       #
-      # Title-screen timing (USA build, observed via the per-frame state
-      # trace; see HandleTitlescreen in src/title.c):
+      # Title-screen + file-select timing (USA build, observed via the
+      # per-frame fileselect.* trace; see HandleTitlescreen in
+      # src/title.c and HandleFileNew in src/fileselect.c):
       #   f≈321  HandleTitlescreen reaches gIntroState.state=1 sub=3
       #          (the "PRESS START" idle that polls for input)
-      #   f=350  scripted START fires → AdvanceIntroSequence transitions
+      #   f=350  scripted START → AdvanceIntroSequence transitions
       #          gIntroState.state 1→2 with an internal timer=60 frames
-      #   f≈411  the 60-frame countdown completes → state 2→3 (now
-      #          polling again for the second advance press)
-      #   f=500  scripted START fires → AdvanceIntroSequence sets
+      #   f≈411  the 60-frame countdown completes → state 2→3 (polling
+      #          again for the second advance press)
+      #   f=500  scripted START → AdvanceIntroSequence sets
       #          gMain.state=GAMETASK_MAIN and queues a fade-out
-      #   f≈534  fade completes → SetTask(TASK_FILE_SELECT)
+      #   f≈534  fade completes → SetTask(TASK_FILE_SELECT); file-select
+      #          enters STATE_NONE on slot 0 (an empty save)
+      #   f=720  scripted START on the empty slot → STATE_NEW; on entry
+      #          HandleFileNew[0] = sub_08051090 runs and (under __PORT__)
+      #          seeds the on-screen-keyboard glyph table into gBG3Buffer
+      #   f=780  scripted A at the default keyboard cursor (0,0) →
+      #          gSave.name[0] = 'A' (0x41)
+      #   f=840  scripted START → cursor jumps to the END function key
+      #          (11,5,3,1)
+      #   f=900  scripted A on END (with name[0] != 0) → action=2 →
+      #          SetMenuType(2) → save-creation flow entered
       #
-      # The frame budget below (700) deliberately runs past that final
-      # task switch so CI verifies the START presses really do progress
-      # past the title screen, not just that they reach
-      # REG_KEYINPUT. The two earlier `--press=` entries (`START@60+5`
-      # and the lone `A@180+5`) are no-ops at those frame numbers
-      # (the press-start prompt isn't up yet, the logos are) and are
-      # included only to keep the parser exercising the multi-entry
-      # path end-to-end.
+      # The save-creation flow that runs after f=900 currently SIGSEGVs
+      # on a deeper unported asm dependency in the save-write path
+      # (sub_0805138C). That is a known regression *uncovered* by this
+      # extended scripted sequence and is intentionally not papered over
+      # here: per the task statement we want CI to surface it (the step
+      # WILL FAIL UNTIL the save-write path is wired up). Do not add
+      # `|| true`, `set +e`, or any other "graceful" handling.
       #
-      # Previously, as soon as TASK_FILE_SELECT ran its first frame,
-      # HandleFileScreenEnter called ClearTileMaps → MemClear of
-      # gMapDataBottomSpecial/gMapDataTopSpecial (32 KiB each), which
-      # overran the 256-byte stub buffers in
-      # src/platform/shared/port_unresolved_stubs.c and clobbered
-      # gEEPROMConfig, NULL-deref'ing the very next EEPROMRead in
-      # ReadSaveFileStatus. That follow-up has now been addressed by
-      # giving the two map-data stubs their proper 0x8000-byte size,
-      # so this step now requires exit 0: any SEGV/abort/non-zero
-      # status is treated as a regression.
-      - name: Scripted-input smoke test (headless, START presses past the title)
+      # The frame budget (1100) deliberately runs past f=900 so that the
+      # crash, when it happens, happens on this CI step rather than
+      # being silently truncated by an earlier --frames cap.
+      - name: Scripted-input smoke test (headless, drives "type A" on the file-name keyboard)
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
@@ -97,26 +101,36 @@ jobs:
               echo "[$label] tmc_sdl exited cleanly"
           }
 
-          # Inline `--press=` form. The two real progression presses are
-          # START@350 and START@500 (see comment above for timing); the
-          # earlier entries keep the multi-press / chord parser exercised.
+          # Inline `--press=` form. Real progression presses, in order:
+          #   START@350, START@500    -- past the title screen
+          #   START@720               -- enter STATE_NEW on the empty slot
+          #   A@780                   -- type 'A' at the default cursor
+          #   START@840               -- jump cursor to END
+          #   A@900                   -- confirm the name → save-creation
+          # The earlier `START@60+5` and `A@380+5` entries are no-ops at
+          # those frames (logos / fade) and are included only to keep
+          # the multi-entry parser exercised end-to-end.
           run_until_title_passed inline \
-              ./build/tmc_sdl --frames=700 --mute --save-dir=. \
-                  --press='START@60+5,START@350+5,A@380+5,START@500+5'
+              ./build/tmc_sdl --frames=1100 --mute --save-dir=. \
+                  --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5'
 
           # File-based `--input-script=` form, via a transient script.
           script=$(mktemp build/scripted-input.XXXXXX.txt)
           trap 'rm -f "$script"' EXIT
           cat > "$script" <<'EOF'
           # Comment lines and blank lines are ignored.
-          # Title-screen progression: see workflow comment above for the
-          # frame numbers chosen here.
+          # Title-screen + file-select progression: see workflow comment
+          # above for the frame numbers chosen here.
 
           START@60+5
           START@350+5
           A@380+5
           START@500+5
+          START@720+5
+          A@780+5
+          START@840+5
+          A@900+5
           EOF
           run_until_title_passed file \
-              ./build/tmc_sdl --frames=700 --mute --save-dir=. \
+              ./build/tmc_sdl --frames=1100 --mute --save-dir=. \
                   --input-script="$script"

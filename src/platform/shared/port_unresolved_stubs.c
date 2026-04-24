@@ -189,13 +189,26 @@ PORT_UNRESOLVED_DATA(gAreaTable);
 PORT_UNRESOLVED_DATA(gAreaTileSets);
 PORT_UNRESOLVED_DATA(gAreaTiles);
 /* gAuxPlayerEntities lives in port_globals.c (entity arena). */
-PORT_UNRESOLVED_DATA(gBG0Buffer);
-PORT_UNRESOLVED_DATA(gBG1Buffer);
-PORT_UNRESOLVED_DATA(gBG2Buffer);
-PORT_UNRESOLVED_DATA(gBG3Buffer);
+/* BG tilemap buffers. Real declarations in include/vram.h are
+ * `u16 gBG{0,1,2}Buffer[0x400]` (2 KiB each) and `u16 gBG3Buffer[0x800]`
+ * (4 KiB). The default 256-byte PORT_UNRESOLVED_DATA stub overflowed
+ * the same way `gOAMControls` did: `MemClear(&gBG0Buffer, sizeof(...))`
+ * in the file-select task, the `MemCopy(&gBG3Buffer[0x80], &gBG1Buffer[0x80], 0x400)`
+ * in `sub_08051458` (on-screen keyboard glyph copy), and the
+ * `gBG3Buffer[a[0]*2 + 0xc3 + a[1]*0x40]` lookup in `sub_080610B8` all
+ * read/write well past index 256, scribbling adjacent stub buffers and
+ * making the keyboard cursor's character lookup return 0 for every
+ * position. Sizing the stubs to match the real declarations fixes both
+ * the corruption and the lookup. The matching ROM build keeps these in
+ * EWRAM via linker.ld and is unaffected. */
+char gBG0Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG1Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG2Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG3Buffer[0x1000] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gBgAnimations);
 PORT_UNRESOLVED_DATA(gCarriedEntity);
-PORT_UNRESOLVED_DATA(gChooseFileState);
+/* gChooseFileState aliases gMenu via an `alias` attribute in
+ * port_globals.c (preserves the GBA's union over offset 0x80). */
 PORT_UNRESOLVED_DATA(gCollidableCount);
 PORT_UNRESOLVED_DATA(gCollisionMtx);
 PORT_UNRESOLVED_DATA(gCurrentRoomMemory);
@@ -230,7 +243,7 @@ PORT_UNRESOLVED_DATA(gGFXSlots);
  * out-of-bounds reads in `UpdateUIElements` produced a NULL function
  * pointer call. */
 PORT_UNRESOLVED_DATA(gInteractableObjects);
-PORT_UNRESOLVED_DATA(gIntroState);
+/* gIntroState aliases gMenu via an `alias` attribute in port_globals.c. */
 PORT_UNRESOLVED_DATA(gLilypadRails);
 /* gMPlayInfos / gMPlayInfos2 / gMPlayTracks have moved to
  * src/platform/shared/m4a_host.c, which provides strong host BSS of
@@ -259,11 +272,28 @@ PORT_UNRESOLVED_DATA(gMapData);
 char gMapDataBottomSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 char gMapDataTopSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gMapTop);
-PORT_UNRESOLVED_DATA(gMenu);
+/* gMenu has its strong host definition in port_globals.c (with
+ * gIntroState / gChooseFileState aliased to it). */
 PORT_UNRESOLVED_DATA(gMessageChoices);
 PORT_UNRESOLVED_DATA(gMoreSpritePtrs);
-PORT_UNRESOLVED_DATA(gOAMControls);
 PORT_UNRESOLVED_DATA(gOamCmd);
+/* gOAMControls is sized explicitly. The struct in include/vram.h is
+ *   8 (header) + 0x18 (_0[]) + 0x80*8 (oam[]) + 0xA0*8 (unk[]) = 0x920 bytes,
+ * far larger than the 256-byte default that PORT_UNRESOLVED_DATA hands out.
+ * `CopyOAM` in src/affine.c writes `*d = 0x2A0` to every OAM slot from the
+ * `updated` index through 0x80 (i.e. up to 1 KiB of writes via
+ * `&gOAMControls.oam[i]`), so a 256-byte allocation overflowed by ~1.7 KiB
+ * and silently scribbled `0x02 0xA0 0x00 0x00 0x00 0x00 0x00 0x00` every
+ * 8 bytes into whichever globals followed gOAMControls in the SDL link
+ * order. With this layout that overflow landed on `gMenu`, resetting
+ * `gMenu.column_idx` to 2 and `gGenericMenu.unk10.a[0..1]` to {0xA0, 0x02}
+ * every frame, which made the file-select on-screen keyboard appear stuck
+ * (HandleFileNew could not advance because START / A re-targeted the same
+ * row each frame, and the chosen "character" indexed off the end of
+ * gBG3Buffer so `gSave.name` never received a non-zero byte). The matching
+ * ROM build is unaffected: linker.ld places gOAMControls at IWRAM 0x0
+ * with plenty of room before the next symbol. */
+char gOAMControls[0x920] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gPaletteBufferBackup);
 /* gPaletteGroups has moved to src/platform/shared/port_rom_data_stubs.c
  * for the same reason as gGfxGroups above (LoadPaletteGroup needs a

@@ -225,6 +225,28 @@ int Port_ScriptedInputSelfCheck(void);
 uint32_t Port_GetFrameCount(void);
 
 /* ------------------------------------------------------------------------ */
+/* Diagnostic event log.                                                    */
+/*                                                                          */
+/* Coarse-grained, human-readable events emitted from the game source so    */
+/* the headless smoke test (and a developer running the SDL port) can see   */
+/* the engine progressing through scenes without attaching a debugger.     */
+/* The macro compiles to a no-op on the GBA ROM build (where `__PORT__` is  */
+/* not defined and there is no stderr to print to) so the only cost on the  */
+/* shipping ROM is zero. Use `PORT_LOG_EVENT(category, fmt, ...)` from game */
+/* code; the underlying function is implemented in                          */
+/* `src/platform/shared/port_log.c`.                                        */
+/* ------------------------------------------------------------------------ */
+#ifdef __PORT__
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 2, 3)))
+#endif
+void Port_LogEvent(const char* category, const char* fmt, ...);
+#define PORT_LOG_EVENT(category, ...) Port_LogEvent((category), __VA_ARGS__)
+#else
+#define PORT_LOG_EVENT(category, ...) ((void)0)
+#endif
+
+/* ------------------------------------------------------------------------ */
 /* Video.                                                                   */
 /* ------------------------------------------------------------------------ */
 

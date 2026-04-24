@@ -27,6 +27,10 @@
 #include "gfx.h"
 #include "fade.h"
 
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
+
 // copy, erase, start
 #define NUM_FILE_OPERATIONS 3
 
@@ -370,6 +374,21 @@ void SetActiveSave(u32 idx) {
 
 void FileSelectTask(void) {
     FlushSprites();
+
+#ifdef __PORT__
+    /* Surface inputs the script delivered to file-select this frame. We log
+     * before the sub-handlers run so a press is visible even if the handler
+     * silently drops it (e.g. while gMapDataBottomSpecial.isTransitioning). */
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect",
+                       "input newKeys=0x%03x held=0x%03x (state=%u menuType=%u sub=%u cursor=%u)",
+                       (unsigned)gInput.newKeys, (unsigned)gInput.heldKeys,
+                       (unsigned)gUI.lastState, (unsigned)gMenu.menuType,
+                       (unsigned)gChooseFileState.subState,
+                       (unsigned)gMapDataBottomSpecial.unk6);
+    }
+#endif
+
     sTaskHandlers[gMain.state]();
     if (gUI.lastState != gUI.state) {
         gUI.lastState = gUI.state;
@@ -397,6 +416,73 @@ void FileSelectTask(void) {
         sub_080503A8(0x6);
         sub_080503A8(0xF);
     }
+
+#ifdef __PORT__
+    /* Detect any sub-state change that happened during this frame. One spot
+     * here covers all ~25 SetMenuType() / SetFileSelectState() call sites in
+     * fileselect.c without scattering instrumentation through every handler.
+     * The four tracked fields together identify which sub-screen the engine
+     * is on (state), which step of that sub-screen (menuType / subState),
+     * and which save slot the cursor is over. */
+    {
+        static const char* const sStateNames[] = {
+            "STATE_NONE", "STATE_NEW",   "STATE_CHOOSE_LANG", "STATE_OPTIONS",
+            "STATE_VIEW", "STATE_COPY",  "STATE_ERASE",       "STATE_START",
+        };
+        static u8 sPrevState = 0xFF;
+        static u8 sPrevMenuType = 0xFF;
+        static u8 sPrevSubState = 0xFF;
+        static u8 sPrevCursor = 0xFF;
+
+        u8 state = gUI.lastState;
+        u8 menuType = gMenu.menuType;
+        u8 subState = gChooseFileState.subState;
+        u8 cursor = (u8)gMapDataBottomSpecial.unk6;
+        /* `gChooseFileState.state` (offset 0x06) is the dispatcher field
+         * `HandleFileSelect` uses to pick between sub_08050848 / sub_0805086C
+         * / sub_08050940. It is overlaid with `gMenu.overlayType` (same byte)
+         * and is distinct from `gUI.state` and from `subState`. */
+        u8 chooseState = gChooseFileState.state;
+        static u8 sPrevChooseState = 0xFF;
+
+        if (state != sPrevState) {
+            const char* prev_name = (sPrevState < (sizeof(sStateNames) / sizeof(sStateNames[0])))
+                                        ? sStateNames[sPrevState]
+                                        : "?";
+            const char* next_name =
+                (state < (sizeof(sStateNames) / sizeof(sStateNames[0]))) ? sStateNames[state] : "?";
+            PORT_LOG_EVENT("fileselect",
+                           "state %s -> %s (cursor=%u, slots=[%u,%u,%u])", prev_name, next_name,
+                           (unsigned)cursor, (unsigned)gMapDataBottomSpecial.saveStatus[0],
+                           (unsigned)gMapDataBottomSpecial.saveStatus[1],
+                           (unsigned)gMapDataBottomSpecial.saveStatus[2]);
+            sPrevState = state;
+        }
+        if (menuType != sPrevMenuType) {
+            PORT_LOG_EVENT("fileselect", "menuType %u -> %u (state=%u)", (unsigned)sPrevMenuType,
+                           (unsigned)menuType, (unsigned)state);
+            sPrevMenuType = menuType;
+        }
+        if (subState != sPrevSubState) {
+            PORT_LOG_EVENT("fileselect", "subState %u -> %u (state=%u menuType=%u)",
+                           (unsigned)sPrevSubState, (unsigned)subState, (unsigned)state,
+                           (unsigned)menuType);
+            sPrevSubState = subState;
+        }
+        if (cursor != sPrevCursor) {
+            PORT_LOG_EVENT("fileselect", "cursor %u -> %u (state=%u)", (unsigned)sPrevCursor,
+                           (unsigned)cursor, (unsigned)state);
+            sPrevCursor = cursor;
+        }
+        if (chooseState != sPrevChooseState) {
+            PORT_LOG_EVENT("fileselect",
+                           "chooseFileState.state %u -> %u (uiState=%u menuType=%u sub=%u)",
+                           (unsigned)sPrevChooseState, (unsigned)chooseState, (unsigned)state,
+                           (unsigned)menuType, (unsigned)subState);
+            sPrevChooseState = chooseState;
+        }
+    }
+#endif
 }
 
 static void HandleFileScreenEnter(void) {
@@ -569,6 +655,12 @@ void sub_08050848(void) {
     gMapDataBottomSpecial.unk7 = 0;
     sub_08050AFC(gMapDataBottomSpecial.unk6);
     SetMenuType(1);
+    /* Advance the dispatcher from this init slot (0) to the steady-state input
+     * handler (sub_08050940 at slot 2). Without this store the dispatcher byte
+     * at offset 0x06 of gChooseFileState (≡ gMenu.overlayType, just zeroed by
+     * SetMenuType above) stays 0 forever, so HandleFileSelect re-runs this
+     * init function every frame and never observes any input. */
+    gChooseFileState.state = 2;
 }
 
 void (*const gUnk_080FC908[])(void) = {
@@ -1144,7 +1236,31 @@ void sub_080610B8(void) {
     s32 uVar8;
     s32 uVar5;
 
+#ifdef __PORT__
+    /* Surface every entry to the on-screen keyboard handler so we can tell
+     * whether inputs are being silently dropped by the isTransitioning gate
+     * vs. consumed but routed to a no-op branch. Logged only when a fresh
+     * key was pressed this frame (otherwise this would fire 60×/sec). */
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect.new",
+                       "kbd entry newKeys=0x%03x trans=%u cursor=[%u,%u,%u,%u] "
+                       "col=%u name=[%02x %02x %02x %02x %02x %02x] lang=%u",
+                       (unsigned)gInput.newKeys,
+                       (unsigned)gMapDataBottomSpecial.isTransitioning,
+                       (unsigned)gGenericMenu.unk10.a[0], (unsigned)gGenericMenu.unk10.a[1],
+                       (unsigned)gGenericMenu.unk10.a[2], (unsigned)gGenericMenu.unk10.a[3],
+                       (unsigned)gMenu.column_idx, (unsigned)(u8)gSave.name[0],
+                       (unsigned)(u8)gSave.name[1], (unsigned)(u8)gSave.name[2],
+                       (unsigned)(u8)gSave.name[3], (unsigned)(u8)gSave.name[4],
+                       (unsigned)(u8)gSave.name[5], (unsigned)gSaveHeader->language);
+    }
+#endif
     if (gMapDataBottomSpecial.isTransitioning != 0) {
+#ifdef __PORT__
+        if (gInput.newKeys != 0) {
+            PORT_LOG_EVENT("fileselect.new", "kbd early-return (isTransitioning=1)");
+        }
+#endif
         return;
     }
     uVar7 = 0;
@@ -1288,6 +1404,17 @@ void sub_080610B8(void) {
             sub_08051574(0x6a);
             SetMenuType(uVar7);
     }
+#ifdef __PORT__
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect.new",
+                       "kbd exit  action=%u newMenuType=%u cursor=[%u,%u,%u,%u] "
+                       "name[0..1]=%02x %02x",
+                       (unsigned)uVar7, (unsigned)gMenu.menuType,
+                       (unsigned)gGenericMenu.unk10.a[0], (unsigned)gGenericMenu.unk10.a[1],
+                       (unsigned)gGenericMenu.unk10.a[2], (unsigned)gGenericMenu.unk10.a[3],
+                       (unsigned)(u8)gSave.name[0], (unsigned)(u8)gSave.name[1]);
+    }
+#endif
     if (gSaveHeader->language == 0) {
         iVar4 = 3;
     } else {
@@ -1366,6 +1493,46 @@ void sub_0805144C(void) {
 void sub_08051458(void) {
     sub_080503A8(gMenu.column_idx + 9);
     MemCopy(&gBG3Buffer[0x80], &gBG1Buffer[0x80], 0x400);
+#ifdef __PORT__
+    /* Seed the on-screen-keyboard glyph table when running against the
+     * stub asset set. Without `-DTMC_BASEROM=...`, `gGfxGroups[9]` is the
+     * shared `0x0D` terminator (see port_rom_data_stubs.c) so
+     * `LoadGfxGroup(9)` is a no-op, and `gBG1Buffer` is also empty for
+     * the same reason (the BG1 tilemap that would normally hold the
+     * keyboard rendering is never produced). The character lookup at
+     * `gBG3Buffer[a[0]*2 + 0xc3 + a[1]*0x40] >> 1` therefore returns 0
+     * for every cursor position, so HandleFileNew's A-button branch
+     * silently appends 0x00 to gSave.name and the file-select smoke test
+     * exits via the cancellation path with `name[0] == 0`.
+     *
+     * To make the cursor's default position (0, 0) actually map to the
+     * letter 'A' (matching the user-visible expectation: "press A and
+     * type A"), seed `gBG3Buffer` with a 13×5 ASCII keyboard layout, but
+     * only if the real load left index 0xc3 zeroed. A future baserom
+     * build that provides real data will satisfy `gBG3Buffer[0xc3] != 0`
+     * and skip this block entirely. Tile values are stored as `c << 1`
+     * because the lookup right-shifts by 1.
+     *
+     * The 13×5 layout matches HandleFileNew's wraparound bounds
+     * (`% 0xd` columns, `% 6` rows with row 5 reserved for the function
+     * row END/BACK/SPACE handled separately). */
+    if (gBG3Buffer[0xc3] == 0) {
+        static const char kKbdLayout[5][13] = {
+            { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M' },
+            { 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z' },
+            { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm' },
+            { 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z' },
+            { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', ',', '-' },
+        };
+        u32 row, col;
+        for (row = 0; row < 5; row++) {
+            for (col = 0; col < 13; col++) {
+                gBG3Buffer[col * 2 + 0xc3 + row * 0x40] =
+                    (u16)((u8)kKbdLayout[row][col] << 1);
+            }
+        }
+    }
+#endif
 }
 
 u32 sub_080514BC(u32);

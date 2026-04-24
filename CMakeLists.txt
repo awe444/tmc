@@ -223,6 +223,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_text_data_stubs.c
     src/platform/shared/render.c
     src/platform/shared/scripted_input.c
+    src/platform/shared/port_log.c
 )
 
 # ---------------------------------------------------------------------------
