@@ -122,6 +122,19 @@ u32 ReadBit(void* src, u32 bit) {
 }
 
 u32 WriteBit(void* src, u32 bit) {
+#ifdef __PORT__
+    /* Host port: defined-behaviour version. The GBA path below uses an
+     * uninitialised local in `b += ... - b` (a hand-asm artefact that
+     * happens to lower to the canonical THUMB sequence on the GBA
+     * target). On the host that is undefined behaviour and may be
+     * miscompiled under optimisation, so compute the byte address and
+     * mask directly here. Same observable effect as the GBA path. */
+    u8* p = (u8*)src + (bit / 8);
+    u32 mask = 1u << (bit & 7u);
+    u32 orig = *p;
+    *p = (u8)(orig | mask);
+    return orig & mask;
+#else
     u32 b;
     u32 mask;
     u32 orig;
@@ -136,9 +149,18 @@ u32 WriteBit(void* src, u32 bit) {
 
     orig &= mask;
     return orig;
+#endif
 }
 
 u32 ClearBit(void* src, u32 bit) {
+#ifdef __PORT__
+    /* Host port: defined-behaviour version; see WriteBit above. */
+    u8* p = (u8*)src + (bit / 8);
+    u32 mask = 1u << (bit & 7u);
+    u32 orig = *p;
+    *p = (u8)(orig & ~mask);
+    return orig & mask;
+#else
     u32 b;
     u32 mask;
     u32 orig;
@@ -153,6 +175,7 @@ u32 ClearBit(void* src, u32 bit) {
 
     orig &= mask;
     return orig;
+#endif
 }
 
 void MemFill16(u32 value, void* dest, u32 size) {

@@ -85,4 +85,131 @@ u32* gUnk_08109248[9] = {
     (u32*)sPortFontGlyphZeroBuffer, (u32*)sPortFontGlyphZeroBuffer, (u32*)sPortFontGlyphZeroBuffer,
 };
 
+/* ------------------------------------------------------------------
+ * gTranslations — per-language string-table pointer table.
+ *
+ * Background
+ * ----------
+ * The ROM build defines `gTranslations[]` in `data/const/text.s` as a
+ * 7-entry table of `u32*` pointers, each addressing a packed
+ * per-language string table (`translation`, `translationFrench`, ...).
+ * The packed table layout consumed by `sub_0805EEB4` in `src/text.c` is:
+ *
+ *   u32 hiCount;                    // ((textIndex >> 8) bound) << 2
+ *   u32 hiOffsets[hiCount];         // byte offset (from table start) to a
+ *                                   // sub-table for each high-byte page
+ *   per-page sub-table:
+ *       u32 loCount;                // ((textIndex & 0xff) bound) << 2
+ *       u32 loOffsets[loCount];     // byte offset (from sub-table start)
+ *                                   // to the packed string bytes
+ *
+ * `tools/port/gen_host_assets.py` does not extract these tables, so
+ * without an override `gTranslations[]` resolves through the 256-byte
+ * zero-filled weak BSS placeholder in `port_unresolved_stubs.c`. Each
+ * entry then reads as NULL, and the very first text-box draw — e.g.
+ * `CreateDialogBox(5, 0)` after the file-select keyboard "END" confirm,
+ * which calls `ShowTextBox(8, ...)` -> `InitToken` -> `sub_0805EEB4`
+ * — segfaults on `puVar2[(u8)(textIndex >> 8)]` with `puVar2 == NULL`.
+ *
+ * This is exactly what the CI smoke test (`.github/workflows/sdl.yml`)
+ * traps at `f≈900`; the workflow comment attributes it to the unported
+ * `sub_0805138C` save-write path, but the actual crash is upstream of
+ * the save flow, in the dialog-box text lookup that `sub_080513A8`
+ * issues before any save bytes are written.
+ *
+ * Fix
+ * ---
+ * Provide a strong override of `gTranslations[]` whose entries all
+ * point at one shared, zero-filled "safe translation buffer". With
+ * `*buf == 0`, `sub_0805EEB4` computes `uVar6 = 0`, the bounds check
+ * `(textIndex >> 8) >= uVar6` is always true, and control falls through
+ * to the `case 1` arm that retargets `puVar2` at the (already
+ * non-NULL) `gUnk_08109244` placeholder — i.e. the "missing string"
+ * fallback the original code already exercises for out-of-range indices.
+ * No text pixels get drawn, but the boot path survives instead of
+ * SIGSEGV-ing, matching the existing precedent set by `gUnk_08109248`
+ * above and by `gGfxGroups` / `gPaletteGroups` / `gUIElementDefinitions`
+ * elsewhere in the port tree.
+ *
+ * Sizing
+ * ------
+ * The pointer indexer reads at byte offset `(u8)(textIndex >> 8) * 4`
+ * — i.e. up to 256 * 4 = 1 KiB — *before* any bounds check applies, so
+ * the buffer must be at least 1 KiB to keep that read in-bounds.
+ * 4 KiB gives generous headroom and matches the order-of-magnitude of
+ * the sibling `sPortFontGlyphZeroBuffer`.
+ *
+ * `gTranslations` itself is sized to 16 entries (the ROM table is 7;
+ * the extras are slack against any host-side `gSaveHeader->language`
+ * value that wanders past the ROM range — purely defensive, since
+ * `Port_RunGameLoop` zero-initialises `gSaveHeader` and `language`
+ * stays in `[0, 6]` along the boot path).
+ */
+static uint8_t sPortTranslationZeroBuffer[0x1000] __attribute__((aligned(16)));
+
+u32* gTranslations[16] = {
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer,
+};
+
+/* ------------------------------------------------------------------
+ * gUnk_081092AC — text-box border / fill ROM-graphics pointer table.
+ *
+ * Background
+ * ----------
+ * The ROM build defines `gUnk_081092AC[]` in `data/const/text.s` as a
+ * 10-entry table of `u32*` pointers, each addressing a packed 4bpp
+ * border-pattern blob (`gUnk_086926A0`, `gUnk_08692780`, ...).
+ * `sub_0805F918` in `src/text.c` indexes it as
+ * `puVar1 = gUnk_081092AC[idx]`, then loops 3 times calling
+ * `UnpackTextNibbles(puVar1, &gUnk_02036A58)` and advancing
+ * `puVar1 += 0x40` each iteration — i.e. it consumes 3 * 0x40 = 0xC0
+ * bytes from the entry.
+ *
+ * `tools/port/gen_host_assets.py` does not extract those border blobs,
+ * so without an override `gUnk_081092AC[]` resolves through the
+ * 256-byte zero-filled weak BSS placeholder in
+ * `port_unresolved_stubs.c`. Each entry then reads as NULL, and the
+ * file-select save-creation dialog SIGSEGVs at `f≈720` in the
+ * `UnpackTextNibbles(src=NULL, ...)` first iteration (this is exactly
+ * the next crash hit by the 120 s alternating-A/START scripted-input
+ * test after the `sub_0805EEB4` pointer-truncation fix lands).
+ *
+ * Fix
+ * ---
+ * Same precedent as `gUnk_08109248` and `gTranslations` above: provide
+ * a strong override whose entries all alias one shared, zero-filled
+ * "safe border buffer". With every byte zero, `UnpackTextNibbles`
+ * produces 128 zero nibbles per call; the downstream blitters then
+ * either mask the destination nibble to background or skip the write
+ * entirely (transparent path). Net effect: no border pixels are drawn,
+ * but the game survives the call instead of SIGSEGV-ing.
+ *
+ * Sizing
+ * ------
+ * Worst-case access is 3 * 0x40 = 0xC0 bytes per entry; 1 KiB gives
+ * generous headroom and matches the order-of-magnitude of the sibling
+ * zero buffers above. The table itself is sized to 16 entries because
+ * `sub_0805F918`'s `idx` argument is `font.border_type`, a 4-bit
+ * bitfield (`u8 border_type : 4` in `Font` / `include/message.h`),
+ * so it can legally take values 0..15 — six positions past the ROM's
+ * 10 entries. Aliasing all 16 to the same buffer keeps any stray
+ * out-of-range index safe rather than reading whatever lives in
+ * adjacent memory.
+ */
+static uint8_t sPortTextBorderZeroBuffer[0x400] __attribute__((aligned(16)));
+
+void* gUnk_081092AC[16] = {
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer,
+};
+
 #endif /* __PORT__ */

@@ -78,17 +78,22 @@ jobs:
       #   f=900  scripted A on END (with name[0] != 0) → action=2 →
       #          SetMenuType(2) → save-creation flow entered
       #
-      # The save-creation flow that runs after f=900 currently SIGSEGVs
-      # on a deeper unported asm dependency in the save-write path
-      # (sub_0805138C). That is a known regression *uncovered* by this
-      # extended scripted sequence and is intentionally not papered over
-      # here: per the task statement we want CI to surface it (the step
-      # WILL FAIL UNTIL the save-write path is wired up). Do not add
-      # `|| true`, `set +e`, or any other "graceful" handling.
+      # The save-creation flow that runs after f=900 previously SIGSEGV'd
+      # in `sub_0805EEB4` (src/text.c), which `sub_080513A8` reaches via
+      # `CreateDialogBox(5, 0)` -> `ShowTextBox(8, ...)` -> `InitToken`
+      # before any save bytes are written. The root cause was the weak
+      # 256-byte BSS placeholder for `gTranslations[]` in
+      # `port_unresolved_stubs.c`: every entry read as NULL, so the very
+      # first `puVar2[(u8)(textIndex >> 8)]` lookup dereferenced NULL.
+      # That is now fixed by a strong host stand-in for `gTranslations`
+      # in `src/platform/shared/port_text_data_stubs.c` (mirroring the
+      # existing `gUnk_08109248` override there); the smoke test should
+      # now run cleanly through frame 1100. Keep `set -euo pipefail`
+      # so any future regression on this path fails the step.
       #
-      # The frame budget (1100) deliberately runs past f=900 so that the
-      # crash, when it happens, happens on this CI step rather than
-      # being silently truncated by an earlier --frames cap.
+      # The frame budget (1100) deliberately runs past f=900 so that any
+      # regression in the save-creation flow is observed on this CI step
+      # rather than being silently truncated by an earlier --frames cap.
       - name: Scripted-input smoke test (headless, drives "type A" on the file-name keyboard)
         env:
           SDL_VIDEODRIVER: dummy
