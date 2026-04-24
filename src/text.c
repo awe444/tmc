@@ -75,7 +75,7 @@ void sub_0805EEB4(Token* token, u32 textIndex) {
     }
     puVar2 = gTranslations[langIndex];
     iVar3 = puVar2[(u8)(textIndex >> 8)];
-    puVar2 = (u32*)((s32)puVar2 + iVar3);
+    puVar2 = (u32*)((u8*)puVar2 + iVar3);
     iVar3 = puVar2[(u8)textIndex];
     uVar6 = *(gTranslations[langIndex]) >> 2;
     uVar7 = *puVar2 >> 2;
@@ -83,7 +83,7 @@ void sub_0805EEB4(Token* token, u32 textIndex) {
     if (((token->textIndex >> 8) >= uVar6) || ((u8)token->textIndex >= uVar7)) {
         uVar4 = 1;
     } else {
-        if (*(char*)((s32)puVar2 + iVar3) == 0) {
+        if (*((char*)puVar2 + iVar3) == 0) {
             uVar4 = 2;
         }
     }
@@ -94,7 +94,7 @@ void sub_0805EEB4(Token* token, u32 textIndex) {
             iVar3 = 0;
             break;
     }
-    puVar2 = (u32*)((s32)puVar2 + iVar3);
+    puVar2 = (u32*)((u8*)puVar2 + iVar3);
     sub_0805EF40(token, (u8*)puVar2);
 }
 
@@ -459,7 +459,7 @@ u32 ShowTextBox(u32 textIndexOrPtr, const Font* paramFont) {
         pWVar4->bgColor = font.fill_type;
         if (font.draw_border) {
             sub_0805F918(font.border_type, font.fill_type, font.gfx_dest);
-            font.gfx_dest = (void*)((s32)font.gfx_dest + 0xe0);
+            font.gfx_dest = (void*)((u8*)font.gfx_dest + 0xe0);
             fontStr = GetFontStrWith(&token, 1);
             iVar10 = (fontStr >> 0x18) * (u32)font._16 + ((u8)((s32)fontStr >> 0x10) << 1);
             uVar8 = (u16)fontStr;
@@ -524,7 +524,7 @@ bool32 sub_0805F5CC(Font* param_1, Token* param_2, WStruct* param_3) {
         param_1->dest += 0x40;
         iVar4 *= 0x40;
         MemCopy(param_1->buffer_loc, param_1->gfx_dest, iVar4);
-        param_1->gfx_dest = (void*)((s32)param_1->gfx_dest + iVar4);
+        param_1->gfx_dest = (void*)((u8*)param_1->gfx_dest + iVar4);
     } else {
         if (param_2->code == 10) {
             param_1->dest += param_1->_16 * 0x20;
