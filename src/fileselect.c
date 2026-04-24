@@ -1493,6 +1493,46 @@ void sub_0805144C(void) {
 void sub_08051458(void) {
     sub_080503A8(gMenu.column_idx + 9);
     MemCopy(&gBG3Buffer[0x80], &gBG1Buffer[0x80], 0x400);
+#ifdef __PORT__
+    /* Seed the on-screen-keyboard glyph table when running against the
+     * stub asset set. Without `-DTMC_BASEROM=...`, `gGfxGroups[9]` is the
+     * shared `0x0D` terminator (see port_rom_data_stubs.c) so
+     * `LoadGfxGroup(9)` is a no-op, and `gBG1Buffer` is also empty for
+     * the same reason (the BG1 tilemap that would normally hold the
+     * keyboard rendering is never produced). The character lookup at
+     * `gBG3Buffer[a[0]*2 + 0xc3 + a[1]*0x40] >> 1` therefore returns 0
+     * for every cursor position, so HandleFileNew's A-button branch
+     * silently appends 0x00 to gSave.name and the file-select smoke test
+     * exits via the cancellation path with `name[0] == 0`.
+     *
+     * To make the cursor's default position (0, 0) actually map to the
+     * letter 'A' (matching the user-visible expectation: "press A and
+     * type A"), seed `gBG3Buffer` with a 13×5 ASCII keyboard layout, but
+     * only if the real load left index 0xc3 zeroed. A future baserom
+     * build that provides real data will satisfy `gBG3Buffer[0xc3] != 0`
+     * and skip this block entirely. Tile values are stored as `c << 1`
+     * because the lookup right-shifts by 1.
+     *
+     * The 13×5 layout matches HandleFileNew's wraparound bounds
+     * (`% 0xd` columns, `% 6` rows with row 5 reserved for the function
+     * row END/BACK/SPACE handled separately). */
+    if (gBG3Buffer[0xc3] == 0) {
+        static const char kKbdLayout[5][13] = {
+            { 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M' },
+            { 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z' },
+            { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm' },
+            { 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z' },
+            { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', '.', ',', '-' },
+        };
+        u32 row, col;
+        for (row = 0; row < 5; row++) {
+            for (col = 0; col < 13; col++) {
+                gBG3Buffer[col * 2 + 0xc3 + row * 0x40] =
+                    (u16)((u8)kKbdLayout[row][col] << 1);
+            }
+        }
+    }
+#endif
 }
 
 u32 sub_080514BC(u32);

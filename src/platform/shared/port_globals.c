@@ -121,6 +121,29 @@ PortUIElementDefinition gUIElementDefinitions[16] = {
 Message gMessage;
 TextRender gTextRender;
 
+/* gMenu / gIntroState / gChooseFileState all alias the same EWRAM region
+ * on the GBA (linker.ld lines 20-22 place all three at offset 0x80).
+ * The decompiled code relies on this aliasing implicitly: e.g. after a
+ * file-select state transition, `FileSelectTask` does
+ *   MemClear(&gChooseFileState, sizeof(gChooseFileState));
+ * which on the GBA also zeros gMenu (so menuType resets to 0 and
+ * `HandleFileNew[0] == sub_08051090` runs on entry to STATE_NEW to
+ * initialise the on-screen keyboard). The previous SDL stubs gave each
+ * symbol its own 256-byte buffer, so MemClear via one alias did NOT
+ * clear the others; menuType stayed at the value
+ * `sub_08050848` had set for the previous state (1), and
+ * `HandleFileNew` jumped straight into the keyboard handler
+ * `sub_080610B8` without ever calling `sub_08051090` to load the
+ * keyboard glyph table. Provide a single shared backing buffer and
+ * alias the other two symbols to it (GCC/Clang `alias` attribute), so
+ * the GBA's union semantics are preserved on the host. The three
+ * structs are all <= 0x40 bytes (Menu/ChooseFileState are 0x30 each;
+ * IntroState fits in the same span); 0x40 leaves headroom and matches
+ * the spacing to the next aliased symbol gUnk_02000090 in linker.ld. */
+char gMenu[0x40] __attribute__((aligned(16)));
+extern char gIntroState[0x40] __attribute__((alias("gMenu")));
+extern char gChooseFileState[0x40] __attribute__((alias("gMenu")));
+
 /* `Window` is declared as a file-local typedef inside src/message.c (it
  * is not exposed via a header), but the storage for `gNewWindow` /
  * `gCurrentWindow` lives in BSS on the GBA via linker.ld. Mirror the

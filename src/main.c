@@ -226,6 +226,17 @@ void InitSaveHeader(void) {
         MemClear(ptr, sizeof gUnk_02000010);
         ptr->signature = SIGNATURE;
     }
+
+#ifdef __PORT__
+    /* Default the SDL port to English. The USA build's `sDefaultSettings`
+     * already uses `GAME_LANGUAGE == LANGUAGE_EN`, but the host EEPROM
+     * stub can return arbitrary bytes on cold boot before MemCopy runs;
+     * forcing the field here makes the language picker's default
+     * deterministic for the file-select smoke tests and matches the user
+     * requirement to default to English. Kept inside `__PORT__` so the
+     * matching ROM build is unchanged. */
+    gSaveHeader->language = LANGUAGE_EN;
+#endif
 }
 
 /*static*/ u32 CheckHeaderValid(void) {

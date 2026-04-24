@@ -189,13 +189,26 @@ PORT_UNRESOLVED_DATA(gAreaTable);
 PORT_UNRESOLVED_DATA(gAreaTileSets);
 PORT_UNRESOLVED_DATA(gAreaTiles);
 /* gAuxPlayerEntities lives in port_globals.c (entity arena). */
-PORT_UNRESOLVED_DATA(gBG0Buffer);
-PORT_UNRESOLVED_DATA(gBG1Buffer);
-PORT_UNRESOLVED_DATA(gBG2Buffer);
-PORT_UNRESOLVED_DATA(gBG3Buffer);
+/* BG tilemap buffers. Real declarations in include/vram.h are
+ * `u16 gBG{0,1,2}Buffer[0x400]` (2 KiB each) and `u16 gBG3Buffer[0x800]`
+ * (4 KiB). The default 256-byte PORT_UNRESOLVED_DATA stub overflowed
+ * the same way `gOAMControls` did: `MemClear(&gBG0Buffer, sizeof(...))`
+ * in the file-select task, the `MemCopy(&gBG3Buffer[0x80], &gBG1Buffer[0x80], 0x400)`
+ * in `sub_08051458` (on-screen keyboard glyph copy), and the
+ * `gBG3Buffer[a[0]*2 + 0xc3 + a[1]*0x40]` lookup in `sub_080610B8` all
+ * read/write well past index 256, scribbling adjacent stub buffers and
+ * making the keyboard cursor's character lookup return 0 for every
+ * position. Sizing the stubs to match the real declarations fixes both
+ * the corruption and the lookup. The matching ROM build keeps these in
+ * EWRAM via linker.ld and is unaffected. */
+char gBG0Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG1Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG2Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
+char gBG3Buffer[0x1000] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gBgAnimations);
 PORT_UNRESOLVED_DATA(gCarriedEntity);
-PORT_UNRESOLVED_DATA(gChooseFileState);
+/* gChooseFileState aliases gMenu via an `alias` attribute in
+ * port_globals.c (preserves the GBA's union over offset 0x80). */
 PORT_UNRESOLVED_DATA(gCollidableCount);
 PORT_UNRESOLVED_DATA(gCollisionMtx);
 PORT_UNRESOLVED_DATA(gCurrentRoomMemory);
@@ -230,7 +243,7 @@ PORT_UNRESOLVED_DATA(gGFXSlots);
  * out-of-bounds reads in `UpdateUIElements` produced a NULL function
  * pointer call. */
 PORT_UNRESOLVED_DATA(gInteractableObjects);
-PORT_UNRESOLVED_DATA(gIntroState);
+/* gIntroState aliases gMenu via an `alias` attribute in port_globals.c. */
 PORT_UNRESOLVED_DATA(gLilypadRails);
 /* gMPlayInfos / gMPlayInfos2 / gMPlayTracks have moved to
  * src/platform/shared/m4a_host.c, which provides strong host BSS of
@@ -259,7 +272,8 @@ PORT_UNRESOLVED_DATA(gMapData);
 char gMapDataBottomSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 char gMapDataTopSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gMapTop);
-PORT_UNRESOLVED_DATA(gMenu);
+/* gMenu has its strong host definition in port_globals.c (with
+ * gIntroState / gChooseFileState aliased to it). */
 PORT_UNRESOLVED_DATA(gMessageChoices);
 PORT_UNRESOLVED_DATA(gMoreSpritePtrs);
 PORT_UNRESOLVED_DATA(gOamCmd);
