@@ -62,7 +62,16 @@ goal here is the equivalent `tmc.sdl`.
 > logic now both **links cleanly** and **boots** as far as the
 > title-screen idle; advancing further into file-select / game-task
 > transitions is the remaining audio-and-asm work tracked under
-> PR #7 (m4a) and the asm-decomp track.
+> PR #7 (m4a) and the asm-decomp track. PR #7 part 2.2 is now
+> feature-complete: the dispatcher, every `ply_*` handler, the
+> per-track `TrkVolPitSet` second loop, and the `m4aSoundInit`
+> boot-time `MPlayOpen` walk against the full 32-entry
+> `gMusicPlayers[]` table all run end-to-end under `__PORT__`
+> (PR #7 part 2.2.2.3 promoted `NUM_MUSIC_PLAYERS` back to its real
+> value of 0x20). The mixer (`SoundMain`) remains a silent stub,
+> so audio is still off and the rasterizer's golden hashes are
+> bit-for-bit unchanged — `SoundMain` and the `SoundMainBTM`
+> bottom-half are PR #7 part 2.3.
 
 
 ## Building
@@ -962,7 +971,7 @@ are tracked here for future contributors.
       (`0x8f68687253dc1b25` and `0xf9b70c534973f325`) because no
       producer pushes anything yet — the entire change is invisible
       to the rasterizer.
-    - [ ] **PR #7 part 2.2** Host C reimplementation of `MPlayMain` and
+    - [x] **PR #7 part 2.2** Host C reimplementation of `MPlayMain` and
       the asm `ply_*` command handlers in `m4a_host.c` so the m4a
       state machine actually advances songs against the
       `MusicPlayerInfo` / `MusicPlayerTrack` structures (no PCM
@@ -1001,7 +1010,7 @@ are tracked here for future contributors.
         is itself still a no-op stub and `NUM_MUSIC_PLAYERS == 0`
         under `__PORT__` — so on the running game the new code is
         exercised by the smoke-test self-check only.
-      - [ ] **PR #7 part 2.2.2** Host C reimplementation of
+      - [x] **PR #7 part 2.2.2** Host C reimplementation of
         `MPlayMain` itself + `ply_voice` / `ply_note` / `ply_fine` /
         the pattern-stack handlers (`ply_goto`, `ply_patt`,
         `ply_pend`, `ply_rept`) and the `track->chan` walk in
@@ -1055,7 +1064,7 @@ are tracked here for future contributors.
           still a no-op stub and `NUM_MUSIC_PLAYERS == 0` under
           `__PORT__` — so on the running game the new code is
           exercised by the smoke-test self-check only.
-        - [ ] **PR #7 part 2.2.2.2** Host C reimplementation of
+        - [x] **PR #7 part 2.2.2.2** Host C reimplementation of
           `MPlayMain`'s dispatcher loop + `ply_voice` / `ply_note`
           and the per-track `TrkVolPitSet` second loop. Gated so the
           channel-update half stays a no-op when `track->chan` is
@@ -1090,7 +1099,7 @@ are tracked here for future contributors.
               unchanged because `MPlayMain` is reached only via
               `Port_M4ASelfCheck()` (`NUM_MUSIC_PLAYERS == 0`
               under `__PORT__`).
-            - [ ] **PR #7 part 2.2.2.2.2** Host C reimplementation
+            - [x] **PR #7 part 2.2.2.2.2** Host C reimplementation
               of `ply_voice` and `ply_note`. Needs a synthesized
               `mp->tone` bank for the self-check and a
               channel-allocation walk against `gSoundInfo` for
@@ -1270,18 +1279,87 @@ are tracked here for future contributors.
               unreachable from the runtime path while
               `NUM_MUSIC_PLAYERS == 0` under `__PORT__` — only the
               smoke-test self-check exercises the new code.
-        - [ ] **PR #7 part 2.2.2.3** Promote `NUM_MUSIC_PLAYERS` back
-          to its real value in `src/gba/m4a.c` once the dispatcher
-          can drive a synthesized song through to completion under
-          `Port_M4ASelfCheck()`'s harness. Verify golden hashes stay
-          stable (the silent mixer keeps audio off, so the
-          rasterizer should be unaffected).
+        - [x] **PR #7 part 2.2.2.3** Promoted `NUM_MUSIC_PLAYERS` back
+          to its real value in `src/gba/m4a.c` (`#define
+          NUM_MUSIC_PLAYERS 32` under `__PORT__`, mirroring the GBA's
+          `gNumMusicPlayers = 0x20` linker.ld symbol). Now that the
+          full dispatcher loop, `ply_voice` / `ply_note`, and the
+          per-track second loop all have real C ports under
+          `Port_M4ASelfCheck()` coverage, the `m4aSoundInit()` walk
+          over `gMusicPlayers[]` no longer needs to be a no-op. The
+          previously-deferred boot-time MPlayOpen pass against the
+          host BSS arenas now runs end-to-end: each of the 32
+          `gMusicPlayers[i]` entries gets `Clear64byte`'d (via the
+          `gMPlayJumpTable[35]` → `SoundMainBTM` 64-byte clear that
+          PR #7 part 1 already wired up), gets its tracks zeroed, and
+          gets linked into `soundInfo->MPlayMainHead`. To make this
+          safe, the 256-byte weak placeholders for `gMPlayInfos`,
+          `gMPlayInfos2`, and `gMPlayTracks` in
+          `port_unresolved_stubs.c` (which were far too small to back
+          the real `gMusicPlayers[]` indices — e.g. BGM uses
+          `&gMPlayTracks[0x46]` with 12 tracks, requiring at least
+          0x52 entries) have been replaced by strong host BSS in
+          `src/platform/shared/m4a_host.c` of the proper
+          `MusicPlayerInfo` / `MusicPlayerTrack` types, matching the
+          explicit extents declared in `src/sound.c`
+          (`gMPlayInfos[0x1C]`, `gMPlayInfos2[0x4]`) plus the
+          required `gMPlayTracks[0x52]` extent inferred from
+          `gMusicPlayers[]` indexing. No audio is produced because
+          `SoundMain` is still a silent stub (PR #7 part 2.3), and
+          `MPlayMain` is reached only via `soundInfo->MPlayMainHead`
+          from inside `SoundMain` — so the dispatcher and `ply_*`
+          handlers ported in 2.2.2.* remain exercised exclusively by
+          the `Port_M4ASelfCheck()` harness, while the production
+          runtime path now exercises `m4aSoundInit` → `MPlayOpen` end
+          to end. The `--frames=30` golden hashes for both the
+          default `=ON` (`0x8f68687253dc1b25`) and the preserved
+          `=OFF` (`0xf9b70c534973f325`) builds remain bit-for-bit
+          unchanged because the rasterizer is not affected by the
+          MusicPlayerInfo / MusicPlayerTrack BSS state.
     - [ ] **PR #7 part 2.3** Host C reimplementation of `SoundMain` /
       `SoundMainBTM` so DirectSound + CGB channels accumulate samples
       into a per-frame PCM scratchpad that is then pushed through
       `Port_AudioPushSamples` from `m4aSoundVSync`. This is where
       audio actually plays. Also ships the CGB register pokes from
       `ply_port`.
+      - [x] **PR #7 part 2.3.1** Promoted `ply_port` from a no-op
+        stub to a real C port of `asm/lib/m4a_asm.s::ply_port` in
+        `src/platform/shared/m4a_host.c`. Reads two bytes from
+        `track->cmdPtr` (CGB sound-register byte offset, value),
+        advances cmdPtr by 2, and writes the value into the emulated
+        MMIO array as `gPortIo[0x60 + offset] = value` — mirroring
+        the asm's direct `*(0x04000060 + offset) = value` write
+        through the same byte-translation that
+        `Port_TranslateHwAddr()` already applies to every
+        `0x04000000+x` host access. The host has no real CGB sound
+        hardware so the write is silent in audible terms; future PR
+        #7 part 2.3 main-step CGB-aware mixer code can read those
+        bytes back out of `gPortIo[]` to drive the channel state.
+        `Port_M4ASelfCheck()` grew a 2.3.1 section that exercises
+        four scenarios: standalone single poke (asserting cmdPtr+2,
+        the target byte set, both neighbour bytes untouched), a
+        second standalone poke at a different offset (asserting the
+        first poke's byte survives), the dispatcher path through
+        opcode `0xCC` (= `M4A_JUMP_BASE + 27`) followed by the two
+        operand bytes and a wait command (asserting cmdPtr advances
+        by exactly 4, gPortIo poked, `runningStatus` latched, and
+        `wait` decremented), with the CGB sound-register window
+        (0x60..0xA0) saved/restored around the test so the
+        rasterizer (which reads display registers in the same
+        gPortIo array) is bit-for-bit unaffected. The `--frames=30`
+        golden hashes for both the default `=ON`
+        (`0x8f68687253dc1b25`) and the preserved `=OFF`
+        (`0xf9b70c534973f325`) builds remain bit-for-bit unchanged
+        because `ply_port` is reachable only via `MPlayMain`, which
+        under the silent host mixer is itself reachable only via
+        `Port_M4ASelfCheck()` — the production runtime path links
+        each music player's `MPlayMainHead` but `SoundMain` is
+        still a no-op (the main step of PR #7 part 2.3) so the
+        head is never walked, and the gPortIo restore step keeps
+        the rasterizer state identical post-self-check. Every
+        dispatcher-reachable `ply_*` handler now has a real host C
+        port; the remaining 2.3 work is the `SoundMain` /
+        `SoundMainBTM` mixer itself.
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two

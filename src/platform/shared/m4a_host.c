@@ -18,12 +18,15 @@
  *   1. Provides host BSS for the four EWRAM globals (sized for the host's
  *      pointer width — m4a.c owns the layout so the GBA struct-size
  *      asserts in `include/gba/m4a.h` are no-ops here per PR #2b.3 wave 1).
- *   2. Provides empty stand-in tables for `gMusicPlayers[]` / `gSongTable[]`
- *      (the real ones live in `data/sound/music_player_table.s` and
- *      `data/sound/song_table.s`, which are unbuilt under SDL). The
+ *   2. Provides strong host BSS for the music-player / track arenas
+ *      (`gMPlayInfos`, `gMPlayInfos2`, `gMPlayTracks`) declared in
+ *      `src/sound.c`, sized to match real usage so that the
  *      `m4aSoundInit()` loop in `src/gba/m4a.c` walks `NUM_MUSIC_PLAYERS`
- *      entries; we redefine that macro to literal 0 in m4a.c under
- *      `__PORT__`, so neither table is dereferenced during init.
+ *      entries (32 under `__PORT__` since PR #7 part 2.2.2.3) and calls
+ *      `MPlayOpen` against valid storage. The empty `gSongTable[]` (the
+ *      real one lives in `data/sound/song_table.s`, which is unbuilt
+ *      under SDL) stays out of reach because the `m4aSongNum*` entry
+ *      points aren't called before the title-screen idle CI exercises.
  *   3. Provides silent strong stubs for every asm-defined symbol that
  *      `src/gba/m4a.c` references. The C half can therefore link cleanly
  *      and `m4aSoundInit()` runs to completion; the result is that the
@@ -40,6 +43,7 @@
 
 #include "global.h"
 #include "gba/m4a.h"
+#include "platform/port.h"
 
 /* ------------------------------------------------------------------ */
 /* (1) Host BSS for the four linker-script EWRAM globals.             */
@@ -95,26 +99,45 @@ u8 gCgbChans[4 * 256] __attribute__((aligned(16)));
 u8 gSoundInfo[4096] __attribute__((aligned(16)));
 
 /* ------------------------------------------------------------------ */
-/* (2) Notes on the song / music-player tables.                       */
+/* (2) Host BSS arenas for the music-player / track tables.           */
 /*                                                                    */
-/* The real `gMusicPlayers[]` and `gSongTable[]` definitions live in  */
-/* `src/sound.c` (already in the leaf set since 2b.3 wave 1) and      */
-/* point at per-player `MusicPlayerInfo` + `MusicPlayerTrack` arenas  */
-/* whose host BSS is provided by the weak `gMPlayInfos` /             */
-/* `gMPlayInfos2` / `gMPlayTracks` placeholders in                    */
-/* `port_unresolved_stubs.c`. We don't touch those tables here.       */
+/* The real `gMusicPlayers[]` / `gSongTable[]` definitions live in    */
+/* `src/sound.c` (in the leaf set since 2b.3 wave 1) and point at     */
+/* per-player `MusicPlayerInfo` + `MusicPlayerTrack` arenas declared  */
+/* there as:                                                          */
+/*     extern MusicPlayerInfo  gMPlayInfos [0x1C];                    */
+/*     extern MusicPlayerInfo  gMPlayInfos2[0x4];                     */
+/*     extern MusicPlayerTrack gMPlayTracks[];                        */
+/* The track arena's high-water-mark is `gMusicPlayers[BGM]`, which   */
+/* uses `&gMPlayTracks[0x46]` with `nTracks = 0xC` (so indices        */
+/* 0x46..0x51, requiring at least 0x52 entries).                      */
 /*                                                                    */
-/* The only m4a.c caller that walks `gMusicPlayers` during boot is    */
-/* `m4aSoundInit()`'s `for (i = 0; i < NUM_MUSIC_PLAYERS; i++)` loop. */
-/* That loop is rendered no-op by redefining `NUM_MUSIC_PLAYERS` to   */
-/* literal 0 under `__PORT__` in `src/gba/m4a.c` itself, so no entry  */
-/* is dereferenced and the stale-MusicPlayerInfo BSS stays at zero    */
-/* (matching freshly-erased EWRAM). The `m4aSongNum*` entry points    */
-/* are never reached during the headless smoke test because           */
-/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`    */
+/* PR #7 part 2.2.2.3 promotes `NUM_MUSIC_PLAYERS` back to its real   */
+/* value (0x20 = 32) under `__PORT__`. With 32 entries the boot path  */
+/* `m4aSoundInit()` walks the full `gMusicPlayers[]` array and calls  */
+/* `MPlayOpen` against each of these BSS slots, so they need to be    */
+/* sized to match real usage rather than left as 256-byte weak        */
+/* placeholders. Provide strong host-side definitions of the proper   */
+/* type and extent here; the matching weak placeholders previously    */
+/* in `port_unresolved_stubs.c` have been removed so these strong     */
+/* definitions resolve uniquely.                                      */
+/*                                                                    */
+/* Even with the loop walked, no audio is produced: the runtime       */
+/* mixer (`SoundMain`) is still a silent stub (PR #7 part 2.3) and    */
+/* `MPlayMain` is reached only off `soundInfo->MPlayMainHead` from    */
+/* inside `SoundMain`, so the dispatcher and `ply_*` handlers ported  */
+/* in 2.2.2.* are still exercised exclusively by the smoke-test       */
+/* `Port_M4ASelfCheck()` harness — the production runtime path runs  */
+/* through `m4aSoundInit()` → `MPlayOpen` (initialises BSS, links     */
+/* `MPlayMainHead`) and stops there. The `m4aSongNum*` entry points  */
+/* remain unreached during the headless smoke test because            */
+/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`   */
 /* state machinery that doesn't activate before the title-screen      */
 /* idle CI exercises.                                                 */
 /* ------------------------------------------------------------------ */
+MusicPlayerInfo gMPlayInfos[0x1C] __attribute__((aligned(16)));
+MusicPlayerInfo gMPlayInfos2[0x04] __attribute__((aligned(16)));
+MusicPlayerTrack gMPlayTracks[0x52] __attribute__((aligned(16)));
 
 /* ------------------------------------------------------------------ */
 /* (3) Silent strong stubs for the asm-defined symbols.               */
@@ -604,10 +627,10 @@ void ChnVolSetAsm(void) { /* PR #7 part 2 */
 /* (`ply_fine`, `ply_goto`, `ply_patt`, `ply_pend`, `ply_rept`) and    */
 /* the `track->chan` walk in `ply_endtie`. PR #7 part 2.2.2.2.2.1     */
 /* promoted `ply_voice` (it just copies `mp->tone[index]` into        */
-/* `track->tone`). The remaining handlers (`ply_note`, `ply_port`)    */
-/* need either the channel-allocation walk against `gSoundInfo`        */
-/* (`ply_note`, lands in PR #7 part 2.2.2.2.2.2) or the CGB register   */
-/* pokes that PR #7 part 2.3 will introduce (`ply_port`).              */
+/* `track->tone`), 2.2.2.2.2.2 promoted `ply_note`, and 2.3.1         */
+/* promoted `ply_port` (CGB sound-register byte poke through the      */
+/* emulated `gPortIo[]` MMIO array). Every dispatcher-reachable       */
+/* `ply_*` handler now has a real host C port.                         */
 /*                                                                     */
 /* `NUM_MUSIC_PLAYERS == 0` under `__PORT__` (see src/gba/m4a.c) — so  */
 /* even though `MPlayMain` is now a real port, it never iterates a    */
@@ -950,20 +973,64 @@ void ply_voice(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
     track->tone = mp->tone[voice];
 }
 
-/* The remaining gated handler is `ply_port` (needs the CGB register
- * pokes that the host mixer doesn't have a backing-store for yet —
- * PR #7 part 2.3). `ply_note` was promoted to a real C port in PR #7
- * part 2.2.2.2.2.2 (the implementation lives below this stub block,
- * after the SoundInfo / CgbChannel host mirrors it depends on). */
+/* The remaining gated handlers are all promoted by PR #7 part 2.3:
+ * `ply_port` writes a CGB sound register (lands in 2.3.1, below).
+ * `ply_note` was promoted to a real C port in PR #7 part 2.2.2.2.2.2
+ * (the implementation lives below this stub block, after the
+ * SoundInfo / CgbChannel host mirrors it depends on). */
 #define M4A_PLY_STUB(name)                                 \
     void name(MusicPlayerInfo* mp, MusicPlayerTrack* tr) { \
         (void)mp;                                          \
         (void)tr;                                          \
     }
 
-M4A_PLY_STUB(ply_port)
+/* (no remaining stubs in this block — `ply_port` is promoted below.) */
 
 #undef M4A_PLY_STUB
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.1: ply_port.                                        */
+/*                                                                    */
+/* Host C reimplementation of `asm/lib/m4a_asm.s::ply_port`. The asm  */
+/* loads two bytes from `track->cmdPtr`: the first is the byte offset */
+/* from base `0x04000060`, the second is the value to write. cmdPtr   */
+/* is advanced by 2.                                                  */
+/*                                                                    */
+/* On the GBA the write lands directly in MMIO and pokes the CGB      */
+/* channel's pulse / wave / noise / envelope registers. The commonly  */
+/* used region starts at `0x04000060` and includes both the usual CGB */
+/* sound registers and wave RAM (roughly `[0x60, 0xA0)` in the        */
+/* low-byte view). On the host there is no real CGB hardware; the     */
+/* emulated MMIO array `gPortIo[]` (declared in                       */
+/* `include/platform/port.h` and defined in                           */
+/* `src/platform/shared/gba_memory.c`) backs every `0x04000000+x`     */
+/* address through `Port_TranslateHwAddr()` already. Writing          */
+/* `gPortIo[0x60 + offset] = value` therefore mirrors what the asm    */
+/* does on the GBA, leaves the gPortIo state observable by any future */
+/* CGB-aware host mixer (PR #7 part 2.3 main step), and is silent in  */
+/* terms of audible output (the host has no audio path through        */
+/* gPortIo[]).                                                        */
+/*                                                                    */
+/* The asm doesn't bounds-check `offset`; neither do we. With an      */
+/* unconstrained 8-bit offset this host path can address              */
+/* `gPortIo[0x60..0x15F]` inside the 0x400-byte MMIO backing array,   */
+/* which is comfortably in-range. Real song data is typically limited */
+/* to the CGB+wave subset near `[0x60, 0xA0)`, but the implementation */
+/* intentionally preserves the asm's broader effective range.         */
+/*                                                                    */
+/* `ply_port` is `gMPlayJumpTable[27]` (opcode 0xCC). Like every      */
+/* other dispatcher-reachable handler in this file, it is reached at  */
+/* runtime only via `MPlayMain`, which under the silent host mixer is */
+/* itself reachable only from `Port_M4ASelfCheck()` — production      */
+/* music players have `MPlayMainHead` linked but `SoundMain` is still */
+/* a no-op (PR #7 part 2.3 main step), so the head is never walked.   */
+/* ------------------------------------------------------------------ */
+void ply_port(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
+    u8 offset = m4a_consume_byte(track);
+    u8 value = m4a_consume_byte(track);
+    gPortIo[0x60 + offset] = value;
+    (void)mp;
+}
 
 /* ------------------------------------------------------------------ */
 /* PR #7 part 2.2.2.2.2.2: ply_note.                                  */
@@ -3061,6 +3128,81 @@ int Port_M4ASelfCheck(void) {
      * zero-fill that m4aSoundInit will perform when the engine
      * boots). */
     memset(gSoundInfo, 0, sizeof(gSoundInfo));
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.1: ply_port.                                 */
+    /*                                                             */
+    /* Drives the standalone handler and the dispatcher path       */
+    /* (opcode 0xCC = M4A_JUMP_BASE + 27 = ply_port via            */
+    /* gMPlayJumpTable). Asserts cmdPtr advances by exactly 2,     */
+    /* the target gPortIo[0x60 + offset] byte gets the value, and  */
+    /* an unrelated gPortIo byte is left untouched.                */
+    /*                                                             */
+    /* gPortIo is the emulated MMIO array; we save / restore the   */
+    /* MMIO window [0x60, 0xA0) around the test so the rasterizer  */
+    /* (which reads display registers in the same array) stays     */
+    /* bit-for-bit identical post-self-check.                      */
+    /* ----------------------------------------------------------- */
+    {
+        enum { PLY_PORT_WIN_LO = 0x60, PLY_PORT_WIN_HI = 0xA0 };
+        u8 saved[PLY_PORT_WIN_HI - PLY_PORT_WIN_LO];
+        memcpy(saved, &gPortIo[PLY_PORT_WIN_LO], sizeof(saved));
+        memset(&gPortIo[PLY_PORT_WIN_LO], 0, sizeof(saved));
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack track_local;
+        u8 stream_local[8];
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+
+        /* Standalone: write 0xA5 to gPortIo[0x60 + 0x12]. */
+        stream_local[0] = 0x12; /* offset */
+        stream_local[1] = 0xA5; /* value */
+        track_local.cmdPtr = stream_local;
+        ply_port(&mp_local, &track_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 2);
+        M4A_CHECK(gPortIo[0x60 + 0x12] == 0xA5);
+        M4A_CHECK(gPortIo[0x60 + 0x11] == 0x00); /* untouched neighbour */
+        M4A_CHECK(gPortIo[0x60 + 0x13] == 0x00); /* untouched neighbour */
+
+        /* Standalone, second poke at a different offset overwrites
+         * its target and leaves the previous one alone. */
+        stream_local[0] = 0x05;
+        stream_local[1] = 0x3C;
+        track_local.cmdPtr = stream_local;
+        ply_port(&mp_local, &track_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 2);
+        M4A_CHECK(gPortIo[0x60 + 0x05] == 0x3C);
+        M4A_CHECK(gPortIo[0x60 + 0x12] == 0xA5); /* still set */
+
+        /* Dispatcher path: opcode 0xCC = M4A_JUMP_BASE + 27 = ply_port
+         * via gMPlayJumpTable. Followed by the two operand bytes
+         * (offset, value) and a wait command so MPlayMain stops after
+         * the poke. */
+        memset(&gPortIo[PLY_PORT_WIN_LO], 0, sizeof(saved));
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&track_local, 0, sizeof(track_local));
+        mp_local.ident = M4A_ID_NUMBER;
+        mp_local.tempoI = 150;
+        mp_local.trackCount = 1;
+        mp_local.tracks = &track_local;
+        track_local.flags = M4A_FLG_EXIST;
+        stream_local[0] = 0xCC; /* ply_port */
+        stream_local[1] = 0x20; /* offset */
+        stream_local[2] = 0x77; /* value */
+        stream_local[3] = 0x81; /* wait, gClockTable[1] = 0x01 */
+        track_local.cmdPtr = stream_local;
+        MPlayMain(&mp_local);
+        M4A_CHECK(track_local.cmdPtr == stream_local + 4);
+        M4A_CHECK(gPortIo[0x60 + 0x20] == 0x77);
+        M4A_CHECK(track_local.runningStatus == 0xCC);
+        M4A_CHECK(track_local.wait == 0); /* 1 - 1 = 0 after tick */
+
+        /* Restore the MMIO window [0x60, 0xA0) so the rasterizer
+         * (which reads display registers from the same gPortIo array)
+         * is unaffected. */
+        memcpy(&gPortIo[PLY_PORT_WIN_LO], saved, sizeof(saved));
+    }
 
 #undef M4A_WRITE_LE32
 #undef M4A_RUN
