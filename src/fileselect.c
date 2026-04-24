@@ -655,6 +655,12 @@ void sub_08050848(void) {
     gMapDataBottomSpecial.unk7 = 0;
     sub_08050AFC(gMapDataBottomSpecial.unk6);
     SetMenuType(1);
+    /* Advance the dispatcher from this init slot (0) to the steady-state input
+     * handler (sub_08050940 at slot 2). Without this store the dispatcher byte
+     * at offset 0x06 of gChooseFileState (≡ gMenu.overlayType, just zeroed by
+     * SetMenuType above) stays 0 forever, so HandleFileSelect re-runs this
+     * init function every frame and never observes any input. */
+    gChooseFileState.state = 2;
 }
 
 void (*const gUnk_080FC908[])(void) = {
