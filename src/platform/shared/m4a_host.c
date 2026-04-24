@@ -609,13 +609,74 @@ u32 umul3232H32(u32 multiplier, u32 multiplicand) {
     return (u32)(((u64)multiplier * (u64)multiplicand) >> 32);
 }
 
-/* `TrackStop` / `ChnVolSetAsm` / `clear_modM` — installed in           */
-/* gMPlayJumpTable or called directly from m4a.c.                       */
+/* `TrackStop` / `clear_modM` — installed in gMPlayJumpTable or       */
+/* called directly from m4a.c.                                          */
 void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
     (void)mplayInfo;
     (void)track;
 }
-void ChnVolSetAsm(void) { /* PR #7 part 2 */
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.3: ChnVolSetAsm host C port.                         */
+/*                                                                    */
+/* Real port of `asm/lib/m4a_asm.s::ChnVolSetAsm`                      */
+/* (`_080AFBD0..._080AFC00`). Computes the per-channel stereo split   */
+/* of the track's master volume into chan->rightVolume /              */
+/* chan->leftVolume from:                                             */
+/*                                                                    */
+/*    velocity = chan->velocity                  (u8, 0..255)         */
+/*    pan      = (s8)chan->rhythmPan             (-128..127, but the  */
+/*                                                ply_pan handler     */
+/*                                                clamps it to        */
+/*                                                -64..63 so `0x80 +  */
+/*                                                pan` and `0x7f -    */
+/*                                                pan` both fit in    */
+/*                                                u8 range)           */
+/*                                                                    */
+/* and the track-level master:                                        */
+/*                                                                    */
+/*    volMR    = track->volMR                    (u8)                 */
+/*    volML    = track->volML                    (u8)                 */
+/*                                                                    */
+/* Output:                                                            */
+/*                                                                    */
+/*    chan->rightVolume = min(0xFF, (velocity * (0x80 + pan) *        */
+/*                                  volMR) >> 14)                     */
+/*    chan->leftVolume  = min(0xFF, (velocity * (0x7F - pan) *        */
+/*                                  volML) >> 14)                     */
+/*                                                                    */
+/* The asm reads chan/track from the implicit-register pair r4/r5     */
+/* set up by the call sites (MPlayMain second per-track loop and      */
+/* ply_note's chan install). The C signature makes the dependence    */
+/* explicit so the host port doesn't need a thread-local pair of     */
+/* "chan / track" globals to mirror the register convention. Only    */
+/* this TU calls the function — the asm callers in `m4a_asm.s` do    */
+/* not run on the host — so the signature change is safe.            */
+/*                                                                    */
+/* The function works equally well on a `M4A_CgbChannel*` cast to    */
+/* `SoundChannel*` because both layouts share the same offsets for   */
+/* `velocity` / `rhythmPan` / `rightVolume` / `leftVolume` (bytes    */
+/* 0x12 / 0x14 / 0x02 / 0x03 — see `M4A_CgbChannel` above).          */
+/* ------------------------------------------------------------------ */
+void ChnVolSetAsm(SoundChannel* chan, MusicPlayerTrack* track) {
+    s32 velocity = (s32)chan->velocity;
+    s32 pan = (s32)(s8)chan->rhythmPan;
+
+    /* Right channel: velocity * (0x80 + pan) * volMR. */
+    s32 rightAccum = velocity * (0x80 + pan);
+    s32 right = (rightAccum * (s32)track->volMR) >> 14;
+    if (right > 0xFF) {
+        right = 0xFF;
+    }
+    chan->rightVolume = (u8)right;
+
+    /* Left channel: velocity * (0x7F - pan) * volML. */
+    s32 leftAccum = velocity * (0x7F - pan);
+    s32 left = (leftAccum * (s32)track->volML) >> 14;
+    if (left > 0xFF) {
+        left = 0xFF;
+    }
+    chan->leftVolume = (u8)left;
 }
 /* `clear_modM` is implemented as part of the PR #7 part 2.2.1 ply_*    */
 /* family below (it is invoked by ply_lfos / ply_mod).                  */
@@ -1268,8 +1329,10 @@ void SoundMain(void) {
 /*     track and chained via the `chan->next` u32-ified pointer):      */
 /*       * dead-envelope chan (`!(statusFlags & 0xc7)`) is unlinked    */
 /*         via `ClearChain(chan)`.                                     */
-/*       * else: VOLCHG → `ChnVolSetAsm()` (silent host stub in this   */
-/*         TU); CGB-typed chans additionally OR bit 0 into the         */
+/*       * else: VOLCHG → `ChnVolSetAsm(chan, track)` (PR #7 part   */
+/*         2.3.3) recomputes chan->rightVolume/leftVolume from      */
+/*         track->volMR/volML and chan->velocity/rhythmPan; CGB-    */
+/*         typed chans additionally OR bit 0 into the                */
 /*         CgbChannel `modify` byte (offset 0x1d) so the next CGB     */
 /*         mixer pass re-pokes the CGB volume regs.                   */
 /*       * PITCHG → newKey = chan->key + (s8)track->keyM, clamped to  */
@@ -1318,7 +1381,7 @@ static void m4a_track_volpit_pass(MusicPlayerInfo* mp) {
 
                 /* VOLCHG path (track flags & 3). */
                 if (flags & MPT_FLG_VOLCHG) {
-                    ChnVolSetAsm();
+                    ChnVolSetAsm(chan, track);
                     if (cgbType != 0) {
                         /* CgbChannel byte at offset 0x1d (`modify`)
                          * — same byte as SoundChannel.fw[1] on GBA;
@@ -1625,7 +1688,7 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         chan->release = subTone->release;
         chan->echoVolume = track->echoVolume;
         chan->echoLength = track->echoLength;
-        ChnVolSetAsm();
+        ChnVolSetAsm(chan, track);
 
         chan->frequency = MidiKeyToFreq((WaveData*)subTone->wav, (u8)freqKey, track->pitM);
 
@@ -1669,7 +1732,12 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         cgb->release = subTone->release;
         cgb->echoVolume = track->echoVolume;
         cgb->echoLength = track->echoLength;
-        ChnVolSetAsm();
+        /* CGB chan storage shares its byte layout with SoundChannel
+         * up through `rhythmPan` (offset 0x14) and through
+         * `rightVolume` / `leftVolume` (offsets 0x02 / 0x03), so the
+         * SoundChannel*-typed ChnVolSetAsm operates correctly on
+         * the cgb-typed location via a same-prefix cast. */
+        ChnVolSetAsm((SoundChannel*)cgb, track);
 
         /* CGB-only byte pokes: the asm writes subTone->length and a
          * derived n4 byte at chan + 0x1e / chan + 0x1f. On the
@@ -3387,6 +3455,127 @@ int Port_M4ASelfCheck(void) {
 
         /* Restore gSoundInfo BSS to a clean slate. */
         memset(gSoundInfo, 0, sizeof(gSoundInfo));
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.3: ChnVolSetAsm.                              */
+    /*                                                              */
+    /* Six scenarios cover the boundary cases of the 14-bit fixed-  */
+    /* point split:                                                 */
+    /*   (1) zero velocity → both rightVolume and leftVolume = 0.   */
+    /*   (2) centre pan (rhythmPan == 0) with equal volMR / volML   */
+    /*       → rightVolume == leftVolume.                           */
+    /*   (3) hard-right pan (rhythmPan == +63) → leftVolume goes    */
+    /*       small (close to zero), rightVolume large.              */
+    /*   (4) hard-left pan (rhythmPan == -64) → mirror of (3).      */
+    /*   (5) saturation: maxed velocity / pan / volMR force the     */
+    /*       arithmetic past 0xFF and the result is clamped.        */
+    /*   (6) The full ply_pan range (-64..+63) maps monotonically:  */
+    /*       rightVolume increases as pan goes from -64 → +63,      */
+    /*       leftVolume decreases monotonically over the same       */
+    /*       range, and the values never exceed 0xFF.               */
+    /*                                                              */
+    /* The asm uses signed 32-bit `muls` throughout; the C body     */
+    /* mirrors that with explicit `(s8)` and `s32` casts. The chan  */
+    /* parameter accepts both SoundChannel* and CgbChannel*-cast    */
+    /* pointers (verified by feeding ChnVolSetAsm a stack-allocated */
+    /* M4A_CgbChannel cast to SoundChannel* in scenario (2)).      */
+    /* ----------------------------------------------------------- */
+    {
+        SoundChannel chan_local;
+        MusicPlayerTrack track_local;
+
+        /* (1) Zero velocity → both volumes zero regardless of pan. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0;
+        chan_local.rhythmPan = 0;
+        chan_local.rightVolume = 0xAA; /* sentinel that must be overwritten */
+        chan_local.leftVolume = 0xBB;
+        track_local.volMR = 0xFF;
+        track_local.volML = 0xFF;
+        ChnVolSetAsm(&chan_local, &track_local);
+        M4A_CHECK(chan_local.rightVolume == 0);
+        M4A_CHECK(chan_local.leftVolume == 0);
+
+        /* (2) Centre pan, equal volMR/volML, via a CgbChannel-cast
+         *     pointer to confirm the prefix-shared layout works. */
+        M4A_CgbChannel cgb_local;
+        memset(&cgb_local, 0, sizeof(cgb_local));
+        memset(&track_local, 0, sizeof(track_local));
+        cgb_local.velocity = 0x40;     /* mid-range velocity */
+        cgb_local.rhythmPan = 0;       /* centre */
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm((SoundChannel*)&cgb_local, &track_local);
+        /* (0x40 * (0x80 + 0)) * 0x80 >> 14 = 0x100000 >> 14 = 0x40 */
+        M4A_CHECK(cgb_local.rightVolume == 0x40);
+        /* (0x40 * (0x7F - 0)) * 0x80 >> 14 = 0xFE000 >> 14 = 0x3F */
+        M4A_CHECK(cgb_local.leftVolume == 0x3F);
+
+        /* (3) Hard-right pan (+63): leftVolume gets only (0x7F-63)
+         *     = 0x40 weighting; rightVolume gets (0x80+63) = 0xBF. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0x40;
+        chan_local.rhythmPan = (u8)63;
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm(&chan_local, &track_local);
+        /* (0x40 * 0xBF) * 0x80 >> 14 = 0x17C000 >> 14 = 0x5F */
+        M4A_CHECK(chan_local.rightVolume == 0x5F);
+        /* (0x40 * 0x40) * 0x80 >> 14 = 0x80000 >> 14 = 0x20 */
+        M4A_CHECK(chan_local.leftVolume == 0x20);
+
+        /* (4) Hard-left pan (-64): mirror of (3), via the s8 cast. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0x40;
+        chan_local.rhythmPan = (u8)(s8)(-64);
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm(&chan_local, &track_local);
+        /* (0x40 * (0x80 - 64 = 0x40)) * 0x80 >> 14 = 0x80000 >> 14 = 0x20 */
+        M4A_CHECK(chan_local.rightVolume == 0x20);
+        /* (0x40 * (0x7F + 64 = 0xBF)) * 0x80 >> 14 = 0x17E000 >> 14 = 0x5F */
+        M4A_CHECK(chan_local.leftVolume == 0x5F);
+
+        /* (5) Saturation: velocity 0xFF * (0x80 + 63 = 0xBF) * volMR
+         *     0xFF >> 14 = 0xBD8E40 / 0x4000 ≈ 0x2F6, clamped to 0xFF. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0xFF;
+        chan_local.rhythmPan = (u8)63;
+        track_local.volMR = 0xFF;
+        track_local.volML = 0xFF;
+        ChnVolSetAsm(&chan_local, &track_local);
+        M4A_CHECK(chan_local.rightVolume == 0xFF); /* clamped */
+        /* leftVolume: (0xFF * (0x7F - 63 = 0x40)) * 0xFF >> 14
+         * = 0x3F8040 >> 14 = 0xFE (just under the 0xFF clamp). */
+        M4A_CHECK(chan_local.leftVolume == 0xFE);
+
+        /* (6) Monotonicity sweep across the ply_pan output range
+         *     (-64..+63). With fixed velocity and equal vol slots
+         *     rightVolume must increase weakly and leftVolume must
+         *     decrease weakly, and neither overflows. */
+        u8 prevRight = 0;
+        u8 prevLeft = 0xFF;
+        s32 i;
+        for (i = -64; i <= 63; i++) {
+            memset(&chan_local, 0, sizeof(chan_local));
+            memset(&track_local, 0, sizeof(track_local));
+            chan_local.velocity = 0x40;
+            chan_local.rhythmPan = (u8)(s8)i;
+            track_local.volMR = 0x80;
+            track_local.volML = 0x80;
+            ChnVolSetAsm(&chan_local, &track_local);
+            M4A_CHECK(chan_local.rightVolume >= prevRight);
+            M4A_CHECK(chan_local.leftVolume <= prevLeft);
+            M4A_CHECK(chan_local.rightVolume <= 0xFF);
+            M4A_CHECK(chan_local.leftVolume <= 0xFF);
+            prevRight = chan_local.rightVolume;
+            prevLeft = chan_local.leftVolume;
+        }
     }
 
 #undef M4A_WRITE_LE32
