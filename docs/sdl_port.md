@@ -1360,6 +1360,58 @@ are tracked here for future contributors.
         dispatcher-reachable `ply_*` handler now has a real host C
         port; the remaining 2.3 work is the `SoundMain` /
         `SoundMainBTM` mixer itself.
+      - [x] **PR #7 part 2.3.2** Promoted `SoundMain` from a no-op
+        stub to a host C port of the asm's top half
+        (`asm/lib/m4a_asm.s::SoundMain` `_080AF320..._080AF358`) in
+        `src/platform/shared/m4a_host.c`. The body now: (1) reads
+        `gSoundInfo.ident` and early-outs unless it equals
+        `ID_NUMBER` (matching the asm's
+        `cmp r2, r3; beq ...; bx lr` magic-value gate); (2) bumps
+        `ident` (lock-out re-entry); (3) calls
+        `soundInfo->MPlayMainHead(soundInfo->intp)` if non-NULL,
+        which walks the entire registered `MusicPlayerInfo` chain
+        through each `mp->func(mp->intp)` from inside the C
+        `MPlayMain` ported in PR #7 part 2.2.2.2.1; (4) calls
+        `soundInfo->CgbSound()` if non-NULL (the asm's matching
+        invocation is unconditional because `SoundInit()` populates
+        the slot with `nullsub_544`, but the host tolerates a NULL
+        slot for self-check harnesses that bypass `SoundInit`); and
+        (5) restores `soundInfo->ident = ID_NUMBER` directly,
+        because the asm's bottom-half mixer (`SoundMainBTM`'s tail
+        at `_080AF6BA`) writes the magic back and we are still
+        skipping that path under the silent stub — without the
+        explicit restore, `ident` would stay at `ID_NUMBER + 1`
+        forever and every subsequent `SoundMain` plus every other
+        `ident == ID_NUMBER` gate in `m4a.c` would early-out. The
+        actual sample mixing (`SoundMainRAM` + `SoundMainBTM`'s
+        bottom half) remains deferred to the next 2.3 substep.
+        With this in place the production runtime path now drives
+        the entire dispatcher chain every VBlank (`m4aSoundMain`
+        from `src/interrupts.c` → `SoundMain` → `MPlayMainHead` →
+        `MPlayMain` for each of the 32 registered
+        `gMusicPlayers[]`), so the `MPlayMain` / `ply_*` handlers
+        previously exercised only by `Port_M4ASelfCheck()` now
+        also run live — though with no song loaded yet (the
+        `m4aSongNum*` entry points are still gated by
+        `src/sound.c::SoundReq` state machinery that doesn't
+        activate before the title-screen idle the smoke test
+        exercises) every track sees `flags == 0` and the
+        per-track inner loop is a no-op. `Port_M4ASelfCheck()`
+        grew a 2.3.2 section that exercises five scenarios
+        end-to-end: the ident-gate early-out (callbacks unfired,
+        ident untouched), `MPlayMainHead`-NULL + `CgbSound`-NULL
+        ident bump-and-restore, `MPlayMainHead`-set firing exactly
+        once with `intp` as its argument, `CgbSound`-set firing
+        independently, and both slots set firing in the asm's
+        order with ident restored. The `--frames=30` golden hashes
+        for both the default `=ON` (`0x8f68687253dc1b25`) and the
+        preserved `=OFF` (`0xf9b70c534973f325`) builds remain
+        bit-for-bit unchanged because `ply_port` and the dispatcher
+        loop only modify the CGB sound-register window
+        (`gPortIo[0x60..0x9F]`) plus engine BSS that the
+        rasterizer never reads, and no song has been requested by
+        the title-screen idle so the per-track loop has no work.
+
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two
