@@ -12,6 +12,7 @@
  */
 #include "platform/port.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -285,30 +286,76 @@ struct ObjAffineSrcData {
     int16_t xScale, yScale;
     uint16_t rotation;
 };
+/* Convert the GBA BIOS 16-bit angle (0..0xFFFF spans a full circle) into
+ * radians. The hardware BIOS only consults the high 8 bits of the input
+ * (it indexes a 256-entry sin/cos table), but using the full 16-bit value
+ * here is bit-compatible with that table for the angles game code feeds
+ * us (it always passes a value already pre-aligned to that resolution). */
+static double port_bios_angle_to_radians(uint16_t alpha) {
+    return ((double)alpha) * (2.0 * 3.14159265358979323846 / 65536.0);
+}
+
 void BgAffineSet(struct BgAffineSrcData* src, struct BgAffineDstData* dst, int32_t count) {
     for (int32_t i = 0; i < count; ++i) {
-        /* Identity transform placeholder -- good enough to let game code
-         * validate that the call returned without corrupting state. The
-         * real affine math will arrive with the PR #5 renderer. */
-        dst[i].pa = 0x0100;
-        dst[i].pb = 0;
-        dst[i].pc = 0;
-        dst[i].pd = 0x0100;
-        dst[i].startX = src[i].texX;
-        dst[i].startY = src[i].texY;
+        double theta = port_bios_angle_to_radians(src[i].alpha);
+        double cos_t = cos(theta);
+        double sin_t = sin(theta);
+
+        /* sx, sy are 8.8 fixed-point scale factors. The GBA BIOS produces
+         * pa..pd in 8.8 too:
+         *   pa =  cos(α) * sx     pb = -sin(α) * sx
+         *   pc =  sin(α) * sy     pd =  cos(α) * sy
+         * (matrix maps screen displacement -> texture displacement). */
+        double sx = (double)src[i].sx;
+        double sy = (double)src[i].sy;
+        int32_t pa = (int32_t)(cos_t * sx);
+        int32_t pb = (int32_t)(-sin_t * sx);
+        int32_t pc = (int32_t)(sin_t * sy);
+        int32_t pd = (int32_t)(cos_t * sy);
+        dst[i].pa = (int16_t)pa;
+        dst[i].pb = (int16_t)pb;
+        dst[i].pc = (int16_t)pc;
+        dst[i].pd = (int16_t)pd;
+
+        /* startX/startY (24.8 fixed) are the texture coordinate that
+         * corresponds to screen pixel (0,0):
+         *   startX = texX - (scrX * pa + scrY * pb)
+         *   startY = texY - (scrX * pc + scrY * pd)
+         * texX/texY are 24.8 fixed; scrX/scrY are integer screen pixels. */
+        dst[i].startX = src[i].texX - (int32_t)src[i].scrX * pa - (int32_t)src[i].scrY * pb;
+        dst[i].startY = src[i].texY - (int32_t)src[i].scrX * pc - (int32_t)src[i].scrY * pd;
     }
 }
 void ObjAffineSet(struct ObjAffineSrcData* src, void* dst_, int32_t count, int32_t offset) {
-    int16_t* dst = (int16_t*)dst_;
+    uint8_t* dst = (uint8_t*)dst_;
     for (int32_t i = 0; i < count; ++i) {
-        dst[0] = 0x0100;
-        dst[1] = 0;
-        dst[2] = 0;
-        dst[3] = 0x0100;
-        (void)src;
-        dst = (int16_t*)((char*)dst + offset * 4);
+        double theta = port_bios_angle_to_radians(src[i].rotation);
+        double cos_t = cos(theta);
+        double sin_t = sin(theta);
+
+        /* xScale/yScale are 8.8 fixed. Same convention as BgAffineSet:
+         *   pa =  cos(α) * xScale    pb = -sin(α) * xScale
+         *   pc =  sin(α) * yScale    pd =  cos(α) * yScale
+         * Output pa..pd are 8.8 fixed. The BIOS interleaves the four
+         * matrix halfwords through the destination buffer: each of
+         * pa/pb/pc/pd is `offset` bytes apart (8 when writing into OAM
+         * since affine slots span every 4th OAM entry). */
+        double sx = (double)src[i].xScale;
+        double sy = (double)src[i].yScale;
+        int32_t pa32 = (int32_t)(cos_t * sx);
+        int32_t pb32 = (int32_t)(-sin_t * sx);
+        int32_t pc32 = (int32_t)(sin_t * sy);
+        int32_t pd32 = (int32_t)(cos_t * sy);
+        int16_t pa = (int16_t)pa32;
+        int16_t pb = (int16_t)pb32;
+        int16_t pc = (int16_t)pc32;
+        int16_t pd = (int16_t)pd32;
+        memcpy(dst + 0,                       &pa, sizeof(pa));
+        memcpy(dst + (size_t)offset,          &pb, sizeof(pb));
+        memcpy(dst + (size_t)offset * 2,      &pc, sizeof(pc));
+        memcpy(dst + (size_t)offset * 3,      &pd, sizeof(pd));
+        dst += (size_t)offset * 4;
     }
-    (void)count;
 }
 
 /* RL (run-length) decompression is used by a small number of asset

@@ -37,6 +37,10 @@ Outputs (under --out-dir)
                               chains resolved for the active variant)
                             - `gPaletteGroups[]` (parsed from
                               `data/gfx/palette_groups.s`, similarly)
+                            - `gFrameObjLists[]` (extracted from baserom
+                              per `assets/assets.json`; consumed by
+                              `affine.c::DrawDirect` -> `port_oam_renderer.c`
+                              for direct sprite emission)
 
 When the host CMake build is configured with `-DTMC_BASEROM=...`, this
 tool runs at configure time and the generated source replaces
@@ -566,12 +570,58 @@ def encode_palette_byte3(item: PaletteSet) -> int:
     return ((item.count & 0xF) | (0 if item.terminator else 0x80)) & 0xFF
 
 
+def load_assets_json_blob(
+    repo_root: Path, asset_path: str, variant: str
+) -> Optional[Tuple[int, int]]:
+    """Find a single ``path``-keyed entry in ``assets/assets.json`` and
+    return ``(file_offset, size)`` for the active variant, or ``None``
+    if the variant does not ship that asset.
+
+    Honours the same conventions as :func:`load_gfx_assets`:
+
+    * an ``offsets: { variant: int }`` block sets a running variant
+      offset that adds to subsequent ``start`` values, until the next
+      ``offsets`` block;
+    * ``starts: { variant: int }`` (per-variant explicit starts) is
+      taken verbatim and is *not* adjusted by the running variant
+      offset (matches the gfx.json walker);
+    * a ``variants`` filter restricts an entry to a subset of variants.
+    """
+    cfg_path = repo_root / "assets" / "assets.json"
+    with cfg_path.open() as f:
+        entries = json.load(f)
+
+    variant_off = 0
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        if "offsets" in entry:
+            variant_off = entry["offsets"].get(variant, 0)
+            continue
+        if entry.get("path") != asset_path:
+            continue
+        if "variants" in entry and variant not in entry["variants"]:
+            continue
+        if "starts" in entry:
+            file_offset = entry["starts"].get(variant)
+            if file_offset is None:
+                continue
+        elif "start" in entry:
+            file_offset = entry["start"] + variant_off
+        else:
+            continue
+        size = entry.get("size", 0)
+        return (file_offset, size)
+    return None
+
+
 def write_assets_source(
     out_path: Path,
     blob: bytes,
     blob_size: int,
     parsed: ParsedAsmFile,
     offsets: Dict[str, int],
+    frame_obj_lists: Optional[bytes] = None,
 ) -> None:
     """Emit `port_rom_assets.c`.
 
@@ -677,6 +727,28 @@ def write_assets_source(
             lines.append(f"    /* [{i:3d}] */ &k_{target}[0],")
     lines.append("};")
     lines.append("")
+
+    # ---- gFrameObjLists --------------------------------------------------
+    # Two-level relative-offset blob consumed by `affine.c::DrawDirect`
+    # via `port_oam_renderer.c::ram_DrawDirect`. The host build's
+    # `port_unresolved_stubs.c` ships only a 256-byte zero placeholder
+    # for this symbol, which makes every direct sprite emission (most
+    # visibly title-screen "PRESS START" and the copyright "©" sprite)
+    # walk into zeros and short-circuit. With the player's baserom in
+    # hand we can extract the real blob and emit a strong host
+    # definition that overrides the weak placeholder.
+    if frame_obj_lists is not None:
+        n = len(frame_obj_lists)
+        lines.append(f"/* gFrameObjLists: {n} bytes from baserom (assets.json). */")
+        lines.append(f"uint8_t gFrameObjLists[{n}] = {{")
+        chunk = 16
+        for i in range(0, n, chunk):
+            row = ", ".join(f"0x{b:02x}" for b in frame_obj_lists[i : i + chunk])
+            comma = "," if i + chunk < n else ""
+            lines.append(f"    {row}{comma}")
+        lines.append("};")
+        lines.append("")
+
     lines.append("#endif /* __PORT__ */")
     lines.append("")
 
@@ -835,21 +907,45 @@ def cmd_gen(args: argparse.Namespace) -> None:
     # 4. build the gGlobalGfxAndPalettes blob and emit the C source.
     blob, blob_size = build_palette_blob(assets, baserom)
     offset_table = {f"offset_{a.symbol}": a.block_offset for a in assets}
+
+    # 5. extract the gFrameObjLists blob from baserom (if the variant
+    # ships one) so the strong host definition overrides the 256-byte
+    # zero placeholder in `port_unresolved_stubs.c`. Without this,
+    # `DrawDirect` emissions (PRESS START, copyright ©, pause menu,
+    # …) walk into zeros and never reach `gOAMControls.oam`.
+    fol = load_assets_json_blob(repo_root, "gfx/gFrameObjLists.bin", args.variant)
+    frame_obj_lists_bytes: Optional[bytes] = None
+    if fol is not None:
+        fol_off, fol_size = fol
+        if fol_off + fol_size > len(baserom):
+            raise SystemExit(
+                f"gFrameObjLists reads {fol_off + fol_size} bytes from baserom "
+                f"but baserom is only {len(baserom)} bytes"
+            )
+        frame_obj_lists_bytes = bytes(baserom[fol_off : fol_off + fol_size])
+
     write_assets_source(
         out_dir / "port_rom_assets.c",
         blob,
         blob_size,
         parsed,
         offset_table,
+        frame_obj_lists=frame_obj_lists_bytes,
     )
 
     if args.verbose:
+        fol_msg = (
+            f" frame_obj_lists={len(frame_obj_lists_bytes)} bytes"
+            if frame_obj_lists_bytes is not None
+            else " frame_obj_lists=<absent>"
+        )
         print(
             f"variant={args.variant} assets={len(assets)} "
             f"blob={blob_size} bytes "
             f"gfx_groups={len(parsed.gfx_groups)} ({len(parsed.gfx_index_order)} idx) "
             f"palette_groups={len(parsed.palette_groups)} ({len(parsed.palette_index_order)} idx) "
             f"enum_count={len(parsed.enum_table)}"
+            f"{fol_msg}"
         )
 
 
