@@ -1473,20 +1473,46 @@ are tracked here for future contributors.
         RealClearChain` (`_080AF6EC..._080AF70A`) in
         `src/platform/shared/m4a_host.c`. Performs the textbook
         doubly-linked-list unlink the asm spells out: read
-        `chan->track` (offset 0x2c) and early-out if NULL; otherwise
-        read `chan->prev` (0x30) / `chan->next` (0x34) and either
-        rewire `prev->next` (when `prev != NULL`) or replace the
-        per-track head `track->chan` (when `prev == NULL`); rewire
-        `next->prev` when `next != NULL`; finally clear
-        `chan->track = NULL` so a follow-up `RealClearChain` on the
-        same chan takes the early-out cleanly. The `chan->prev` /
-        `chan->next` slots are u32-typed in the public
-        `include/gba/m4a.h` header (faithful to the GBA's 32-bit
+        `chan->track` (asm offset 0x2c) and early-out if NULL;
+        otherwise read `chan->prev` (0x30) / `chan->next` (0x34)
+        and either rewire `prev->next` (when `prev != NULL`) or
+        replace the per-track head `track->chan` (when `prev ==
+        NULL`); rewire `next->prev` when `next != NULL`; finally
+        clear `chan->track = NULL` so a follow-up `RealClearChain`
+        on the same chan takes the early-out cleanly.
+
+        The function is installed as `gMPlayJumpTable[34]` and
+        reached from `ply_note_impl` for both DirectSound chans
+        (`ClearChain(chan)` on a host `SoundChannel*`) and CGB
+        chans (`ClearChain(cgb)` on a host `M4A_CgbChannel*`). The
+        two host shapes diverge from the asm-flat ROM layout: the
+        public `SoundChannel` widens trailing pointer fields to
+        native 8-byte pointers under `__PORT__`, so on a 64-bit
+        host its `track` lands at byte offset 0x38, `prev` at
+        0x40, `next` at 0x44 — while the GBA-faithful host
+        `M4A_CgbChannel` overlay keeps `track` / `prev` / `next` at
+        the asm offsets 0x2C / 0x30 / 0x34. The host port therefore
+        dispatches on the chan kind: byte 1 (`type`) is shared
+        between both layouts, so we read it via a `(const u8*)`
+        cast and branch on `type & 7` (0 → DirectSound,
+        non-zero → CGB), then walk the chain using the matching
+        host struct so the `track` / `prev` / `next` reads land on
+        the right bytes for either shape. Without the dispatch a
+        CGB chan would alias `chan->track` over its CGB-layout
+        `track + prev` slots and produce a corrupt non-NULL
+        pointer that defeats the asm's `track == NULL` early-out.
+        The asm doesn't need the dispatch because the GBA layout is
+        flat 32-bit for both shapes; we only need it on the host
+        because of the widened `SoundChannel`.
+
+        The `chan->prev` / `chan->next` slots are u32-typed in
+        both `include/gba/m4a.h::SoundChannel` and the host
+        `M4A_CgbChannel` overlay (faithful to the GBA's 32-bit
         pointer layout); the host port round-trips host pointers
         through `(uintptr_t)` casts in both directions, matching
         every other host call site that touches the slots
-        (`ply_note_impl`'s chan-install, `ply_fine` /
-        `ply_endtie`'s chan walks, `m4a_track_volpit_pass`'s
+        (`ply_note_impl`'s chan-install for both shapes,
+        `ply_fine` / `ply_endtie`'s walks, `m4a_track_volpit_pass`'s
         dead-envelope branch). On a 64-bit host those casts
         truncate the stored value to 32 bits, so dereferencing a
         non-zero `chan->prev` / `chan->next` is undefined — the
@@ -1499,15 +1525,21 @@ are tracked here for future contributors.
         title-screen idle), and the same 64-bit truncation already
         affects every other chan-list walker in this TU; the port
         does not introduce the limitation, only inherits it.
+
         `Port_M4ASelfCheck()` grew a 2.3.4 section that exercises
         the three combinations the asm reaches without dereferencing
-        a u32 slot: the early-out (track == NULL, sentinel
-        prev/next preserved verbatim), the singleton chain
-        (prev == 0, next == 0; track->chan and chan->track both
-        cleared while prev/next stay untouched per the asm), and an
-        idempotent re-call on the now-detached chan (early-out
-        again, track->chan / chan->* state unchanged). The
-        `--frames=30` golden hashes for both the default `=ON`
+        a u32 slot, separately for each shape (six scenarios
+        total): the early-out (`track == NULL`, sentinel prev/next
+        preserved verbatim — `type` set to 0 for DirectSound, 2 for
+        CGB so the dispatch picks the matching layout), the
+        singleton chain (`prev == 0, next == 0`; `track->chan` and
+        `chan->track` both cleared while prev/next stay untouched
+        per the asm), and an idempotent re-call on the now-detached
+        chan. The CGB singleton case stores the asm-faithful
+        `(SoundChannel*)cgb` cast into the `track->chan` slot (per
+        `ply_note_impl`'s CGB install branch) and asserts the
+        unlink restores `t.chan == NULL`. The `--frames=30` golden
+        hashes for both the default `=ON`
         (`0x8f68687253dc1b25`) and the preserved `=OFF`
         (`0xf9b70c534973f325`) builds remain bit-for-bit unchanged
         because `RealClearChain` is reached only via `ply_fine`
