@@ -1236,7 +1236,31 @@ void sub_080610B8(void) {
     s32 uVar8;
     s32 uVar5;
 
+#ifdef __PORT__
+    /* Surface every entry to the on-screen keyboard handler so we can tell
+     * whether inputs are being silently dropped by the isTransitioning gate
+     * vs. consumed but routed to a no-op branch. Logged only when a fresh
+     * key was pressed this frame (otherwise this would fire 60×/sec). */
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect.new",
+                       "kbd entry newKeys=0x%03x trans=%u cursor=[%u,%u,%u,%u] "
+                       "col=%u name=[%02x %02x %02x %02x %02x %02x] lang=%u",
+                       (unsigned)gInput.newKeys,
+                       (unsigned)gMapDataBottomSpecial.isTransitioning,
+                       (unsigned)gGenericMenu.unk10.a[0], (unsigned)gGenericMenu.unk10.a[1],
+                       (unsigned)gGenericMenu.unk10.a[2], (unsigned)gGenericMenu.unk10.a[3],
+                       (unsigned)gMenu.column_idx, (unsigned)(u8)gSave.name[0],
+                       (unsigned)(u8)gSave.name[1], (unsigned)(u8)gSave.name[2],
+                       (unsigned)(u8)gSave.name[3], (unsigned)(u8)gSave.name[4],
+                       (unsigned)(u8)gSave.name[5], (unsigned)gSaveHeader->language);
+    }
+#endif
     if (gMapDataBottomSpecial.isTransitioning != 0) {
+#ifdef __PORT__
+        if (gInput.newKeys != 0) {
+            PORT_LOG_EVENT("fileselect.new", "kbd early-return (isTransitioning=1)");
+        }
+#endif
         return;
     }
     uVar7 = 0;
@@ -1380,6 +1404,17 @@ void sub_080610B8(void) {
             sub_08051574(0x6a);
             SetMenuType(uVar7);
     }
+#ifdef __PORT__
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect.new",
+                       "kbd exit  action=%u newMenuType=%u cursor=[%u,%u,%u,%u] "
+                       "name[0..1]=%02x %02x",
+                       (unsigned)uVar7, (unsigned)gMenu.menuType,
+                       (unsigned)gGenericMenu.unk10.a[0], (unsigned)gGenericMenu.unk10.a[1],
+                       (unsigned)gGenericMenu.unk10.a[2], (unsigned)gGenericMenu.unk10.a[3],
+                       (unsigned)(u8)gSave.name[0], (unsigned)(u8)gSave.name[1]);
+    }
+#endif
     if (gSaveHeader->language == 0) {
         iVar4 = 3;
     } else {

@@ -262,8 +262,24 @@ PORT_UNRESOLVED_DATA(gMapTop);
 PORT_UNRESOLVED_DATA(gMenu);
 PORT_UNRESOLVED_DATA(gMessageChoices);
 PORT_UNRESOLVED_DATA(gMoreSpritePtrs);
-PORT_UNRESOLVED_DATA(gOAMControls);
 PORT_UNRESOLVED_DATA(gOamCmd);
+/* gOAMControls is sized explicitly. The struct in include/vram.h is
+ *   8 (header) + 0x18 (_0[]) + 0x80*8 (oam[]) + 0xA0*8 (unk[]) = 0x920 bytes,
+ * far larger than the 256-byte default that PORT_UNRESOLVED_DATA hands out.
+ * `CopyOAM` in src/affine.c writes `*d = 0x2A0` to every OAM slot from the
+ * `updated` index through 0x80 (i.e. up to 1 KiB of writes via
+ * `&gOAMControls.oam[i]`), so a 256-byte allocation overflowed by ~1.7 KiB
+ * and silently scribbled `0x02 0xA0 0x00 0x00 0x00 0x00 0x00 0x00` every
+ * 8 bytes into whichever globals followed gOAMControls in the SDL link
+ * order. With this layout that overflow landed on `gMenu`, resetting
+ * `gMenu.column_idx` to 2 and `gGenericMenu.unk10.a[0..1]` to {0xA0, 0x02}
+ * every frame, which made the file-select on-screen keyboard appear stuck
+ * (HandleFileNew could not advance because START / A re-targeted the same
+ * row each frame, and the chosen "character" indexed off the end of
+ * gBG3Buffer so `gSave.name` never received a non-zero byte). The matching
+ * ROM build is unaffected: linker.ld places gOAMControls at IWRAM 0x0
+ * with plenty of room before the next symbol. */
+char gOAMControls[0x920] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gPaletteBufferBackup);
 /* gPaletteGroups has moved to src/platform/shared/port_rom_data_stubs.c
  * for the same reason as gGfxGroups above (LoadPaletteGroup needs a
