@@ -1450,8 +1450,8 @@ are tracked here for future contributors.
         volMR clamps `rightVolume` to 0xFF while `leftVolume`
         lands just under the clamp; and a monotonicity sweep
         across the full ply_pan output range (-64..+63) asserts
-        rightVolume increases weakly, leftVolume decreases weakly,
-        and neither overflows. The `--frames=30` golden hashes for
+        rightVolume increases weakly and leftVolume decreases
+        weakly. The `--frames=30` golden hashes for
         both the default `=ON` (`0x8f68687253dc1b25`) and the
         preserved `=OFF` (`0xf9b70c534973f325`) builds remain
         bit-for-bit unchanged because `ChnVolSetAsm` is reached

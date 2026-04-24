@@ -3503,8 +3503,8 @@ int Port_M4ASelfCheck(void) {
         M4A_CgbChannel cgb_local;
         memset(&cgb_local, 0, sizeof(cgb_local));
         memset(&track_local, 0, sizeof(track_local));
-        cgb_local.velocity = 0x40;     /* mid-range velocity */
-        cgb_local.rhythmPan = 0;       /* centre */
+        cgb_local.velocity = 0x40; /* mid-range velocity */
+        cgb_local.rhythmPan = 0;   /* centre */
         track_local.volMR = 0x80;
         track_local.volML = 0x80;
         ChnVolSetAsm((SoundChannel*)&cgb_local, &track_local);
@@ -3557,7 +3557,9 @@ int Port_M4ASelfCheck(void) {
         /* (6) Monotonicity sweep across the ply_pan output range
          *     (-64..+63). With fixed velocity and equal vol slots
          *     rightVolume must increase weakly and leftVolume must
-         *     decrease weakly, and neither overflows. */
+         *     decrease weakly. (The u8 fields can't exceed 0xFF by
+         *     definition, so the clamp is exercised by scenario (5)
+         *     above instead of being re-asserted here.) */
         u8 prevRight = 0;
         u8 prevLeft = 0xFF;
         s32 i;
@@ -3571,8 +3573,6 @@ int Port_M4ASelfCheck(void) {
             ChnVolSetAsm(&chan_local, &track_local);
             M4A_CHECK(chan_local.rightVolume >= prevRight);
             M4A_CHECK(chan_local.leftVolume <= prevLeft);
-            M4A_CHECK(chan_local.rightVolume <= 0xFF);
-            M4A_CHECK(chan_local.leftVolume <= 0xFF);
             prevRight = chan_local.rightVolume;
             prevLeft = chan_local.leftVolume;
         }
