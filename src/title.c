@@ -18,6 +18,9 @@
 #include "game.h"
 #include "affine.h"
 #include "fade.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 #ifdef DEMO_JP
 #include "item.h"
 #include "flags.h"
@@ -129,6 +132,15 @@ static const u8 unk[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
 #endif
 
 static u32 AdvanceIntroSequence(u32 transition) {
+#ifdef __PORT__
+    static const char* const sStageNames[] = {
+        "NintendoCapcomLogos",
+        "Titlescreen",
+        "ExitTitlescreen",
+    };
+    const char* name = (transition < (sizeof(sStageNames) / sizeof(sStageNames[0]))) ? sStageNames[transition] : "?";
+    PORT_LOG_EVENT("scene", "intro stage %u (%s)", (unsigned)transition, name);
+#endif
     gUI.lastState = transition;
     gMain.state = GAMETASK_MAIN;
     MemClear(&gIntroState, sizeof(gIntroState));

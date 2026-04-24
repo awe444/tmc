@@ -13,6 +13,9 @@
 #include "screen.h"
 #include "sound.h"
 #include "fade.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 
 extern u32 gRand;
 
@@ -140,6 +143,20 @@ static bool32 SoftResetKeysPressed(void) {
 }
 
 void SetTask(u32 task) {
+#ifdef __PORT__
+    static const char* const sTaskNames[] = {
+        [TASK_TITLE] = "TASK_TITLE",         [TASK_FILE_SELECT] = "TASK_FILE_SELECT",
+        [TASK_GAME] = "TASK_GAME",           [TASK_GAMEOVER] = "TASK_GAMEOVER",
+        [TASK_STAFFROLL] = "TASK_STAFFROLL", [TASK_DEBUG] = "TASK_DEBUG",
+    };
+    const char* prev_name =
+        (gMain.task < (sizeof(sTaskNames) / sizeof(sTaskNames[0])) && sTaskNames[gMain.task] != NULL)
+            ? sTaskNames[gMain.task]
+            : "?";
+    const char* next_name =
+        (task < (sizeof(sTaskNames) / sizeof(sTaskNames[0])) && sTaskNames[task] != NULL) ? sTaskNames[task] : "?";
+    PORT_LOG_EVENT("scene", "task %s -> %s", prev_name, next_name);
+#endif
     gMain.task = task;
     gMain.state = GAMETASK_TRANSITION;
     gMain.substate = GAMEMAIN_INITROOM;

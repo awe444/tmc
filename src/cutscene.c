@@ -23,6 +23,9 @@
 #include "tiles.h"
 #include "backgroundAnimations.h"
 #include "manager/staticBackgroundManager.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 
 void sub_08051F78(void);
 void sub_08051FF0(void);
@@ -45,6 +48,10 @@ void (*const gUnk_080FCBB4[])(void) = {
 };
 
 void CutsceneMain_Init(void) {
+#ifdef __PORT__
+    PORT_LOG_EVENT("cutscene", "start (idx=%u, area=%u, room=%u)", (unsigned)gMenu.field_0x3,
+                   (unsigned)gRoomControls.area, (unsigned)gRoomControls.room);
+#endif
     gUnk_080FCBB4[gMenu.overlayType]();
 }
 
@@ -535,6 +542,10 @@ void (*const gUnk_080FCEF8[])(void) = {
 };
 
 void CutsceneMain_Exit(void) {
+#ifdef __PORT__
+    PORT_LOG_EVENT("cutscene", "stop  (idx=%u, area=%u, room=%u)", (unsigned)gMenu.field_0x3,
+                   (unsigned)gRoomControls.area, (unsigned)gRoomControls.room);
+#endif
     gUnk_080FCEF8[gMenu.field_0x3]();
 }
 

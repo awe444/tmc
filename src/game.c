@@ -24,6 +24,9 @@
 #include "beanstalkSubtask.h"
 #include "pauseMenu.h"
 #include "fade.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 
 // Game task
 
@@ -152,6 +155,10 @@ static void GameTask_Main(void) {
 }
 
 static void GameMain_InitRoom(void) {
+#ifdef __PORT__
+    PORT_LOG_EVENT("scene", "room init (area=%u, room=%u)", (unsigned)gRoomControls.area,
+                   (unsigned)gRoomControls.room);
+#endif
     SetInitializationPriority();
     gScreen.lcd.displayControl = DISPCNT_BG0_ON | DISPCNT_BG1_ON | DISPCNT_BG2_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP;
     gMain.substate = GAMEMAIN_CHANGEROOM;
