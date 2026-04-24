@@ -93,12 +93,14 @@ PORT_UNRESOLVED_FUNC(UpdateScrollVram)
  * placeholders that used to live here have been removed; if a regression
  * drops `src/gba/m4a.c` from the leaf set, the link will fail with a
  * clear "undefined reference" instead of silently aborting at runtime. */
-/* ram_ClearAndUpdateEntities, ram_CollideAll, ram_DrawDirect,
- * ram_DrawEntities, ram_MakeFadeBuff256, ram_sub_080ADA04, and
- * ram_UpdateEntities have tailored silent overrides in
- * ram_silent_stubs.c (see roadmap 2b.4b "runtime flip" notes in
- * docs/sdl_port.md); they no longer need an abort-trap weak
- * placeholder here. */
+/* ram_ClearAndUpdateEntities, ram_CollideAll, ram_DrawEntities,
+ * ram_MakeFadeBuff256, and ram_UpdateEntities have tailored silent
+ * overrides in ram_silent_stubs.c (see roadmap 2b.4b "runtime flip"
+ * notes in docs/sdl_port.md); they no longer need an abort-trap weak
+ * placeholder here. ram_DrawDirect and ram_sub_080ADA04 are now
+ * strongly defined in port_oam_renderer.c (PR A of the title-screen
+ * OAM-pipeline plan), so no abort-trap placeholder is needed for
+ * them either. */
 PORT_UNRESOLVED_FUNC(ram_IntrMain)
 PORT_UNRESOLVED_FUNC(sub_080B1B84)
 PORT_UNRESOLVED_FUNC(sub_080B1BA4)

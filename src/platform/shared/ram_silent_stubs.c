@@ -138,23 +138,13 @@ void ram_ClearAndUpdateEntities(void) {
 void ram_DrawEntities(void) {
 }
 
-/* Single-shot OAM helper (`affine.c::DrawDirect` -> ram_DrawDirect).
- * Invoked from item / player paths that are themselves gated behind
- * the entity update loop, so this is unreachable while
- * `ram_UpdateEntities` is a no-op. The stub keeps the link / call
- * convention correct if a non-entity caller is added later. */
-void ram_DrawDirect(void* cmd, unsigned int spriteIndex, unsigned int frameIndex) {
-    (void)cmd;
-    (void)spriteIndex;
-    (void)frameIndex;
-}
-
-/* `affine.c::sub_080ADA04` -> ram_sub_080ADA04. Same reachability
- * argument as `ram_DrawDirect`. */
-void ram_sub_080ADA04(void* cmd, void* dst) {
-    (void)cmd;
-    (void)dst;
-}
+/* `ram_DrawDirect` and `ram_sub_080ADA04` previously lived here as
+ * silent no-ops; they now have strong host-side ports in
+ * `port_oam_renderer.c`. Keeping the stubs here would multiply-define
+ * the symbols at link time. See that TU's banner comment for why this
+ * was the smallest slice that restores the title-screen "PRESS START"
+ * and copyright "©" sprites. The matching ROM build never sees either
+ * file. */
 
 /* `collision.c::CollisionMain` -> ram_CollideAll. Walks the entity
  * collision list (also empty during the smoke test). With nothing to
