@@ -1300,10 +1300,11 @@ are tracked here for future contributors.
           `&gMPlayTracks[0x46]` with 12 tracks, requiring at least
           0x52 entries) have been replaced by strong host BSS in
           `src/platform/shared/m4a_host.c` of the proper
-          `MusicPlayerInfo` / `MusicPlayerTrack` types and at the
-          full extent declared in `src/sound.c`
-          (`gMPlayInfos[0x1C]`, `gMPlayInfos2[0x4]`,
-          `gMPlayTracks[0x52]`). No audio is produced because
+          `MusicPlayerInfo` / `MusicPlayerTrack` types, matching the
+          explicit extents declared in `src/sound.c`
+          (`gMPlayInfos[0x1C]`, `gMPlayInfos2[0x4]`) plus the
+          required `gMPlayTracks[0x52]` extent inferred from
+          `gMusicPlayers[]` indexing. No audio is produced because
           `SoundMain` is still a silent stub (PR #7 part 2.3), and
           `MPlayMain` is reached only via `soundInfo->MPlayMainHead`
           from inside `SoundMain` — so the dispatcher and `ply_*`

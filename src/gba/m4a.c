@@ -160,7 +160,7 @@ extern char gMaxLines[];
  * the rasterizer is unaffected (the `--frames=30` golden hashes for
  * both the default `=ON` and the preserved `=OFF` builds are
  * bit-for-bit unchanged). See docs/sdl_port.md, PR #7 part 2.2.2.3. */
-#define NUM_MUSIC_PLAYERS 32
+#define NUM_MUSIC_PLAYERS 0x20
 #define MAX_LINES 0
 #else
 #define NUM_MUSIC_PLAYERS ((u16)gNumMusicPlayers)
