@@ -1411,6 +1411,54 @@ are tracked here for future contributors.
         (`gPortIo[0x60..0x9F]`) plus engine BSS that the
         rasterizer never reads, and no song has been requested by
         the title-screen idle so the per-track loop has no work.
+      - [x] **PR #7 part 2.3.3** Promoted `ChnVolSetAsm` from a
+        silent stub to a real C port of `asm/lib/m4a_asm.s::
+        ChnVolSetAsm` (`_080AFBD0..._080AFC00`) in
+        `src/platform/shared/m4a_host.c`. Computes the per-channel
+        stereo split of the track's master volume into
+        `chan->rightVolume` / `chan->leftVolume` from the channel's
+        `velocity` (u8) and `rhythmPan` (s8, clamped to -64..+63 by
+        the `ply_pan` handler) plus the track's `volMR` / `volML`
+        masters as
+        `right = min(0xFF, (velocity * (0x80 + pan) * volMR) >> 14)`
+        and `left = min(0xFF, (velocity * (0x7F - pan) * volML)
+        >> 14)`, mirroring the asm's signed 32-bit `muls` /
+        arithmetic-shift / 0xFF-clamp sequence. The asm reads
+        chan/track from the implicit r4/r5 register pair the call
+        sites set up; the host port lifts that into an explicit
+        `(SoundChannel* chan, MusicPlayerTrack* track)` signature so
+        the host caller doesn't need a thread-local register-pair
+        emulator — only the host TU reaches this function (the asm
+        callers in `m4a_asm.s` don't run on the host), so the
+        signature change is safe. The three host call sites in this
+        TU were updated: the `MPlayMain` second per-track loop's
+        `VOLCHG` branch (`m4a_track_volpit_pass`) and the two
+        chan-install paths in `ply_note_impl` (DirectSound and CGB),
+        with the CGB caller passing `(SoundChannel*)cgb` because
+        `M4A_CgbChannel` and `SoundChannel` share their byte layout
+        through `velocity` / `rhythmPan` / `rightVolume` /
+        `leftVolume` (offsets 0x12 / 0x14 / 0x02 / 0x03) — verified
+        by feeding a stack-allocated `M4A_CgbChannel` cast through
+        `ChnVolSetAsm` in the self-check. `Port_M4ASelfCheck()`
+        grew a 2.3.3 section covering six scenarios: zero velocity
+        zeroes both outputs (sentinel-overwrite verified); centre
+        pan with equal `volMR` / `volML` produces the expected
+        14-bit fixed-point result through a CgbChannel-cast
+        pointer; hard-right pan (+63) shifts the weighting to
+        rightVolume; hard-left pan (-64) is the s8-cast mirror of
+        the right case; saturation with maxed velocity / pan /
+        volMR clamps `rightVolume` to 0xFF while `leftVolume`
+        lands just under the clamp; and a monotonicity sweep
+        across the full ply_pan output range (-64..+63) asserts
+        rightVolume increases weakly, leftVolume decreases weakly,
+        and neither overflows. The `--frames=30` golden hashes for
+        both the default `=ON` (`0x8f68687253dc1b25`) and the
+        preserved `=OFF` (`0xf9b70c534973f325`) builds remain
+        bit-for-bit unchanged because `ChnVolSetAsm` is reached
+        only from `MPlayMain`'s second per-track loop and
+        `ply_note_impl`, and on the title-screen idle the smoke
+        test exercises no song has been requested so neither path
+        runs live — only the self-check exercises the new code.
 
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
