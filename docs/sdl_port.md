@@ -1360,6 +1360,111 @@ are tracked here for future contributors.
         dispatcher-reachable `ply_*` handler now has a real host C
         port; the remaining 2.3 work is the `SoundMain` /
         `SoundMainBTM` mixer itself.
+      - [x] **PR #7 part 2.3.2** Promoted `SoundMain` from a no-op
+        stub to a host C port of the asm's top half
+        (`asm/lib/m4a_asm.s::SoundMain` `_080AF320..._080AF358`) in
+        `src/platform/shared/m4a_host.c`. The body now: (1) reads
+        `gSoundInfo.ident` and early-outs unless it equals
+        `ID_NUMBER` (matching the asm's
+        `cmp r2, r3; beq ...; bx lr` magic-value gate); (2) bumps
+        `ident` (lock-out re-entry); (3) calls
+        `soundInfo->MPlayMainHead(soundInfo->intp)` if non-NULL,
+        which walks the entire registered `MusicPlayerInfo` chain
+        through each `mp->func(mp->intp)` from inside the C
+        `MPlayMain` ported in PR #7 part 2.2.2.2.1; (4) calls
+        `soundInfo->CgbSound()` if non-NULL (the asm's matching
+        invocation is unconditional because `SoundInit()` populates
+        the slot with `nullsub_544`, but the host tolerates a NULL
+        slot for self-check harnesses that bypass `SoundInit`); and
+        (5) restores `soundInfo->ident = ID_NUMBER` directly,
+        because the asm's bottom-half mixer (`SoundMainBTM`'s tail
+        at `_080AF6BA`) writes the magic back and we are still
+        skipping that path under the silent stub — without the
+        explicit restore, `ident` would stay at `ID_NUMBER + 1`
+        forever and every subsequent `SoundMain` plus every other
+        `ident == ID_NUMBER` gate in `m4a.c` would early-out. The
+        actual sample mixing (`SoundMainRAM` + `SoundMainBTM`'s
+        bottom half) remains deferred to the next 2.3 substep.
+        With this in place the production runtime path now drives
+        the entire dispatcher chain every VBlank (`m4aSoundMain`
+        from `src/interrupts.c` → `SoundMain` → `MPlayMainHead` →
+        `MPlayMain` for each of the 32 registered
+        `gMusicPlayers[]`), so the `MPlayMain` / `ply_*` handlers
+        previously exercised only by `Port_M4ASelfCheck()` now
+        also run live — though with no song loaded yet (the
+        `m4aSongNum*` entry points are still gated by
+        `src/sound.c::SoundReq` state machinery that doesn't
+        activate before the title-screen idle the smoke test
+        exercises) every track sees `flags == 0` and the
+        per-track inner loop is a no-op. `Port_M4ASelfCheck()`
+        grew a 2.3.2 section that exercises five scenarios
+        end-to-end: the ident-gate early-out (callbacks unfired,
+        ident untouched), `MPlayMainHead`-NULL + `CgbSound`-NULL
+        ident bump-and-restore, `MPlayMainHead`-set firing exactly
+        once with `intp` as its argument, `CgbSound`-set firing
+        independently, and both slots set firing in the asm's
+        order with ident restored. The `--frames=30` golden hashes
+        for both the default `=ON` (`0x8f68687253dc1b25`) and the
+        preserved `=OFF` (`0xf9b70c534973f325`) builds remain
+        bit-for-bit unchanged because `ply_port` and the dispatcher
+        loop only modify the CGB sound-register window
+        (`gPortIo[0x60..0x9F]`) plus engine BSS that the
+        rasterizer never reads, and no song has been requested by
+        the title-screen idle so the per-track loop has no work.
+      - [x] **PR #7 part 2.3.3** Promoted `ChnVolSetAsm` from a
+        silent stub to a real C port of `asm/lib/m4a_asm.s::
+        ChnVolSetAsm` (`_080AFBD0..._080AFC00`) in
+        `src/platform/shared/m4a_host.c`. Computes the per-channel
+        stereo split of the track's master volume into
+        `chan->rightVolume` / `chan->leftVolume` from the channel's
+        `velocity` (u8) and `rhythmPan` (s8, clamped to -64..+63 by
+        the `ply_pan` handler) plus the track's `volMR` / `volML`
+        masters as
+        `right = min(0xFF, (velocity * (0x80 + pan) * volMR) >> 14)`
+        and `left = min(0xFF, (velocity * (0x7F - pan) * volML)
+        >> 14)`, mirroring the asm's signed 32-bit `muls` /
+        arithmetic-shift / 0xFF-clamp sequence. The asm reads
+        chan/track from the implicit r4/r5 register pair the call
+        sites set up; the host port lifts that into an explicit
+        `(SoundChannel* chan, MusicPlayerTrack* track)` signature so
+        the host caller doesn't need a thread-local register-pair
+        emulator — only the host TU reaches this function (the asm
+        callers in `m4a_asm.s` don't run on the host), so the
+        signature change is safe. The three host call sites in this
+        TU were updated: the `MPlayMain` second per-track loop's
+        `VOLCHG` branch (`m4a_track_volpit_pass`) and the two
+        chan-install paths in `ply_note_impl` (DirectSound and CGB),
+        with the CGB caller passing `(SoundChannel*)cgb` because
+        `M4A_CgbChannel` and `SoundChannel` share their byte layout
+        through `velocity` / `rhythmPan` / `rightVolume` /
+        `leftVolume` (offsets 0x12 / 0x14 / 0x02 / 0x03) — verified
+        by feeding a stack-allocated `M4A_CgbChannel` cast through
+        `ChnVolSetAsm` in the self-check. `Port_M4ASelfCheck()`
+        grew a 2.3.3 section covering six scenarios: zero velocity
+        zeroes both outputs (sentinel-overwrite verified); centre
+        pan with equal `volMR` / `volML` produces the expected
+        14-bit fixed-point result through a CgbChannel-cast
+        pointer; hard-right pan (+63) shifts the weighting to
+        rightVolume; hard-left pan (-64) is the s8-cast mirror of
+        the right case; saturation with maxed velocity / pan /
+        volMR clamps `rightVolume` to 0xFF while `leftVolume`
+        lands just under the clamp; and a monotonicity sweep
+        across the full ply_pan output range (-64..+63) asserts
+        rightVolume increases weakly and leftVolume decreases
+        weakly, additionally re-deriving the unclamped s32
+        intermediates that ChnVolSetAsm casts to u8 and verifying
+        they stay in [0, 0xFF] (the saturation clamp does not
+        engage with these inputs) and that the resulting u8
+        fields equal those s32 values bit-for-bit. The `--frames=30` golden hashes for
+        both the default `=ON` (`0x8f68687253dc1b25`) and the
+        preserved `=OFF` (`0xf9b70c534973f325`) builds remain
+        bit-for-bit unchanged because `ChnVolSetAsm` is reached
+        only from `MPlayMain`'s second per-track loop and
+        `ply_note_impl`, and on the title-screen idle that the
+        smoke test exercises no song has been requested, so
+        neither path runs live — only the self-check exercises
+        the new code.
+
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two

@@ -123,15 +123,15 @@ u8 gSoundInfo[4096] __attribute__((aligned(16)));
 /* definitions resolve uniquely.                                      */
 /*                                                                    */
 /* Even with the loop walked, no audio is produced: the runtime       */
-/* mixer (`SoundMain`) is still a silent stub (PR #7 part 2.3) and    */
-/* `MPlayMain` is reached only off `soundInfo->MPlayMainHead` from    */
-/* inside `SoundMain`, so the dispatcher and `ply_*` handlers ported  */
-/* in 2.2.2.* are still exercised exclusively by the smoke-test       */
-/* `Port_M4ASelfCheck()` harness — the production runtime path runs  */
-/* through `m4aSoundInit()` → `MPlayOpen` (initialises BSS, links     */
-/* `MPlayMainHead`) and stops there. The `m4aSongNum*` entry points  */
-/* remain unreached during the headless smoke test because            */
-/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`   */
+/* sample mixer (`SoundMainRAM` + `SoundMainBTM` bottom half) is      */
+/* still a silent stub (next PR #7 part 2.3 substep). The `SoundMain` */
+/* dispatcher half *is* a real port (PR #7 part 2.3.2) and now drives */
+/* `MPlayMainHead` → `MPlayMain` for every registered                 */
+/* `MusicPlayerInfo` on the production runtime path each VBlank — but */
+/* until a song is loaded every track's `flags & EXIST` is zero, so   */
+/* the per-track inner loop is a no-op. The `m4aSongNum*` entry       */
+/* points remain unreached during the headless smoke test because     */
+/* `src/sound.c::SoundReq` is gated by `gMain.unkA` / `gMain.unkE`    */
 /* state machinery that doesn't activate before the title-screen      */
 /* idle CI exercises.                                                 */
 /* ------------------------------------------------------------------ */
@@ -162,9 +162,12 @@ typedef struct MusicPlayerTrack MusicPlayerTrack;
 /* Provide an all-zero source so the copy is harmless.                 */
 char SoundMainRAM[0x380] __attribute__((aligned(4))) = { 0 };
 
-/* The mixer entry points. */
-void SoundMain(void) { /* PR #7 part 2: software mixer */
-}
+/* The mixer entry points. SoundMain is the dispatcher half (PR #7
+ * part 2.3.2); its real body lives further down in this TU because
+ * it dereferences the `M4A_SoundInfo` overlay (declared below).
+ * SoundMainBTM is the 64-byte per-track clear (the bottom-half mixer
+ * step is still deferred to the next 2.3 substep). */
+void SoundMain(void);
 
 /* `SoundMainBTM` is dual-role on the GBA: as the `gMPlayJumpTable[35]`
  * target (see `gMPlayJumpTableTemplate[]` in m4a.c), it is invoked via
@@ -606,13 +609,74 @@ u32 umul3232H32(u32 multiplier, u32 multiplicand) {
     return (u32)(((u64)multiplier * (u64)multiplicand) >> 32);
 }
 
-/* `TrackStop` / `ChnVolSetAsm` / `clear_modM` — installed in           */
-/* gMPlayJumpTable or called directly from m4a.c.                       */
+/* `TrackStop` / `clear_modM` — installed in gMPlayJumpTable or       */
+/* called directly from m4a.c.                                          */
 void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
     (void)mplayInfo;
     (void)track;
 }
-void ChnVolSetAsm(void) { /* PR #7 part 2 */
+
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.3: ChnVolSetAsm host C port.                         */
+/*                                                                    */
+/* Real port of `asm/lib/m4a_asm.s::ChnVolSetAsm`                      */
+/* (`_080AFBD0..._080AFC00`). Computes the per-channel stereo split   */
+/* of the track's master volume into chan->rightVolume /              */
+/* chan->leftVolume from:                                             */
+/*                                                                    */
+/*    velocity = chan->velocity                  (u8, 0..255)         */
+/*    pan      = (s8)chan->rhythmPan             (-128..127, but the  */
+/*                                                ply_pan handler     */
+/*                                                clamps it to        */
+/*                                                -64..63 so `0x80 +  */
+/*                                                pan` and `0x7f -    */
+/*                                                pan` both fit in    */
+/*                                                u8 range)           */
+/*                                                                    */
+/* and the track-level master:                                        */
+/*                                                                    */
+/*    volMR    = track->volMR                    (u8)                 */
+/*    volML    = track->volML                    (u8)                 */
+/*                                                                    */
+/* Output:                                                            */
+/*                                                                    */
+/*    chan->rightVolume = min(0xFF, (velocity * (0x80 + pan) *        */
+/*                                  volMR) >> 14)                     */
+/*    chan->leftVolume  = min(0xFF, (velocity * (0x7F - pan) *        */
+/*                                  volML) >> 14)                     */
+/*                                                                    */
+/* The asm reads chan/track from the implicit-register pair r4/r5     */
+/* set up by the call sites (MPlayMain second per-track loop and      */
+/* ply_note's chan install). The C signature makes the dependence    */
+/* explicit so the host port doesn't need a thread-local pair of     */
+/* "chan / track" globals to mirror the register convention. Only    */
+/* this TU calls the function — the asm callers in `m4a_asm.s` do    */
+/* not run on the host — so the signature change is safe.            */
+/*                                                                    */
+/* The function works equally well on a `M4A_CgbChannel*` cast to    */
+/* `SoundChannel*` because both layouts share the same offsets for   */
+/* `velocity` / `rhythmPan` / `rightVolume` / `leftVolume` (bytes    */
+/* 0x12 / 0x14 / 0x02 / 0x03 — see `M4A_CgbChannel` above).          */
+/* ------------------------------------------------------------------ */
+void ChnVolSetAsm(SoundChannel* chan, MusicPlayerTrack* track) {
+    s32 velocity = (s32)chan->velocity;
+    s32 pan = (s32)(s8)chan->rhythmPan;
+
+    /* Right channel: velocity * (0x80 + pan) * volMR. */
+    s32 rightAccum = velocity * (0x80 + pan);
+    s32 right = (rightAccum * (s32)track->volMR) >> 14;
+    if (right > 0xFF) {
+        right = 0xFF;
+    }
+    chan->rightVolume = (u8)right;
+
+    /* Left channel: velocity * (0x7F - pan) * volML. */
+    s32 leftAccum = velocity * (0x7F - pan);
+    s32 left = (leftAccum * (s32)track->volML) >> 14;
+    if (left > 0xFF) {
+        left = 0xFF;
+    }
+    chan->leftVolume = (u8)left;
 }
 /* `clear_modM` is implemented as part of the PR #7 part 2.2.1 ply_*    */
 /* family below (it is invoked by ply_lfos / ply_mod).                  */
@@ -1185,6 +1249,73 @@ extern u32 MidiKeyToFreq(WaveData* wav, u8 key, u8 fineAdjust);
 extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 
 /* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.2: SoundMain top-half C port.                        */
+/*                                                                    */
+/* Real port of the asm's `SoundMain` top half                         */
+/* (`asm/lib/m4a_asm.s::SoundMain` `_080AF320..._080AF358`):           */
+/*                                                                    */
+/*   1. Read `gSoundInfo.ident`. If it does not match `ID_NUMBER` the */
+/*      engine considers `SoundInfo` not yet initialised (or some     */
+/*      other sensitive operation is locking it) and bails out        */
+/*      without doing anything. This mirrors the asm's                */
+/*        ldr r0, =SOUND_INFO_PTR; ldr r0, [r0]                       */
+/*        ldr r2, =0x68736D53; ldr r3, [r0]; cmp r2, r3; beq ...; bx lr */
+/*   2. Bump `ident` (lock). The asm increments by 1 and stores back  */
+/*      so that any re-entry from an interrupt sees the locked        */
+/*      value and bails. We mirror it here for parity even though     */
+/*      the host has no real interrupts driving SoundMain.            */
+/*   3. If `soundInfo->MPlayMainHead != NULL`, call it with           */
+/*      `soundInfo->intp` (the asm's `ldr r3, [r0, #0x20]; cmp; beq;  */
+/*      ldr r0, [r0, #0x24]; bl bx-r3` sequence). Each registered     */
+/*      `MusicPlayerInfo` walks the rest of the chain via             */
+/*      `mp->func(mp->intp)` from inside the C `MPlayMain` (PR #7    */
+/*      part 2.2.2.2.1).                                              */
+/*   4. Call `soundInfo->CgbSound()` if non-NULL. The asm's matching  */
+/*      `ldr r3, [r0, #0x28]; bl bx-r3` is unconditional because the  */
+/*      slot is initialised to `nullsub_544` by `SoundInit()`; the    */
+/*      host honours that contract for the production runtime path,   */
+/*      but tolerates a NULL slot for self-check harnesses that       */
+/*      bypass `SoundInit`.                                           */
+/*   5. Restore `soundInfo->ident = ID_NUMBER`. On the GBA the        */
+/*      bottom-half mixer (`SoundMainBTM`'s tail at `_080AF6BA`)      */
+/*      writes the magic back. Under the silent host mixer we never   */
+/*      enter that path, so we have to perform the restore directly   */
+/*      — otherwise `ident` would stay at `ID_NUMBER + 1` forever and */
+/*      every subsequent `SoundMain` call (and every other            */
+/*      `ident == ID_NUMBER` gate in `m4a.c`) would early-out.        */
+/*                                                                    */
+/* The actual sample mixing (`SoundMainRAM` + `SoundMainBTM`'s        */
+/* bottom half) is the next 2.3 substep; under the silent stub no     */
+/* PCM is produced, so the rasterizer's per-frame golden hash         */
+/* remains bit-for-bit unchanged.                                     */
+/*                                                                    */
+/* The forward declaration at the top of the TU points at this        */
+/* definition, which has to live below the `M4A_SoundInfo` overlay    */
+/* because the body dereferences fields by name through it.           */
+/* ------------------------------------------------------------------ */
+void SoundMain(void) {
+    M4A_SoundInfo* soundInfo = (M4A_SoundInfo*)gSoundInfo;
+
+    if (soundInfo->ident != M4A_ID_NUMBER) {
+        return;
+    }
+    soundInfo->ident++;
+
+    if (soundInfo->MPlayMainHead != NULL) {
+        soundInfo->MPlayMainHead((MusicPlayerInfo*)soundInfo->intp);
+    }
+
+    if (soundInfo->CgbSound != NULL) {
+        soundInfo->CgbSound();
+    }
+
+    /* PR #7 part 2.3 main step: SoundMainRAM mixer goes here.
+     * Under the silent stub we skip it and just restore the ident
+     * lock the asm's bottom-half tail would have written back. */
+    soundInfo->ident = M4A_ID_NUMBER;
+}
+
+/* ------------------------------------------------------------------ */
 /* PR #7 part 2.2.2.2.3: m4a_track_volpit_pass                         */
 /*                                                                    */
 /* Port of the asm `MPlayMain` second per-track loop                  */
@@ -1198,8 +1329,10 @@ extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 /*     track and chained via the `chan->next` u32-ified pointer):      */
 /*       * dead-envelope chan (`!(statusFlags & 0xc7)`) is unlinked    */
 /*         via `ClearChain(chan)`.                                     */
-/*       * else: VOLCHG → `ChnVolSetAsm()` (silent host stub in this   */
-/*         TU); CGB-typed chans additionally OR bit 0 into the         */
+/*       * else: VOLCHG → `ChnVolSetAsm(chan, track)` (PR #7 part   */
+/*         2.3.3) recomputes chan->rightVolume/leftVolume from      */
+/*         track->volMR/volML and chan->velocity/rhythmPan; CGB-    */
+/*         typed chans additionally OR bit 0 into the                */
 /*         CgbChannel `modify` byte (offset 0x1d) so the next CGB     */
 /*         mixer pass re-pokes the CGB volume regs.                   */
 /*       * PITCHG → newKey = chan->key + (s8)track->keyM, clamped to  */
@@ -1248,7 +1381,7 @@ static void m4a_track_volpit_pass(MusicPlayerInfo* mp) {
 
                 /* VOLCHG path (track flags & 3). */
                 if (flags & MPT_FLG_VOLCHG) {
-                    ChnVolSetAsm();
+                    ChnVolSetAsm(chan, track);
                     if (cgbType != 0) {
                         /* CgbChannel byte at offset 0x1d (`modify`)
                          * — same byte as SoundChannel.fw[1] on GBA;
@@ -1555,7 +1688,7 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         chan->release = subTone->release;
         chan->echoVolume = track->echoVolume;
         chan->echoLength = track->echoLength;
-        ChnVolSetAsm();
+        ChnVolSetAsm(chan, track);
 
         chan->frequency = MidiKeyToFreq((WaveData*)subTone->wav, (u8)freqKey, track->pitM);
 
@@ -1599,7 +1732,12 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         cgb->release = subTone->release;
         cgb->echoVolume = track->echoVolume;
         cgb->echoLength = track->echoLength;
-        ChnVolSetAsm();
+        /* CGB chan storage shares its byte layout with SoundChannel
+         * up through `rhythmPan` (offset 0x14) and through
+         * `rightVolume` / `leftVolume` (offsets 0x02 / 0x03), so the
+         * SoundChannel*-typed ChnVolSetAsm operates correctly on
+         * the cgb-typed location via a same-prefix cast. */
+        ChnVolSetAsm((SoundChannel*)cgb, track);
 
         /* CGB-only byte pokes: the asm writes subTone->length and a
          * derived n4 byte at chan + 0x1e / chan + 0x1f. On the
@@ -1668,6 +1806,23 @@ void nullsub_141(void) { /* truly a nullsub */
 
 #include <stdio.h>
 #include <string.h>
+
+/* PR #7 part 2.3.2 SoundMain self-check helpers: file-scope counters
+ * and a pair of stub callbacks so the dispatcher's invocations of
+ * `MPlayMainHead` / `CgbSound` are observable from the harness. C
+ * forbids nested function definitions, so these have to live at file
+ * scope. They are touched only by the SoundMain section of
+ * `Port_M4ASelfCheck()` below. */
+static int port_m4a_sc_mph_calls;
+static MusicPlayerInfo* port_m4a_sc_mph_arg;
+static int port_m4a_sc_cgb_calls;
+static void port_m4a_sc_mph(MusicPlayerInfo* mp) {
+    port_m4a_sc_mph_calls++;
+    port_m4a_sc_mph_arg = mp;
+}
+static void port_m4a_sc_cgb(void) {
+    port_m4a_sc_cgb_calls++;
+}
 
 int Port_M4ASelfCheck(void) {
     MusicPlayerInfo mp;
@@ -3202,6 +3357,235 @@ int Port_M4ASelfCheck(void) {
          * (which reads display registers from the same gPortIo array)
          * is unaffected. */
         memcpy(&gPortIo[PLY_PORT_WIN_LO], saved, sizeof(saved));
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.2: SoundMain top-half dispatcher.            */
+    /*                                                             */
+    /* Drives the host SoundMain port through five scenarios:      */
+    /*   (1) ident gate: ident != ID_NUMBER → early-out, neither   */
+    /*       MPlayMainHead nor CgbSound is invoked, ident is left  */
+    /*       untouched.                                            */
+    /*   (2) ident == ID_NUMBER, MPlayMainHead == NULL,            */
+    /*       CgbSound == NULL → ident is bumped + restored, no     */
+    /*       callbacks fire (a fresh SoundInit-equivalent state    */
+    /*       with the function-pointer slots not yet plumbed).     */
+    /*   (3) ident == ID_NUMBER, MPlayMainHead != NULL,            */
+    /*       CgbSound == NULL → MPlayMainHead is invoked exactly   */
+    /*       once with `intp` as its argument, ident is restored   */
+    /*       to ID_NUMBER on exit.                                 */
+    /*   (4) ident == ID_NUMBER, MPlayMainHead == NULL,            */
+    /*       CgbSound != NULL → CgbSound fires; ident restored.    */
+    /*   (5) ident == ID_NUMBER, both slots set → both fire in     */
+    /*       the asm's order (MPlayMainHead first, then CgbSound), */
+    /*       ident restored.                                       */
+    /*                                                             */
+    /* gSoundInfo BSS is restored to all-zero on exit so any other */
+    /* code that runs after the self-check sees the same clean    */
+    /* slate the production runtime expects (m4aSoundInit will    */
+    /* zero-fill it anyway, but we restore here so the post-self- */
+    /* check state is identical to its pre-self-check state).     */
+    /* ----------------------------------------------------------- */
+    {
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+
+        port_m4a_sc_mph_calls = 0;
+        port_m4a_sc_mph_arg = NULL;
+        port_m4a_sc_cgb_calls = 0;
+
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+
+        /* (1) ident gate: not ID_NUMBER → early-out. */
+        si->ident = 0;
+        si->MPlayMainHead = port_m4a_sc_mph;
+        si->intp = (void*)(uintptr_t)0xDEADBEEF;
+        si->CgbSound = port_m4a_sc_cgb;
+        SoundMain();
+        M4A_CHECK(si->ident == 0); /* not bumped, not restored */
+        M4A_CHECK(port_m4a_sc_mph_calls == 0);
+        M4A_CHECK(port_m4a_sc_cgb_calls == 0);
+
+        /* (2) ident == ID_NUMBER, both slots NULL: ident is bumped
+         *     and then restored, no callbacks fire. */
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+        si->ident = M4A_ID_NUMBER;
+        SoundMain();
+        M4A_CHECK(si->ident == M4A_ID_NUMBER);
+        M4A_CHECK(port_m4a_sc_mph_calls == 0);
+        M4A_CHECK(port_m4a_sc_cgb_calls == 0);
+
+        /* (3) MPlayMainHead set, CgbSound NULL: MPH fires once with
+         *     intp, ident restored. */
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+        si->ident = M4A_ID_NUMBER;
+        si->MPlayMainHead = port_m4a_sc_mph;
+        si->intp = (void*)(uintptr_t)0xCAFEBABE;
+        SoundMain();
+        M4A_CHECK(si->ident == M4A_ID_NUMBER);
+        M4A_CHECK(port_m4a_sc_mph_calls == 1);
+        M4A_CHECK(port_m4a_sc_mph_arg == (MusicPlayerInfo*)(uintptr_t)0xCAFEBABE);
+        M4A_CHECK(port_m4a_sc_cgb_calls == 0);
+
+        /* (4) CgbSound set, MPlayMainHead NULL: only CgbSound fires. */
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+        si->ident = M4A_ID_NUMBER;
+        si->CgbSound = port_m4a_sc_cgb;
+        port_m4a_sc_mph_calls = 0;
+        port_m4a_sc_cgb_calls = 0;
+        SoundMain();
+        M4A_CHECK(si->ident == M4A_ID_NUMBER);
+        M4A_CHECK(port_m4a_sc_mph_calls == 0);
+        M4A_CHECK(port_m4a_sc_cgb_calls == 1);
+
+        /* (5) Both slots set: both fire (MPH first, then CgbSound),
+         *     ident restored. */
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+        si->ident = M4A_ID_NUMBER;
+        si->MPlayMainHead = port_m4a_sc_mph;
+        si->intp = (void*)(uintptr_t)0x12345678;
+        si->CgbSound = port_m4a_sc_cgb;
+        port_m4a_sc_mph_calls = 0;
+        port_m4a_sc_mph_arg = NULL;
+        port_m4a_sc_cgb_calls = 0;
+        SoundMain();
+        M4A_CHECK(si->ident == M4A_ID_NUMBER);
+        M4A_CHECK(port_m4a_sc_mph_calls == 1);
+        M4A_CHECK(port_m4a_sc_mph_arg == (MusicPlayerInfo*)(uintptr_t)0x12345678);
+        M4A_CHECK(port_m4a_sc_cgb_calls == 1);
+
+        /* Restore gSoundInfo BSS to a clean slate. */
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.3: ChnVolSetAsm.                              */
+    /*                                                              */
+    /* Six scenarios cover the boundary cases of the 14-bit fixed-  */
+    /* point split:                                                 */
+    /*   (1) zero velocity → both rightVolume and leftVolume = 0.   */
+    /*   (2) centre pan (rhythmPan == 0) with equal volMR / volML   */
+    /*       → rightVolume == leftVolume.                           */
+    /*   (3) hard-right pan (rhythmPan == +63) → leftVolume goes    */
+    /*       small (close to zero), rightVolume large.              */
+    /*   (4) hard-left pan (rhythmPan == -64) → mirror of (3).      */
+    /*   (5) saturation: maxed velocity / pan / volMR force the     */
+    /*       arithmetic past 0xFF and the result is clamped.        */
+    /*   (6) The full ply_pan range (-64..+63) maps monotonically:  */
+    /*       rightVolume increases as pan goes from -64 → +63,      */
+    /*       leftVolume decreases monotonically over the same       */
+    /*       range, and the values never exceed 0xFF.               */
+    /*                                                              */
+    /* The asm uses signed 32-bit `muls` throughout; the C body     */
+    /* mirrors that with explicit `(s8)` and `s32` casts. The chan  */
+    /* parameter accepts both SoundChannel* and CgbChannel*-cast    */
+    /* pointers (verified by feeding ChnVolSetAsm a stack-allocated */
+    /* M4A_CgbChannel cast to SoundChannel* in scenario (2)).      */
+    /* ----------------------------------------------------------- */
+    {
+        SoundChannel chan_local;
+        MusicPlayerTrack track_local;
+
+        /* (1) Zero velocity → both volumes zero regardless of pan. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0;
+        chan_local.rhythmPan = 0;
+        chan_local.rightVolume = 0xAA; /* sentinel that must be overwritten */
+        chan_local.leftVolume = 0xBB;
+        track_local.volMR = 0xFF;
+        track_local.volML = 0xFF;
+        ChnVolSetAsm(&chan_local, &track_local);
+        M4A_CHECK(chan_local.rightVolume == 0);
+        M4A_CHECK(chan_local.leftVolume == 0);
+
+        /* (2) Centre pan, equal volMR/volML, via a CgbChannel-cast
+         *     pointer to confirm the prefix-shared layout works. */
+        M4A_CgbChannel cgb_local;
+        memset(&cgb_local, 0, sizeof(cgb_local));
+        memset(&track_local, 0, sizeof(track_local));
+        cgb_local.velocity = 0x40; /* mid-range velocity */
+        cgb_local.rhythmPan = 0;   /* centre */
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm((SoundChannel*)&cgb_local, &track_local);
+        /* (0x40 * (0x80 + 0)) * 0x80 >> 14 = 0x100000 >> 14 = 0x40 */
+        M4A_CHECK(cgb_local.rightVolume == 0x40);
+        /* (0x40 * (0x7F - 0)) * 0x80 >> 14 = 0xFE000 >> 14 = 0x3F */
+        M4A_CHECK(cgb_local.leftVolume == 0x3F);
+
+        /* (3) Hard-right pan (+63): leftVolume gets only (0x7F-63)
+         *     = 0x40 weighting; rightVolume gets (0x80+63) = 0xBF. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0x40;
+        chan_local.rhythmPan = (u8)63;
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm(&chan_local, &track_local);
+        /* (0x40 * 0xBF) * 0x80 >> 14 = 0x17C000 >> 14 = 0x5F */
+        M4A_CHECK(chan_local.rightVolume == 0x5F);
+        /* (0x40 * 0x40) * 0x80 >> 14 = 0x80000 >> 14 = 0x20 */
+        M4A_CHECK(chan_local.leftVolume == 0x20);
+
+        /* (4) Hard-left pan (-64): mirror of (3), via the s8 cast. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0x40;
+        chan_local.rhythmPan = (u8)(s8)(-64);
+        track_local.volMR = 0x80;
+        track_local.volML = 0x80;
+        ChnVolSetAsm(&chan_local, &track_local);
+        /* (0x40 * (0x80 - 64 = 0x40)) * 0x80 >> 14 = 0x80000 >> 14 = 0x20 */
+        M4A_CHECK(chan_local.rightVolume == 0x20);
+        /* (0x40 * (0x7F + 64 = 0xBF)) * 0x80 >> 14 = 0x17E000 >> 14 = 0x5F */
+        M4A_CHECK(chan_local.leftVolume == 0x5F);
+
+        /* (5) Saturation: velocity 0xFF * (0x80 + 63 = 0xBF) * volMR
+         *     0xFF >> 14 = 0xBD8E40 / 0x4000 ≈ 0x2F6, clamped to 0xFF. */
+        memset(&chan_local, 0, sizeof(chan_local));
+        memset(&track_local, 0, sizeof(track_local));
+        chan_local.velocity = 0xFF;
+        chan_local.rhythmPan = (u8)63;
+        track_local.volMR = 0xFF;
+        track_local.volML = 0xFF;
+        ChnVolSetAsm(&chan_local, &track_local);
+        M4A_CHECK(chan_local.rightVolume == 0xFF); /* clamped */
+        /* leftVolume: (0xFF * (0x7F - 63 = 0x40)) * 0xFF >> 14
+         * = 0x3F8040 >> 14 = 0xFE (just under the 0xFF clamp). */
+        M4A_CHECK(chan_local.leftVolume == 0xFE);
+
+        /* (6) Monotonicity sweep across the ply_pan output range
+         *     (-64..+63). With fixed velocity and equal vol slots
+         *     rightVolume must increase weakly and leftVolume must
+         *     decrease weakly. We also recompute the unclamped s32
+         *     intermediates that ChnVolSetAsm casts to u8 and assert
+         *     them in [0, 0xFF] — this both validates that the cast
+         *     is lossless across the whole pan range (the clamp does
+         *     not engage with these inputs) and that the u8 field
+         *     observed afterwards equals that pre-cast value. */
+        s32 prevRightS32 = 0;
+        s32 prevLeftS32 = 0xFF;
+        s32 i;
+        for (i = -64; i <= 63; i++) {
+            memset(&chan_local, 0, sizeof(chan_local));
+            memset(&track_local, 0, sizeof(track_local));
+            chan_local.velocity = 0x40;
+            chan_local.rhythmPan = (u8)(s8)i;
+            track_local.volMR = 0x80;
+            track_local.volML = 0x80;
+            ChnVolSetAsm(&chan_local, &track_local);
+            /* Mirror ChnVolSetAsm's pre-cast arithmetic. */
+            s32 rightS32 = ((s32)0x40 * (0x80 + i) * (s32)0x80) >> 14;
+            s32 leftS32 = ((s32)0x40 * (0x7F - i) * (s32)0x80) >> 14;
+            M4A_CHECK(rightS32 >= 0 && rightS32 <= 0xFF);
+            M4A_CHECK(leftS32 >= 0 && leftS32 <= 0xFF);
+            M4A_CHECK((s32)chan_local.rightVolume == rightS32);
+            M4A_CHECK((s32)chan_local.leftVolume == leftS32);
+            M4A_CHECK(rightS32 >= prevRightS32);
+            M4A_CHECK(leftS32 <= prevLeftS32);
+            prevRightS32 = rightS32;
+            prevLeftS32 = leftS32;
+        }
     }
 
 #undef M4A_WRITE_LE32
