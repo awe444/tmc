@@ -68,10 +68,14 @@ goal here is the equivalent `tmc.sdl`.
 > boot-time `MPlayOpen` walk against the full 32-entry
 > `gMusicPlayers[]` table all run end-to-end under `__PORT__`
 > (PR #7 part 2.2.2.3 promoted `NUM_MUSIC_PLAYERS` back to its real
-> value of 0x20). The mixer (`SoundMain`) remains a silent stub,
-> so audio is still off and the rasterizer's golden hashes are
-> bit-for-bit unchanged — `SoundMain` and the `SoundMainBTM`
-> bottom-half are PR #7 part 2.3.
+> value of 0x20). PR #7 part 2.3 is in progress: 2.3.1 (`ply_port`
+> CGB-register poke), 2.3.2 (`SoundMain` top-half dispatcher), 2.3.3
+> (`ChnVolSetAsm` per-channel stereo split), and 2.3.4
+> (`RealClearChain` doubly-linked-list unlink) are all real C ports
+> of their `asm/lib/m4a_asm.s` counterparts. The mixer
+> (`SoundMainRAM` + `SoundMainBTM`'s bottom half) remains a silent
+> stub, so audio is still off and the rasterizer's golden hashes
+> are bit-for-bit unchanged.
 
 
 ## Building
@@ -1464,6 +1468,53 @@ are tracked here for future contributors.
         smoke test exercises no song has been requested, so
         neither path runs live — only the self-check exercises
         the new code.
+      - [x] **PR #7 part 2.3.4** Promoted `RealClearChain` from a
+        no-op stub to a real C port of `asm/lib/m4a_asm.s::
+        RealClearChain` (`_080AF6EC..._080AF70A`) in
+        `src/platform/shared/m4a_host.c`. Performs the textbook
+        doubly-linked-list unlink the asm spells out: read
+        `chan->track` (offset 0x2c) and early-out if NULL; otherwise
+        read `chan->prev` (0x30) / `chan->next` (0x34) and either
+        rewire `prev->next` (when `prev != NULL`) or replace the
+        per-track head `track->chan` (when `prev == NULL`); rewire
+        `next->prev` when `next != NULL`; finally clear
+        `chan->track = NULL` so a follow-up `RealClearChain` on the
+        same chan takes the early-out cleanly. The `chan->prev` /
+        `chan->next` slots are u32-typed in the public
+        `include/gba/m4a.h` header (faithful to the GBA's 32-bit
+        pointer layout); the host port round-trips host pointers
+        through `(uintptr_t)` casts in both directions, matching
+        every other host call site that touches the slots
+        (`ply_note_impl`'s chan-install, `ply_fine` /
+        `ply_endtie`'s chan walks, `m4a_track_volpit_pass`'s
+        dead-envelope branch). On a 64-bit host those casts
+        truncate the stored value to 32 bits, so dereferencing a
+        non-zero `chan->prev` / `chan->next` is undefined — the
+        function comment calls this out explicitly. The production
+        runtime path never builds a multi-element chain that would
+        force the deref (the only chan installs come from
+        `ply_note_impl`'s newly-allocated head, and `ply_fine` /
+        `m4a_track_volpit_pass`'s dead-envelope branch are the only
+        callers of `RealClearChain`, neither of which fires on the
+        title-screen idle), and the same 64-bit truncation already
+        affects every other chan-list walker in this TU; the port
+        does not introduce the limitation, only inherits it.
+        `Port_M4ASelfCheck()` grew a 2.3.4 section that exercises
+        the three combinations the asm reaches without dereferencing
+        a u32 slot: the early-out (track == NULL, sentinel
+        prev/next preserved verbatim), the singleton chain
+        (prev == 0, next == 0; track->chan and chan->track both
+        cleared while prev/next stay untouched per the asm), and an
+        idempotent re-call on the now-detached chan (early-out
+        again, track->chan / chan->* state unchanged). The
+        `--frames=30` golden hashes for both the default `=ON`
+        (`0x8f68687253dc1b25`) and the preserved `=OFF`
+        (`0xf9b70c534973f325`) builds remain bit-for-bit unchanged
+        because `RealClearChain` is reached only via `ply_fine`
+        (per-track end-of-song) and `m4a_track_volpit_pass`'s
+        dead-envelope `ClearChain(chan)` branch, neither of which
+        fires under the title-screen idle the smoke test exercises
+        — only the self-check exercises the new code.
 
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the

@@ -578,13 +578,84 @@ done:
     mp->ident = M4A_ID_NUMBER;
 }
 
-/* `RealClearChain` is the `gMPlayJumpTable[34]` target invoked by the  */
-/* `ClearChain(void* x)` C wrapper. On the GBA the asm walks a linked   */
-/* list of channels rooted at `x` and unlinks each one. Under the       */
-/* silent host mixer no channel is ever linked into the list, so the    */
-/* unlink-walk has nothing to do; the safe stand-in is a no-op.         */
+/* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.4: RealClearChain host C port.                       */
+/*                                                                    */
+/* Real port of `asm/lib/m4a_asm.s::RealClearChain`                    */
+/* (`_080AF6EC..._080AF70A`). The asm body is a textbook doubly-      */
+/* linked-list unlink with a "back-pointer to head" wrinkle:           */
+/*                                                                    */
+/*   ldr r3, [r0, #0x2c]   ; r3 = chan->track                         */
+/*   cmp r3, #0                                                       */
+/*   beq _080AF70A         ; already detached → no-op                  */
+/*   ldr r1, [r0, #0x34]   ; r1 = chan->next                          */
+/*   ldr r2, [r0, #0x30]   ; r2 = chan->prev                          */
+/*   cmp r2, #0                                                       */
+/*   beq _080AF6FE                                                    */
+/*   str r1, [r2, #0x34]   ; chan->prev->next = chan->next            */
+/*   b   _080AF700                                                    */
+/* _080AF6FE:                                                         */
+/*   str r1, [r3, #0x20]   ; track->chan        = chan->next          */
+/* _080AF700:                                                         */
+/*   cmp r1, #0                                                       */
+/*   beq _080AF706                                                    */
+/*   str r2, [r1, #0x30]   ; chan->next->prev = chan->prev            */
+/* _080AF706:                                                         */
+/*   movs r1, #0                                                      */
+/*   str r1, [r0, #0x2c]   ; chan->track       = NULL                 */
+/* _080AF70A: bx lr                                                   */
+/*                                                                    */
+/* SoundChannel field offsets line up with the public                  */
+/* `include/gba/m4a.h` layout: `track` at 0x2c, `prev` at 0x30,        */
+/* `next` at 0x34. `prev` and `next` are typed `u32` in the header     */
+/* because the GBA build packs raw 32-bit pointers into the slots;     */
+/* on the host we round-trip those slots through `(uintptr_t)` casts   */
+/* in both directions so the in-slot 32-bit value is preserved         */
+/* exactly (matching every other host call site that touches           */
+/* `chan->prev` / `chan->next`, e.g. `ply_note_impl`'s chan-install).  */
+/*                                                                    */
+/* Caller invariant: the asm assumes `chan->prev == NULL` exactly when */
+/* `chan` is the head of `track->chan`. The chan-install path in       */
+/* `ply_note_impl` upholds that (it sets `chan->prev = 0` then writes  */
+/* `track->chan = chan`), as does this very routine on detach.         */
+/*                                                                    */
+/* 64-bit-host caveat. Because `chan->prev` / `chan->next` are u32     */
+/* slots, host pointers stored there get truncated. The asm body — and */
+/* this faithful host port — dereference those slots whenever they are */
+/* non-zero (`prev->next = ...` / `next->prev = ...`). Following a     */
+/* truncated host pointer is undefined; in practice it segfaults. The  */
+/* engine never builds a multi-element chain on the production runtime */
+/* path under the title-screen idle (the only chan installs come from  */
+/* `ply_note_impl`'s newly-allocated head, and `ply_fine` /            */
+/* `m4a_track_volpit_pass`'s dead-envelope branch are the only callers */
+/* of `RealClearChain`, neither of which fires today). The same        */
+/* 64-bit truncation already affects every other chan-list walker in   */
+/* this TU; this port does not introduce the limitation, only inherits */
+/* it. The self-check below therefore exercises exclusively the        */
+/* combinations the asm reaches without dereferencing a u32 slot:      */
+/* the early-out (track == NULL), the singleton chain (prev == 0,      */
+/* next == 0), and the idempotent re-call.                             */
+/* ------------------------------------------------------------------ */
 void RealClearChain(void* x) {
-    (void)x;
+    SoundChannel* chan = (SoundChannel*)x;
+    MusicPlayerTrack* track = chan->track;
+    if (track == NULL) {
+        /* Already detached (or never attached) — match the asm's
+         * `cmp r3, #0; beq _080AF70A` early-out. */
+        return;
+    }
+    SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+    SoundChannel* prev = (SoundChannel*)(uintptr_t)chan->prev;
+    if (prev != NULL) {
+        prev->next = (u32)(uintptr_t)next;
+    } else {
+        /* `chan` was the head of the per-track chain. */
+        track->chan = next;
+    }
+    if (next != NULL) {
+        next->prev = (u32)(uintptr_t)prev;
+    }
+    chan->track = NULL;
 }
 
 /* `MPlayJumpTableCopy` populates `gMPlayJumpTable[]` from the          */
@@ -2141,9 +2212,10 @@ int Port_M4ASelfCheck(void) {
     }
 
     /* ply_fine with chan->statusFlags & 0xc7 == 0: RealClearChain
-     * (no-op host stub) is still called unconditionally per the asm,
-     * but the release flag is NOT set because the M4A_CHAN_FLAGS_ENV
-     * gate is closed. */
+     * (PR #7 part 2.3.4 host C port; this synthesized chan has
+     * chan.track == NULL so the early-out branch is exercised) is
+     * still called unconditionally per the asm, but the release flag
+     * is NOT set because the M4A_CHAN_FLAGS_ENV gate is closed. */
     {
         SoundChannel chan;
         memset(&mp, 0, sizeof(mp));
@@ -3586,6 +3658,71 @@ int Port_M4ASelfCheck(void) {
             prevRightS32 = rightS32;
             prevLeftS32 = leftS32;
         }
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.4: RealClearChain.                            */
+    /*                                                              */
+    /* Three scenarios cover the doubly-linked-list unlink contract */
+    /* — restricted to the combinations the asm reaches without     */
+    /* dereferencing `chan->prev` / `chan->next`. Those slots are   */
+    /* u32-typed (faithful to the GBA's 32-bit pointer layout) and  */
+    /* truncate any host pointer stored in them, so following them  */
+    /* is undefined on a 64-bit host. The production runtime path   */
+    /* never builds a multi-element chain that would force the      */
+    /* deref (see the function comment above), so this coverage     */
+    /* matches the cases the runtime can actually hit.              */
+    /*                                                              */
+    /*   (1) chan->track == NULL early-out: every other field is   */
+    /*       left intact (sentinel-preserve check on prev/next).   */
+    /*   (2) Singleton chain (chan == track->chan, prev == 0,      */
+    /*       next == 0): track->chan is cleared to NULL, chan-     */
+    /*       >track is cleared to NULL, and chan->prev / ->next    */
+    /*       are not modified (the asm doesn't touch them).        */
+    /*   (3) Idempotency: a second RealClearChain on the now-      */
+    /*       detached chan from (2) takes the early-out and        */
+    /*       leaves track->chan / chan->* state unchanged.         */
+    /* ----------------------------------------------------------- */
+    {
+        SoundChannel a;
+        MusicPlayerTrack t;
+
+        /* (1) NULL track pointer: early-out, no fields touched.
+         *     Sentinel prev/next survive verbatim. */
+        memset(&a, 0, sizeof(a));
+        memset(&t, 0, sizeof(t));
+        a.track = NULL;
+        a.prev = (u32)0xDEADBEEFu;
+        a.next = (u32)0xCAFEBABEu;
+        RealClearChain(&a);
+        M4A_CHECK(a.track == NULL);
+        M4A_CHECK(a.prev == (u32)0xDEADBEEFu);
+        M4A_CHECK(a.next == (u32)0xCAFEBABEu);
+
+        /* (2) Singleton chain: track->chan = &a; a.prev = a.next = 0. */
+        memset(&a, 0, sizeof(a));
+        memset(&t, 0, sizeof(t));
+        a.track = &t;
+        a.prev = 0;
+        a.next = 0;
+        t.chan = &a;
+        RealClearChain(&a);
+        M4A_CHECK(t.chan == NULL);
+        M4A_CHECK(a.track == NULL);
+        /* prev/next must be left untouched (the asm never writes them). */
+        M4A_CHECK(a.prev == 0);
+        M4A_CHECK(a.next == 0);
+
+        /* (3) Idempotency: second call on the now-detached a takes
+         *     the early-out and leaves t.chan / a.* state alone. */
+        SoundChannel* saved_t_chan = t.chan;
+        u32 saved_a_prev = a.prev;
+        u32 saved_a_next = a.next;
+        RealClearChain(&a);
+        M4A_CHECK(a.track == NULL);
+        M4A_CHECK(t.chan == saved_t_chan);
+        M4A_CHECK(a.prev == saved_a_prev);
+        M4A_CHECK(a.next == saved_a_next);
     }
 
 #undef M4A_WRITE_LE32
