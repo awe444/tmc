@@ -615,11 +615,11 @@ u32 umul3232H32(u32 multiplier, u32 multiplicand) {
 }
 
 /* `TrackStop` / `clear_modM` — installed in gMPlayJumpTable or       */
-/* called directly from m4a.c.                                          */
-void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
-    (void)mplayInfo;
-    (void)track;
-}
+/* called directly from m4a.c. The real `TrackStop` body (PR #7 part   */
+/* 2.3.5) lives further down in this TU, after the `M4A_CgbChannel` /  */
+/* `M4A_SoundInfo` overlays it dereferences. Forward-declared here so  */
+/* the rest of this TU can take its address. */
+void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track);
 
 /* ------------------------------------------------------------------ */
 /* PR #7 part 2.3.3: ChnVolSetAsm host C port.                         */
@@ -1400,6 +1400,149 @@ void RealClearChain(void* x) {
 }
 
 /* ------------------------------------------------------------------ */
+/* PR #7 part 2.3.5: TrackStop host C port.                            */
+/*                                                                    */
+/* Real port of `asm/lib/m4a_asm.s::TrackStop`                         */
+/* (`_080AFB84..._080AFBCA`). Stops every chan currently rooted on    */
+/* `track->chan`, then detaches the chain from the track. Installed   */
+/* as `gMPlayJumpTable[31]` and also called directly from             */
+/* `src/gba/m4a.c` (`MPlayStart`, `m4aSongNumStop`,                   */
+/* `m4aMPlayAllStop`, `m4aMPlayStop`).                                */
+/*                                                                    */
+/* The asm body, expressed as C against the GBA's flat 32-bit chan    */
+/* layout:                                                            */
+/*                                                                    */
+/*   if (!(track->flags & 0x80)) return;        // not EXIST          */
+/*   chan = track->chan;                        // [r5, #0x20]        */
+/*   while (chan != NULL) {                                           */
+/*       if (chan->statusFlags != 0) {                                */
+/*           u8 cgbKind = chan->type & 7;                             */
+/*           if (cgbKind != 0) {                                      */
+/*               soundInfo->CgbOscOff(cgbKind);                       */
+/*           }                                                        */
+/*           chan->statusFlags = 0;                                   */
+/*       }                                                            */
+/*       chan->track = NULL;                                          */
+/*       next = chan->next;                                           */
+/*       if (next == chan) {                                          */
+/*           chan->next = NULL;                                       */
+/*           next = NULL;                                             */
+/*       }                                                            */
+/*       chan = next;                                                 */
+/*   }                                                                */
+/*   track->chan = NULL;                                              */
+/*                                                                    */
+/* The asm reads `soundInfo` from the fixed IWRAM pointer at          */
+/* `0x03007FF0`; on the host we go through `gSoundInfo` directly      */
+/* (the same overlay every other helper in this TU uses). The         */
+/* `CgbOscOff` slot is populated by `m4a.c::MPlayExtender`            */
+/* (`soundInfo->CgbOscOff = CgbOscOff;`) at boot, and falls back to   */
+/* `nullsub_544` until then, so the slot is safe to call without a    */
+/* NULL check on the production runtime path. The host port still     */
+/* guards the call so `Port_M4ASelfCheck()` can exercise the routine  */
+/* with a freshly-zeroed `gSoundInfo` overlay.                        */
+/*                                                                    */
+/* Channel-shape dispatch. The chan-walk has the same DirectSound /   */
+/* CGB layout split as `RealClearChain` (PR #7 part 2.3.4): the host  */
+/* `SoundChannel` widens trailing pointer fields under `__PORT__` so  */
+/* `track` lands at host offset 0x38 and `next` at 0x44, while the    */
+/* GBA-faithful `M4A_CgbChannel` overlay keeps `track` at 0x2C and    */
+/* `next` at 0x34 (u32 slots). `ply_note_impl` installs               */
+/* `(SoundChannel*)cgb` into `track->chan` for CGB notes, so a single */
+/* track's chain is built from chans of one shape. Both layouts agree */
+/* on byte 1 (`type`); we read it first and dispatch per iteration so */
+/* the per-chan reads land on the right host offsets either way. The  */
+/* `chan->next == chan` self-loop check is preserved verbatim from    */
+/* the asm; under the host `next` is a u32 slot, so the comparison is */
+/* between `chan->next` and `(u32)(uintptr_t)chan` (matching the      */
+/* asm's flat 32-bit equality). The same 64-bit-host pointer-         */
+/* truncation caveat documented for `RealClearChain` applies to a     */
+/* multi-element chain walk; the engine never builds one on the       */
+/* production runtime path under the title-screen idle, so the        */
+/* self-check below restricts itself to combinations the asm reaches  */
+/* without dereferencing a u32 slot.                                  */
+/* ------------------------------------------------------------------ */
+void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
+    (void)mplayInfo;
+
+    /* `_080AFB8C..._080AFB94`: tst track->flags, 0x80 (EXIST); early
+     * out if the track is not live. */
+    if ((track->flags & MPT_FLG_EXIST) == 0) {
+        return;
+    }
+
+    /* `_080AFB94..._080AFB96`: load track->chan; bail if empty. */
+    SoundChannel* chan = track->chan;
+
+    M4A_SoundInfo* soundInfo = (M4A_SoundInfo*)gSoundInfo;
+
+    while (chan != NULL) {
+        /* Byte 1 is `type` in both layouts; low 3 bits encode the
+         * channel kind (0 = DirectSound, non-zero = CGB). Dispatch
+         * per iteration so the per-chan reads pick up the right
+         * host field offsets. */
+        u8 typeByte = ((const u8*)chan)[1];
+        u8 cgbKind = typeByte & 7;
+        u8 statusFlags = ((const u8*)chan)[0];
+
+        /* `_080AFB98..._080AFBB0`: if statusFlags != 0, optionally
+         * notify CGB hardware via soundInfo->CgbOscOff(kind), then
+         * clear statusFlags. */
+        if (statusFlags != 0) {
+            if (cgbKind != 0 && soundInfo->CgbOscOff != NULL) {
+                soundInfo->CgbOscOff(cgbKind);
+            }
+            /* Write statusFlags = 0 through the matching shape so
+             * the overlay's other byte fields (which sit at the same
+             * offset in both layouts) stay untouched. */
+            ((u8*)chan)[0] = 0;
+        }
+
+        /* `_080AFBB2`: chan->track = NULL. Both shapes have a
+         * `track` field; type for SoundChannel is a native pointer
+         * (host offset 0x38), for M4A_CgbChannel it's a u32 slot
+         * (host offset 0x2c). */
+        SoundChannel* nextChan;
+        if (cgbKind == 0) {
+            SoundChannel* dsChan = chan;
+            dsChan->track = NULL;
+            /* `_080AFBB6..._080AFBBC`: detect self-loop, break it
+             * before the iteration step. The asm compares the u32
+             * register holding `chan->next` against the u32
+             * register holding `chan`; mirror that with truncated
+             * 32-bit equality on the host so we never dereference
+             * a u32 slot that holds a truncated 64-bit pointer. */
+            if (dsChan->next == (u32)(uintptr_t)dsChan) {
+                dsChan->next = 0;
+                nextChan = NULL;
+            } else {
+                nextChan = (SoundChannel*)(uintptr_t)dsChan->next;
+            }
+        } else {
+            M4A_CgbChannel* cgbChan = (M4A_CgbChannel*)chan;
+            cgbChan->track = 0;
+            M4A_CgbChannel* nxt;
+            if (cgbChan->next == (u32)(uintptr_t)cgbChan) {
+                cgbChan->next = 0;
+                nxt = NULL;
+            } else {
+                nxt = (M4A_CgbChannel*)(uintptr_t)cgbChan->next;
+            }
+            /* The walk uses the host `SoundChannel*` typing for the
+             * loop variable to share the dispatch code; the cast is
+             * faithful to the asm, which treats both shapes as the
+             * same flat 32-bit chan layout. */
+            nextChan = (SoundChannel*)nxt;
+        }
+
+        chan = nextChan;
+    }
+
+    /* `_080AFBC4`: track->chan = NULL. */
+    track->chan = NULL;
+}
+
+/* ------------------------------------------------------------------ */
 /* PR #7 part 2.3.2: SoundMain top-half C port.                        */
 /*                                                                    */
 /* Real port of the asm's `SoundMain` top half                         */
@@ -1973,6 +2116,17 @@ static void port_m4a_sc_mph(MusicPlayerInfo* mp) {
 }
 static void port_m4a_sc_cgb(void) {
     port_m4a_sc_cgb_calls++;
+}
+
+/* PR #7 part 2.3.5 TrackStop self-check helpers: file-scope counters
+ * + a CgbOscOff stand-in so the CGB-path scenario can verify the
+ * callback fires exactly once with `type & 7` as its argument.
+ * Touched only by the TrackStop section of `Port_M4ASelfCheck()`. */
+static int s_port_m4a_oscoff_count;
+static u8 s_port_m4a_oscoff_last_arg;
+static void port_m4a_sc_oscoff(u8 chanNum) {
+    s_port_m4a_oscoff_count++;
+    s_port_m4a_oscoff_last_arg = chanNum;
 }
 
 int Port_M4ASelfCheck(void) {
@@ -3871,6 +4025,181 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(a.track == saved_a_track);
         M4A_CHECK(a.prev == saved_a_prev);
         M4A_CHECK(a.next == saved_a_next);
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.5: TrackStop.                                 */
+    /*                                                              */
+    /* Six scenarios. The first four cover the chan-walk / detach  */
+    /* logic the asm spells out, restricted (like RealClearChain)  */
+    /* to combinations that don't dereference a u32 `chan->next`   */
+    /* slot (the host truncates host pointers stored there). The   */
+    /* fifth exercises the `chan->next == chan` self-loop break.   */
+    /* The sixth exercises the CGB path's `CgbOscOff` invocation,  */
+    /* with the soundInfo overlay's `CgbOscOff` slot wired through */
+    /* a counter so the test can assert it fired exactly once with */
+    /* the correct `type & 7` argument.                            */
+    /*                                                              */
+    /* The CgbOscOff slot is restored to NULL after each scenario   */
+    /* that mutates it so the surrounding self-check sections (and  */
+    /* the production runtime code that may run after) see a       */
+    /* deterministic, zeroed engine state.                          */
+    /* ----------------------------------------------------------- */
+    {
+        /* (1) Non-EXIST track: TrackStop must early-out without
+         *     touching `track->chan` (sentinel preserved). */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        SoundChannel sentinelChan;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&sentinelChan, 0, sizeof(sentinelChan));
+        t.flags = 0; /* not EXIST */
+        t.chan = &sentinelChan;
+        sentinelChan.statusFlags = 0xAB;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(t.chan == &sentinelChan);
+        M4A_CHECK(sentinelChan.statusFlags == 0xAB);
+    }
+
+    {
+        /* (2) EXIST track with empty chan list: detaches cleanly,
+         *     loop body never runs. `track->chan = NULL` is set
+         *     unconditionally at the tail. */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = NULL;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(t.chan == NULL);
+    }
+
+    {
+        /* (3) Singleton DirectSound chan with statusFlags != 0,
+         *     CgbOscOff slot left NULL (matches a freshly-zeroed
+         *     SoundInfo): chan->statusFlags cleared, chan->track
+         *     cleared, track->chan cleared. The asm's CgbOscOff
+         *     call is gated by `(type & 7) != 0`, so DirectSound
+         *     skips it regardless of slot population. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        SoundChannel chan;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&chan, 0, sizeof(chan));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = &chan;
+        chan.type = 0; /* DirectSound */
+        chan.statusFlags = 0x83;
+        chan.track = &t;
+        chan.next = 0;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(chan.statusFlags == 0);
+        M4A_CHECK(chan.track == NULL);
+        M4A_CHECK(t.chan == NULL);
+    }
+
+    {
+        /* (4) Singleton DirectSound chan with statusFlags == 0:
+         *     the asm's `if (statusFlags != 0)` branch is skipped
+         *     (so CgbOscOff is not called even on a CGB chan), but
+         *     chan->track / track->chan are still cleared. */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        SoundChannel chan;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&chan, 0, sizeof(chan));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = &chan;
+        chan.type = 0;
+        chan.statusFlags = 0;
+        chan.track = &t;
+        chan.next = 0;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(chan.statusFlags == 0);
+        M4A_CHECK(chan.track == NULL);
+        M4A_CHECK(t.chan == NULL);
+    }
+
+    {
+        /* (5) Self-loop break (DirectSound). chan->next stores
+         *     `(u32)(uintptr_t)&chan` — the asm's flat 32-bit
+         *     equality matches when comparing `chan->next` (u32)
+         *     against `chan` truncated the same way. After
+         *     TrackStop, chan->next must be 0 (asm clears it so
+         *     the next iteration's `r4 = r0; cmp r4, #0` exits)
+         *     and the chain is detached. */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        SoundChannel chan;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&chan, 0, sizeof(chan));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = &chan;
+        chan.type = 0;
+        chan.statusFlags = 0x83;
+        chan.track = &t;
+        /* Asm cmp is on the 32-bit register holding `chan->next`
+         * vs the 32-bit register holding `chan`; on the GBA both
+         * are full pointers. On the host we mirror that by
+         * truncating the host pointer the same way the asm would. */
+        chan.next = (u32)(uintptr_t)&chan;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(chan.next == 0);
+        M4A_CHECK(chan.statusFlags == 0);
+        M4A_CHECK(chan.track == NULL);
+        M4A_CHECK(t.chan == NULL);
+    }
+
+    {
+        /* (6) Singleton CGB chan with statusFlags != 0: dispatch
+         *     picks the M4A_CgbChannel layout (track/prev/next
+         *     u32 slots at offsets 0x2c/0x30/0x34), CgbOscOff
+         *     fires exactly once with `type & 7`, and the chan's
+         *     status / track slot are cleared. The CgbOscOff
+         *     callback is wired through file-scope counters
+         *     (`s_port_m4a_oscoff_count` / `_arg`, declared above
+         *     this self-check). */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        s_port_m4a_oscoff_count = 0;
+        s_port_m4a_oscoff_last_arg = 0xFF;
+        si->CgbOscOff = port_m4a_sc_oscoff;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        M4A_CgbChannel cgb;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&cgb, 0, sizeof(cgb));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = (SoundChannel*)&cgb; /* ply_note_impl-style cast */
+        cgb.type = 2;                 /* CGB square 2 → kind = 2 */
+        cgb.statusFlags = 0x83;
+        cgb.track = (u32)(uintptr_t)&t;
+        cgb.next = 0;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(s_port_m4a_oscoff_count == 1);
+        M4A_CHECK(s_port_m4a_oscoff_last_arg == 2);
+        M4A_CHECK(cgb.statusFlags == 0);
+        M4A_CHECK(cgb.track == 0);
+        M4A_CHECK(t.chan == NULL);
+
+        /* Restore the slot so following sections / production code
+         * see a NULL slot again. */
+        si->CgbOscOff = NULL;
+        s_port_m4a_oscoff_count = 0;
+        s_port_m4a_oscoff_last_arg = 0;
     }
 
 #undef M4A_WRITE_LE32

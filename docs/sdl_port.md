@@ -70,8 +70,9 @@ goal here is the equivalent `tmc.sdl`.
 > (PR #7 part 2.2.2.3 promoted `NUM_MUSIC_PLAYERS` back to its real
 > value of 0x20). PR #7 part 2.3 is in progress: 2.3.1 (`ply_port`
 > CGB-register poke), 2.3.2 (`SoundMain` top-half dispatcher), 2.3.3
-> (`ChnVolSetAsm` per-channel stereo split), and 2.3.4
-> (`RealClearChain` doubly-linked-list unlink) are all real C ports
+> (`ChnVolSetAsm` per-channel stereo split), 2.3.4
+> (`RealClearChain` doubly-linked-list unlink), and 2.3.5
+> (`TrackStop` per-track chan-list teardown) are all real C ports
 > of their `asm/lib/m4a_asm.s` counterparts. The mixer
 > (`SoundMainRAM` + `SoundMainBTM`'s bottom half) remains a silent
 > stub, so audio is still off and the rasterizer's golden hashes
@@ -1547,6 +1548,56 @@ are tracked here for future contributors.
         dead-envelope `ClearChain(chan)` branch, neither of which
         fires under the title-screen idle the smoke test exercises
         — only the self-check exercises the new code.
+      - [x] **PR #7 part 2.3.5** Promoted `TrackStop` from a no-op
+        stub to a real C port of `asm/lib/m4a_asm.s::TrackStop`
+        (`_080AFB84..._080AFBCA`) in
+        `src/platform/shared/m4a_host.c`. Performs the per-track
+        chan-list teardown the asm spells out: EXIST early-out
+        when `track->flags & 0x80` is clear; otherwise walk the
+        `track->chan` linked list and for each chan, fire
+        `soundInfo->CgbOscOff(chan->type & 7)` for CGB chans whose
+        `statusFlags != 0`, clear `chan->statusFlags = 0`, clear
+        `chan->track = NULL`, and break a `chan->next == chan`
+        self-loop before stepping. Finally clear `track->chan = NULL`.
+
+        Installed as `gMPlayJumpTable[31]` and called directly from
+        `src/gba/m4a.c` (`MPlayStart`, `m4aSongNumStop`,
+        `m4aMPlayAllStop`, `m4aMPlayStop`).
+
+        Channel-shape dispatch mirrors PR #7 part 2.3.4: byte 1
+        (`type`) is shared between the host `SoundChannel` (widened
+        trailing pointers under `__PORT__`) and the GBA-faithful
+        `M4A_CgbChannel` overlay, so the routine reads `type & 7`
+        first and walks each chan against the matching host layout
+        per iteration. The self-loop check compares `chan->next`
+        (u32 slot) against the truncated 32-bit value of the host
+        chan pointer, exactly as the asm's flat 32-bit equality
+        does — and crucially never dereferences the truncated u32
+        slot, so the same 64-bit-host caveat called out for
+        `RealClearChain` applies here without any new exposure.
+
+        `Port_M4ASelfCheck()` grew a 2.3.5 section that exercises
+        six scenarios: non-EXIST track early-out (`track->chan`
+        sentinel preserved); EXIST track with empty chan list
+        (`track->chan` set to NULL even though the loop never
+        runs); singleton DirectSound chan with non-zero
+        `statusFlags` (chan / track cleared, `CgbOscOff` not
+        called because `type & 7 == 0`); singleton DirectSound
+        chan with `statusFlags == 0` (the asm's "skip CgbOscOff
+        and statusFlags clear" branch still clears
+        `chan->track` / `track->chan`); self-loop break (`chan->
+        next == chan` truncated equality, asm clears the slot to
+        0 and exits the loop); and singleton CGB chan that fires
+        a stand-in `CgbOscOff` exactly once with `type & 7` as
+        its argument (the file-scope `port_m4a_sc_oscoff` helper
+        + counters mirror the existing `port_m4a_sc_mph` pattern).
+        The `--frames=30` golden hashes for both the default
+        `=ON` (`0x8f68687253dc1b25`) and the preserved `=OFF`
+        (`0xf9b70c534973f325`) builds remain bit-for-bit
+        unchanged because `TrackStop` is reached only via
+        `MPlayStart` / `m4aSongNumStop` / `m4aMPlay*Stop`, none
+        of which fire under the title-screen idle the smoke test
+        exercises — only the self-check exercises the new code.
 
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
