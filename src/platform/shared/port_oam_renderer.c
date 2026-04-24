@@ -93,11 +93,19 @@ typedef struct {
 extern uint8_t gOAMControls[];
 
 /* `gFrameObjLists` is the relative-offset blob loaded from
- * `data/gfx/gFrameObjLists.bin` (see `assets/assets.json`). Each
- * `u32` slot stores a *byte* offset into the same blob; resolving
- * it gives a pointer either to a per-frame table (for the
- * `gFrameObjLists[spriteIndex]` step) or to the raw frame data (for
- * the per-frame inner step). */
+ * `data/gfx/gFrameObjLists.bin` (see `assets/assets.json`), extracted
+ * from the player's baserom into a strong host definition by
+ * `tools/port/gen_host_assets.py`. Each `u32` slot stores a *byte*
+ * offset into the same blob; resolving it gives a pointer either to
+ * a per-sprite frame table (for the `gFrameObjLists[spriteIndex]`
+ * step) or to the raw frame data (for the per-frame inner step).
+ *
+ * The declaration uses `uint32_t[]` to match the existing extern in
+ * `src/affine.c` for the first-level lookup, but the second-level
+ * deref and the per-sprite frame walk both operate on the underlying
+ * byte stream via `(uint8_t*)gFrameObjLists` + `memcpy` (see
+ * `ram_DrawDirect` below), so the per-frame data is read as raw
+ * bytes regardless of the array element type. */
 extern uint32_t gFrameObjLists[];
 
 /* Standard GBA OBJ pixel sizes, indexed [shape][size]. This is the
