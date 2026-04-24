@@ -72,8 +72,8 @@ static PORT_ASM_STUB_NORETURN void Port_AsmStubTrap(const char* name) {
 PORT_ASM_STUB(sub_08000E44)
 /* `Random` is now a real C port in src/platform/shared/port_random.c. */
 PORT_ASM_STUB(sub_08000E62)
-PORT_ASM_STUB(sub_08000E92)
-PORT_ASM_STUB(LoadResourceAsync)
+/* `sub_08000E92` and `LoadResourceAsync` are now real C ports in
+ * src/platform/shared/port_load_resource.c. */
 
 /* ---- asm/src/code_08000F10.s (3 symbols) ---- */
 PORT_ASM_STUB(CheckBits)
@@ -253,7 +253,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     InitAnimationForceUpdate,
     InitializeAnimation,
     LinearMoveDirectionOLD,
-    LoadResourceAsync,
     PlayerCheckNEastTile,
     ProjectileUpdate,
     /* `Random` is a real C port now; no force-reference needed. */
@@ -270,7 +269,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     UpdateSpriteForCollisionLayer,
     sub_08000E44,
     sub_08000E62,
-    sub_08000E92,
     sub_08001214,
     sub_08001290,
     sub_080012DC,

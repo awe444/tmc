@@ -158,4 +158,62 @@ u32* gTranslations[16] = {
     (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
 };
 
+/* ------------------------------------------------------------------
+ * gUnk_081092AC — text-box border / fill ROM-graphics pointer table.
+ *
+ * Background
+ * ----------
+ * The ROM build defines `gUnk_081092AC[]` in `data/const/text.s` as a
+ * 10-entry table of `u32*` pointers, each addressing a packed 4bpp
+ * border-pattern blob (`gUnk_086926A0`, `gUnk_08692780`, ...).
+ * `sub_0805F918` in `src/text.c` indexes it as
+ * `puVar1 = gUnk_081092AC[idx]`, then loops 3 times calling
+ * `UnpackTextNibbles(puVar1, &gUnk_02036A58)` and advancing
+ * `puVar1 += 0x40` each iteration — i.e. it consumes 3 * 0x40 = 0xC0
+ * bytes from the entry.
+ *
+ * `tools/port/gen_host_assets.py` does not extract those border blobs,
+ * so without an override `gUnk_081092AC[]` resolves through the
+ * 256-byte zero-filled weak BSS placeholder in
+ * `port_unresolved_stubs.c`. Each entry then reads as NULL, and the
+ * file-select save-creation dialog SIGSEGVs at `f≈720` in the
+ * `UnpackTextNibbles(src=NULL, ...)` first iteration (this is exactly
+ * the next crash hit by the 120 s alternating-A/START scripted-input
+ * test after the `sub_0805EEB4` pointer-truncation fix lands).
+ *
+ * Fix
+ * ---
+ * Same precedent as `gUnk_08109248` and `gTranslations` above: provide
+ * a strong override whose entries all alias one shared, zero-filled
+ * "safe border buffer". With every byte zero, `UnpackTextNibbles`
+ * produces 128 zero nibbles per call; the downstream blitters then
+ * either mask the destination nibble to background or skip the write
+ * entirely (transparent path). Net effect: no border pixels are drawn,
+ * but the game survives the call instead of SIGSEGV-ing.
+ *
+ * Sizing
+ * ------
+ * Worst-case access is 3 * 0x40 = 0xC0 bytes per entry; 1 KiB gives
+ * generous headroom and matches the order-of-magnitude of the sibling
+ * zero buffers above. The table itself is sized to 16 entries because
+ * `sub_0805F918`'s `idx` argument is `font.border_type`, a 4-bit
+ * bitfield (`u8 border_type : 4` in `Font` / `include/message.h`),
+ * so it can legally take values 0..15 — six positions past the ROM's
+ * 10 entries. Aliasing all 16 to the same buffer keeps any stray
+ * out-of-range index safe rather than reading whatever lives in
+ * adjacent memory.
+ */
+static uint8_t sPortTextBorderZeroBuffer[0x400] __attribute__((aligned(16)));
+
+void* gUnk_081092AC[16] = {
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+};
+
 #endif /* __PORT__ */

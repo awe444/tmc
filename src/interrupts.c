@@ -158,6 +158,17 @@ void DispCtrlSet(void) {
 // Load any resources that were requested with LoadResourceAsync
 void LoadResources(void) {
     if (gUnk_03003DE0 != 0) {
+#ifdef __PORT__
+        /* Host port: the deferred-resource queue layout uses
+         * `void*` slots so it must be drained by the host writer's
+         * matching reader (which understands the host-pointer-safe
+         * struct layout). The original byte-offset reader below
+         * truncates pointers to 32 bits on 64-bit hosts and SIGSEGVs
+         * the moment any LoadResourceAsync entry is dispatched.
+         * See src/platform/shared/port_load_resource.c. */
+        extern void Port_LoadResources(void);
+        Port_LoadResources();
+#else
         u8* buf = &gUnk_03000C30;
         s32 i = gUnk_03003DE0;
         gUnk_03003DE0 = 0;
@@ -176,6 +187,7 @@ void LoadResources(void) {
             buf += 12;
             i--;
         } while (0 < i);
+#endif
     }
 }
 
