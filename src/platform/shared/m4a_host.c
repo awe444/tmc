@@ -3557,11 +3557,14 @@ int Port_M4ASelfCheck(void) {
         /* (6) Monotonicity sweep across the ply_pan output range
          *     (-64..+63). With fixed velocity and equal vol slots
          *     rightVolume must increase weakly and leftVolume must
-         *     decrease weakly. (The u8 fields can't exceed 0xFF by
-         *     definition, so the clamp is exercised by scenario (5)
-         *     above instead of being re-asserted here.) */
-        u8 prevRight = 0;
-        u8 prevLeft = 0xFF;
+         *     decrease weakly. We also recompute the unclamped s32
+         *     intermediates that ChnVolSetAsm casts to u8 and assert
+         *     them in [0, 0xFF] — this both validates that the cast
+         *     is lossless across the whole pan range (the clamp does
+         *     not engage with these inputs) and that the u8 field
+         *     observed afterwards equals that pre-cast value. */
+        s32 prevRightS32 = 0;
+        s32 prevLeftS32 = 0xFF;
         s32 i;
         for (i = -64; i <= 63; i++) {
             memset(&chan_local, 0, sizeof(chan_local));
@@ -3571,10 +3574,17 @@ int Port_M4ASelfCheck(void) {
             track_local.volMR = 0x80;
             track_local.volML = 0x80;
             ChnVolSetAsm(&chan_local, &track_local);
-            M4A_CHECK(chan_local.rightVolume >= prevRight);
-            M4A_CHECK(chan_local.leftVolume <= prevLeft);
-            prevRight = chan_local.rightVolume;
-            prevLeft = chan_local.leftVolume;
+            /* Mirror ChnVolSetAsm's pre-cast arithmetic. */
+            s32 rightS32 = ((s32)0x40 * (0x80 + i) * (s32)0x80) >> 14;
+            s32 leftS32 = ((s32)0x40 * (0x7F - i) * (s32)0x80) >> 14;
+            M4A_CHECK(rightS32 >= 0 && rightS32 <= 0xFF);
+            M4A_CHECK(leftS32 >= 0 && leftS32 <= 0xFF);
+            M4A_CHECK((s32)chan_local.rightVolume == rightS32);
+            M4A_CHECK((s32)chan_local.leftVolume == leftS32);
+            M4A_CHECK(rightS32 >= prevRightS32);
+            M4A_CHECK(leftS32 <= prevLeftS32);
+            prevRightS32 = rightS32;
+            prevLeftS32 = leftS32;
         }
     }
 

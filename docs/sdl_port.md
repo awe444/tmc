@@ -1451,7 +1451,11 @@ are tracked here for future contributors.
         lands just under the clamp; and a monotonicity sweep
         across the full ply_pan output range (-64..+63) asserts
         rightVolume increases weakly and leftVolume decreases
-        weakly. The `--frames=30` golden hashes for
+        weakly, additionally re-deriving the unclamped s32
+        intermediates that ChnVolSetAsm casts to u8 and verifying
+        they stay in [0, 0xFF] (the saturation clamp does not
+        engage with these inputs) and that the resulting u8
+        fields equal those s32 values bit-for-bit. The `--frames=30` golden hashes for
         both the default `=ON` (`0x8f68687253dc1b25`) and the
         preserved `=OFF` (`0xf9b70c534973f325`) builds remain
         bit-for-bit unchanged because `ChnVolSetAsm` is reached
