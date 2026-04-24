@@ -27,6 +27,10 @@
 #include "gfx.h"
 #include "fade.h"
 
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
+
 // copy, erase, start
 #define NUM_FILE_OPERATIONS 3
 
@@ -370,6 +374,21 @@ void SetActiveSave(u32 idx) {
 
 void FileSelectTask(void) {
     FlushSprites();
+
+#ifdef __PORT__
+    /* Surface inputs the script delivered to file-select this frame. We log
+     * before the sub-handlers run so a press is visible even if the handler
+     * silently drops it (e.g. while gMapDataBottomSpecial.isTransitioning). */
+    if (gInput.newKeys != 0) {
+        PORT_LOG_EVENT("fileselect",
+                       "input newKeys=0x%03x held=0x%03x (state=%u menuType=%u sub=%u cursor=%u)",
+                       (unsigned)gInput.newKeys, (unsigned)gInput.heldKeys,
+                       (unsigned)gUI.lastState, (unsigned)gMenu.menuType,
+                       (unsigned)gChooseFileState.subState,
+                       (unsigned)gMapDataBottomSpecial.unk6);
+    }
+#endif
+
     sTaskHandlers[gMain.state]();
     if (gUI.lastState != gUI.state) {
         gUI.lastState = gUI.state;
@@ -397,6 +416,73 @@ void FileSelectTask(void) {
         sub_080503A8(0x6);
         sub_080503A8(0xF);
     }
+
+#ifdef __PORT__
+    /* Detect any sub-state change that happened during this frame. One spot
+     * here covers all ~25 SetMenuType() / SetFileSelectState() call sites in
+     * fileselect.c without scattering instrumentation through every handler.
+     * The four tracked fields together identify which sub-screen the engine
+     * is on (state), which step of that sub-screen (menuType / subState),
+     * and which save slot the cursor is over. */
+    {
+        static const char* const sStateNames[] = {
+            "STATE_NONE", "STATE_NEW",   "STATE_CHOOSE_LANG", "STATE_OPTIONS",
+            "STATE_VIEW", "STATE_COPY",  "STATE_ERASE",       "STATE_START",
+        };
+        static u8 sPrevState = 0xFF;
+        static u8 sPrevMenuType = 0xFF;
+        static u8 sPrevSubState = 0xFF;
+        static u8 sPrevCursor = 0xFF;
+
+        u8 state = gUI.lastState;
+        u8 menuType = gMenu.menuType;
+        u8 subState = gChooseFileState.subState;
+        u8 cursor = (u8)gMapDataBottomSpecial.unk6;
+        /* `gChooseFileState.state` (offset 0x06) is the dispatcher field
+         * `HandleFileSelect` uses to pick between sub_08050848 / sub_0805086C
+         * / sub_08050940. It is overlaid with `gMenu.overlayType` (same byte)
+         * and is distinct from `gUI.state` and from `subState`. */
+        u8 chooseState = gChooseFileState.state;
+        static u8 sPrevChooseState = 0xFF;
+
+        if (state != sPrevState) {
+            const char* prev_name = (sPrevState < (sizeof(sStateNames) / sizeof(sStateNames[0])))
+                                        ? sStateNames[sPrevState]
+                                        : "?";
+            const char* next_name =
+                (state < (sizeof(sStateNames) / sizeof(sStateNames[0]))) ? sStateNames[state] : "?";
+            PORT_LOG_EVENT("fileselect",
+                           "state %s -> %s (cursor=%u, slots=[%u,%u,%u])", prev_name, next_name,
+                           (unsigned)cursor, (unsigned)gMapDataBottomSpecial.saveStatus[0],
+                           (unsigned)gMapDataBottomSpecial.saveStatus[1],
+                           (unsigned)gMapDataBottomSpecial.saveStatus[2]);
+            sPrevState = state;
+        }
+        if (menuType != sPrevMenuType) {
+            PORT_LOG_EVENT("fileselect", "menuType %u -> %u (state=%u)", (unsigned)sPrevMenuType,
+                           (unsigned)menuType, (unsigned)state);
+            sPrevMenuType = menuType;
+        }
+        if (subState != sPrevSubState) {
+            PORT_LOG_EVENT("fileselect", "subState %u -> %u (state=%u menuType=%u)",
+                           (unsigned)sPrevSubState, (unsigned)subState, (unsigned)state,
+                           (unsigned)menuType);
+            sPrevSubState = subState;
+        }
+        if (cursor != sPrevCursor) {
+            PORT_LOG_EVENT("fileselect", "cursor %u -> %u (state=%u)", (unsigned)sPrevCursor,
+                           (unsigned)cursor, (unsigned)state);
+            sPrevCursor = cursor;
+        }
+        if (chooseState != sPrevChooseState) {
+            PORT_LOG_EVENT("fileselect",
+                           "chooseFileState.state %u -> %u (uiState=%u menuType=%u sub=%u)",
+                           (unsigned)sPrevChooseState, (unsigned)chooseState, (unsigned)state,
+                           (unsigned)menuType, (unsigned)subState);
+            sPrevChooseState = chooseState;
+        }
+    }
+#endif
 }
 
 static void HandleFileScreenEnter(void) {
