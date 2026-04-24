@@ -126,7 +126,7 @@ void Port_LoadResources(void) {
         count = PORT_LOAD_RESOURCE_QUEUE_CAP;
     }
     /* Reset before dispatch so that any LoadResourceAsync calls a
-     * dispatched routine itself queues are honoured next frame
+     * dispatched routine itself makes are honoured next frame
      * (matches the original reader's `gUnk_03003DE0 = 0;` ordering). */
     gUnk_03003DE0 = 0;
 
