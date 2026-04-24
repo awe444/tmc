@@ -1599,6 +1599,33 @@ are tracked here for future contributors.
         of which fire under the title-screen idle the smoke test
         exercises — only the self-check exercises the new code.
 
+        Follow-up addressing PR review feedback: widened the
+        `SoundChannel.prev` / `.next` and `M4A_CgbChannel.track` /
+        `.prev` / `.next` slots from `u32` to `uintptr_t` under
+        `__PORT__` (in `include/gba/m4a.h` and the `M4A_CgbChannel`
+        overlay in `src/platform/shared/m4a_host.c`). On the GBA
+        `uintptr_t == u32` so the layout is unchanged; on the host
+        the widened slots can hold native pointers without
+        truncation, so multi-element chain walks across the entire
+        chan-walker family in this TU (`RealClearChain`,
+        `TrackStop`, `ply_fine`'s walk, `m4a_track_volpit_pass`'s
+        dead-envelope branch, `ply_endtie`, `ply_note_impl`'s
+        head-of-list install) are now safe on a 64-bit host. The
+        `(u32)(uintptr_t)` truncating storing-cast pattern is
+        replaced with a plain `(uintptr_t)` cast at every store,
+        and the matching `(T*)(uintptr_t)x->next` reading-cast
+        loses its no-longer-needed `(uintptr_t)` step. The CGB-
+        track tie-break in `ply_note_impl` is correspondingly
+        simplified to a direct `uintptr_t` comparison. The
+        TrackStop self-check grew two new scenarios that exercise
+        the now-host-safe walker: a 3-element DirectSound chain
+        (head → mid → tail, all detached and statusFlags cleared)
+        and a mixed-shape 2-element chain (CGB head + DirectSound
+        tail, exercising the per-iteration `type & 7` dispatch and
+        confirming `CgbOscOff` fires exactly once for the live CGB
+        chan). Golden hashes for both `=ON` and `=OFF` builds and
+        the scripted-input smoke test stay bit-for-bit unchanged.
+
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two

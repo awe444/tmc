@@ -374,7 +374,7 @@ static void m4a_chan_gate_tick(MusicPlayerTrack* track) {
             /* envelope dead — unlink the channel from the chain. */
             ClearChain(chan);
         }
-        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+        SoundChannel* next = (SoundChannel*)chan->next;
         if (next == chan) {
             chan->next = 0;
             next = NULL;
@@ -881,7 +881,7 @@ void ply_fine(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
          * SoundChannel*). The asm self-loop terminator (`if next ==
          * self, set next = 0`) is preserved so a malformed
          * mixer-allocated chain doesn't trap us in an infinite loop. */
-        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+        SoundChannel* next = (SoundChannel*)chan->next;
         if (next == chan) {
             chan->next = 0;
             next = NULL;
@@ -923,7 +923,7 @@ void ply_endtie(MusicPlayerInfo* mp, MusicPlayerTrack* track) {
             chan->statusFlags = (u8)(status | M4A_CHAN_FLAG_RELEASE);
             return;
         }
-        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+        SoundChannel* next = (SoundChannel*)chan->next;
         if (next == chan) {
             chan->next = 0;
             next = NULL;
@@ -1203,9 +1203,14 @@ typedef struct M4A_CgbChannel {
     u32 frequency;
     u32* nextWave;
     u32* currentWave;
-    u32 track;
-    u32 prev;
-    u32 next;
+    /* Same host-side widening as the public `SoundChannel.prev` /
+     * `.next`: under `__PORT__` these slots round-trip native host
+     * pointers, so widen them to `uintptr_t` to stop the 64-bit host
+     * from truncating them. The asm caller layout (flat 32-bit) only
+     * runs on the GBA, where `uintptr_t == u32`. */
+    uintptr_t track;
+    uintptr_t prev;
+    uintptr_t next;
     u8 unk4[8];
 } M4A_CgbChannel;
 
@@ -1289,14 +1294,16 @@ extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 /* `SoundChannel` (in `include/gba/m4a.h`) widens trailing pointer    */
 /* fields (`wav`, `track`, `currentPointer`) to native 8-byte         */
 /* pointers under `__PORT__`, pushing `track` to host-byte offset 56  */
-/* (= 0x38), `prev` to 64 (= 0x40), `next` to 68 (= 0x44). The        */
-/* GBA-faithful `M4A_CgbChannel` overlay above keeps `track` / `prev` */
-/* / `next` as packed u32 slots; on a 64-bit host with widened       */
-/* preceding `nextWave` / `currentWave` pointers they land at host    */
-/* offsets 56 / 60 / 64 (the `track` host offset coincides with       */
-/* `SoundChannel`, but `prev` / `next` are 4 bytes earlier than       */
-/* `SoundChannel`'s 8-byte-pointer-padded `prev` / `next` because     */
-/* the CGB `track` slot is u32 instead of a native pointer).          */
+/* (= 0x38), and additionally widens `prev` / `next` to `uintptr_t`   */
+/* (PR #7 part 2.3.5 follow-up) so they can hold native host          */
+/* pointers without truncation; the GBA-faithful `M4A_CgbChannel`     */
+/* overlay above similarly widens `track` / `prev` / `next` to        */
+/* `uintptr_t` under `__PORT__`. On the GBA the matching ROM build    */
+/* sees `uintptr_t == u32`, so the layout is unchanged there. The     */
+/* widening is contained: m4a.c only dereferences the unrelated       */
+/* `nextWave` / `currentWave` slots, and no other TU touches these    */
+/* chan structs.                                                      */
+/*                                                                    */
 /* `RealClearChain` is installed as `gMPlayJumpTable[34]` and reached */
 /* via `ClearChain(void*)` from both shapes — `ply_note_impl` calls   */
 /* `ClearChain(chan)` for a freshly-picked DirectSound chan and       */
@@ -1314,9 +1321,7 @@ extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 /* `cgbChans[i].type = i + 1` at boot, so every CGB slot has          */
 /* `type & 7 != 0` whenever `ClearChain(cgb)` is invoked from         */
 /* `ply_note_impl`'s CGB branch. For DirectSound chans `type` is 0,   */
-/* matching the dispatch arm. For CGB the surrounding fixed-up chain  */
-/* pointers (`prev`, `next`, `track->chan`) are also u32 / a          */
-/* `SoundChannel*` field — `track->chan` is typed `SoundChannel*`     */
+/* matching the dispatch arm. `track->chan` is typed `SoundChannel*`  */
 /* in the host `MusicPlayerTrack`, but `ply_note_impl` deliberately   */
 /* writes a `(SoundChannel*)cgb` cast into it, matching the asm's     */
 /* untyped 32-bit slot. We round-trip the same way here.              */
@@ -1326,23 +1331,13 @@ extern void TrkVolPitSet(MusicPlayerInfo* mp, MusicPlayerTrack* track);
 /* `ply_note_impl` upholds that for both shapes, as does this routine */
 /* on detach.                                                         */
 /*                                                                    */
-/* 64-bit-host caveat. For the CGB path (and for the DirectSound      */
-/* `SoundChannel`'s `prev` / `next` fields, which are also u32 in the */
-/* public header to mirror the GBA layout) host pointers stored in    */
-/* the slots get truncated. The asm body — and this faithful host     */
-/* port — dereferences those slots whenever they are non-zero. On a   */
-/* 64-bit host that deref of a truncated host pointer is undefined.   */
-/* The engine never builds a multi-element chain on the production    */
-/* runtime path under the title-screen idle (`ply_note_impl`'s        */
-/* freshly-allocated chan is always the lone head, and the only       */
-/* callers — `ply_fine` and `m4a_track_volpit_pass`'s dead-envelope   */
-/* branch — never fire today). The same 64-bit truncation already     */
-/* affects every other chan-list walker in this TU; this port does    */
-/* not introduce the limitation, only inherits it. The self-check     */
-/* below therefore exercises exclusively the combinations the asm     */
-/* reaches without dereferencing a u32 slot: the early-out            */
-/* (track == NULL), the singleton chain (prev == 0, next == 0), and   */
-/* the idempotent re-call — for both the DirectSound and CGB shapes. */
+/* The PR #7 part 2.3.5 follow-up widening of `prev` / `next` to     */
+/* `uintptr_t` under `__PORT__` made multi-element chain walks host- */
+/* safe across this TU (no truncated u32 pointers are dereferenced). */
+/* The self-check below remains scoped to the early-out, the         */
+/* singleton chain, and idempotent re-call — extending it further    */
+/* belongs in a follow-up that builds out a faithful test harness    */
+/* for the head-of-list re-stitching the asm performs.               */
 /* ------------------------------------------------------------------ */
 void RealClearChain(void* x) {
     /* Byte 1 is `type` in both `SoundChannel` and `M4A_CgbChannel`;
@@ -1350,7 +1345,8 @@ void RealClearChain(void* x) {
     u8 type = ((const u8*)x)[1];
     if ((type & 7) == 0) {
         /* DirectSound: host `SoundChannel` layout. `track` is a
-         * native pointer; `prev` / `next` are u32 slots. */
+         * native pointer; `prev` / `next` are `uintptr_t` slots
+         * (widened from `u32` under `__PORT__`). */
         SoundChannel* chan = (SoundChannel*)x;
         MusicPlayerTrack* track = chan->track;
         if (track == NULL) {
@@ -1358,32 +1354,33 @@ void RealClearChain(void* x) {
              * `cmp r3, #0; beq _080AF70A` early-out. */
             return;
         }
-        SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
-        SoundChannel* prev = (SoundChannel*)(uintptr_t)chan->prev;
+        SoundChannel* next = (SoundChannel*)chan->next;
+        SoundChannel* prev = (SoundChannel*)chan->prev;
         if (prev != NULL) {
-            prev->next = (u32)(uintptr_t)next;
+            prev->next = (uintptr_t)next;
         } else {
             /* `chan` was the head of the per-track chain. */
             track->chan = next;
         }
         if (next != NULL) {
-            next->prev = (u32)(uintptr_t)prev;
+            next->prev = (uintptr_t)prev;
         }
         chan->track = NULL;
     } else {
         /* CGB: GBA-faithful `M4A_CgbChannel` overlay. `track`,
-         * `prev`, `next` are all u32 (asm offsets 0x2C / 0x30 /
-         * 0x34, host offsets 56 / 60 / 64 after the 8-byte
-         * pointer-widened `nextWave` / `currentWave`). */
+         * `prev`, `next` are `uintptr_t` slots under `__PORT__`
+         * (widened from `u32` so they hold native host pointers
+         * without truncation; on the GBA `uintptr_t == u32`,
+         * matching the asm offsets 0x2C / 0x30 / 0x34). */
         M4A_CgbChannel* chan = (M4A_CgbChannel*)x;
-        MusicPlayerTrack* track = (MusicPlayerTrack*)(uintptr_t)chan->track;
+        MusicPlayerTrack* track = (MusicPlayerTrack*)chan->track;
         if (track == NULL) {
             return;
         }
-        M4A_CgbChannel* next = (M4A_CgbChannel*)(uintptr_t)chan->next;
-        M4A_CgbChannel* prev = (M4A_CgbChannel*)(uintptr_t)chan->prev;
+        M4A_CgbChannel* next = (M4A_CgbChannel*)chan->next;
+        M4A_CgbChannel* prev = (M4A_CgbChannel*)chan->prev;
         if (prev != NULL) {
-            prev->next = (u32)(uintptr_t)next;
+            prev->next = (uintptr_t)next;
         } else {
             /* `chan` was the head of the per-track chain.
              * `track->chan` is typed `SoundChannel*` in the host
@@ -1393,7 +1390,7 @@ void RealClearChain(void* x) {
             track->chan = (SoundChannel*)next;
         }
         if (next != NULL) {
-            next->prev = (u32)(uintptr_t)prev;
+            next->prev = (uintptr_t)prev;
         }
         chan->track = 0;
     }
@@ -1445,22 +1442,23 @@ void RealClearChain(void* x) {
 /* Channel-shape dispatch. The chan-walk has the same DirectSound /   */
 /* CGB layout split as `RealClearChain` (PR #7 part 2.3.4): the host  */
 /* `SoundChannel` widens trailing pointer fields under `__PORT__` so  */
-/* `track` lands at host offset 0x38 and `next` at 0x44, while the    */
-/* GBA-faithful `M4A_CgbChannel` overlay keeps `track` at 0x2C and    */
-/* `next` at 0x34 (u32 slots). `ply_note_impl` installs               */
-/* `(SoundChannel*)cgb` into `track->chan` for CGB notes, so a single */
-/* track's chain is built from chans of one shape. Both layouts agree */
-/* on byte 1 (`type`); we read it first and dispatch per iteration so */
-/* the per-chan reads land on the right host offsets either way. The  */
-/* `chan->next == chan` self-loop check is preserved verbatim from    */
-/* the asm; under the host `next` is a u32 slot, so the comparison is */
-/* between `chan->next` and `(u32)(uintptr_t)chan` (matching the      */
-/* asm's flat 32-bit equality). The same 64-bit-host pointer-         */
-/* truncation caveat documented for `RealClearChain` applies to a     */
-/* multi-element chain walk; the engine never builds one on the       */
-/* production runtime path under the title-screen idle, so the        */
-/* self-check below restricts itself to combinations the asm reaches  */
-/* without dereferencing a u32 slot.                                  */
+/* `track` lands at host offset 0x38 and `next` at 0x48 (`prev` /     */
+/* `next` are widened to `uintptr_t` to hold native host pointers     */
+/* without truncation, see `include/gba/m4a.h`); the GBA-faithful     */
+/* `M4A_CgbChannel` overlay similarly widens `track` / `prev` /       */
+/* `next` to `uintptr_t` under `__PORT__`. `ply_note_impl` prepends   */
+/* either chan shape onto the same `track->chan` list (no shape       */
+/* segregation), so a track that retriggers a different voice while   */
+/* prior notes are still active can yield a mixed-shape chain. Both   */
+/* layouts agree on byte 1 (`type`); we read it first and dispatch    */
+/* per iteration so the per-chan reads land on the right host         */
+/* offsets either way, and so a mixed-shape chain walks correctly.    */
+/* The `chan->next == chan` self-loop check is preserved verbatim     */
+/* from the asm; with `next` widened to `uintptr_t` the comparison    */
+/* is now between `chan->next` and `(uintptr_t)chan` exactly (no      */
+/* truncation), which matches the asm's flat 32-bit equality on the   */
+/* GBA where `uintptr_t == u32`. Multi-element chain walks are now    */
+/* host-safe — no truncated u32 pointers are dereferenced.            */
 /* ------------------------------------------------------------------ */
 void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
     (void)mplayInfo;
@@ -1499,34 +1497,35 @@ void TrackStop(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
         }
 
         /* `_080AFBB2`: chan->track = NULL. Both shapes have a
-         * `track` field; type for SoundChannel is a native pointer
-         * (host offset 0x38), for M4A_CgbChannel it's a u32 slot
-         * (host offset 0x2c). */
+         * `track` field; for SoundChannel it's a native pointer
+         * (host offset 0x38), for M4A_CgbChannel it's a `uintptr_t`
+         * slot (widened from `u32` under `__PORT__` so it can hold
+         * a host pointer without truncation). */
         SoundChannel* nextChan;
         if (cgbKind == 0) {
             SoundChannel* dsChan = chan;
             dsChan->track = NULL;
             /* `_080AFBB6..._080AFBBC`: detect self-loop, break it
-             * before the iteration step. The asm compares the u32
-             * register holding `chan->next` against the u32
-             * register holding `chan`; mirror that with truncated
-             * 32-bit equality on the host so we never dereference
-             * a u32 slot that holds a truncated 64-bit pointer. */
-            if (dsChan->next == (u32)(uintptr_t)dsChan) {
+             * before the iteration step. With `next` widened to
+             * `uintptr_t` under `__PORT__` the comparison is a
+             * straight pointer equality on the host (and reduces to
+             * the asm's flat 32-bit `cmp` on the GBA where
+             * `uintptr_t == u32`). */
+            if (dsChan->next == (uintptr_t)dsChan) {
                 dsChan->next = 0;
                 nextChan = NULL;
             } else {
-                nextChan = (SoundChannel*)(uintptr_t)dsChan->next;
+                nextChan = (SoundChannel*)dsChan->next;
             }
         } else {
             M4A_CgbChannel* cgbChan = (M4A_CgbChannel*)chan;
             cgbChan->track = 0;
             M4A_CgbChannel* nxt;
-            if (cgbChan->next == (u32)(uintptr_t)cgbChan) {
+            if (cgbChan->next == (uintptr_t)cgbChan) {
                 cgbChan->next = 0;
                 nxt = NULL;
             } else {
-                nxt = (M4A_CgbChannel*)(uintptr_t)cgbChan->next;
+                nxt = (M4A_CgbChannel*)cgbChan->next;
             }
             /* The walk uses the host `SoundChannel*` typing for the
              * loop variable to share the dispatch code; the cast is
@@ -1710,7 +1709,7 @@ static void m4a_track_volpit_pass(MusicPlayerInfo* mp) {
              * asm). The asm's self-loop guard (`if next == chan,
              * set chan->next = 0`) breaks the cycle the engine
              * occasionally sets up to mark the tail. */
-            SoundChannel* next = (SoundChannel*)(uintptr_t)chan->next;
+            SoundChannel* next = (SoundChannel*)chan->next;
             if (next == chan) {
                 chan->next = 0;
                 next = NULL;
@@ -1848,13 +1847,12 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
         } else if (slot->priority < notePriority) {
             chosenCGB = slot; /* lower priority → evict */
         } else if (slot->priority == notePriority) {
-            /* Tie-break by track ptr using the same 32-bit form on
-             * both sides (slot->track is stored as a 32-bit value
-             * in the host overlay to mirror the GBA ABI), so the
-             * comparison is meaningful on 64-bit hosts where a
-             * raw `(uintptr_t)track` would dwarf any value held
-             * in `slot->track`. */
-            if ((uintptr_t)(u32)slot->track >= (uintptr_t)(u32)(uintptr_t)track) {
+            /* Tie-break by track ptr. Both sides are `uintptr_t` here:
+             * `slot->track` is widened to `uintptr_t` under `__PORT__`
+             * (see `M4A_CgbChannel`), and `track` is a host pointer
+             * cast directly. The comparison is meaningful on 64-bit
+             * hosts without any truncation games. */
+            if (slot->track >= (uintptr_t)track) {
                 chosenCGB = slot;
             } else {
                 return;
@@ -1956,9 +1954,9 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
 
         ClearChain(chan);
         chan->prev = 0;
-        chan->next = (u32)(uintptr_t)track->chan;
+        chan->next = (uintptr_t)track->chan;
         if (track->chan != NULL) {
-            track->chan->prev = (u32)(uintptr_t)chan;
+            track->chan->prev = (uintptr_t)chan;
         }
         track->chan = chan;
         chan->track = track;
@@ -1995,20 +1993,20 @@ void ply_note_impl(MusicPlayerInfo* mp, MusicPlayerTrack* track, u32 gateIdx) {
          * and walks bytes; on the host it's a no-op stub. */
         ClearChain(cgb);
         cgb->prev = 0;
-        cgb->next = (u32)(uintptr_t)track->chan;
+        cgb->next = (uintptr_t)track->chan;
         if (track->chan != NULL) {
             /* Old head's prev field. The host SoundChannel.prev is
              * a u32 at SoundChannel offset 0x40 (after pointer-
              * widened wav/currentPointer/track). track->chan is a
              * SoundChannel*, so we use named-field access. */
-            track->chan->prev = (u32)(uintptr_t)cgb;
+            track->chan->prev = (uintptr_t)cgb;
         }
         /* track->chan is typed SoundChannel*. The CgbChannel install
          * stores the cgb-typed pointer here; downstream walks treat
          * the head as opaque bytes anyway (see m4a_chan_gate_tick),
          * so the type punning is faithful to the asm. */
         track->chan = (SoundChannel*)cgb;
-        cgb->track = (u32)(uintptr_t)track;
+        cgb->track = (uintptr_t)track;
 
         cgb->gateTime = track->gateTime;
         /* See the matching DirectSound path: the asm's 4-byte
@@ -3141,8 +3139,8 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(track_local.chan == &si->chans[0]);
         /* chan->next stores oldHead address, truncated to u32 — which
          * is faithful to the m4a SoundChannel layout. */
-        M4A_CHECK(si->chans[0].next == (u32)(uintptr_t)&oldHead);
-        M4A_CHECK(oldHead.prev == (u32)(uintptr_t)&si->chans[0]);
+        M4A_CHECK(si->chans[0].next == (uintptr_t)&oldHead);
+        M4A_CHECK(oldHead.prev == (uintptr_t)&si->chans[0]);
         M4A_CHECK(si->chans[0].prev == 0); /* new head has no predecessor */
     }
 
@@ -3222,7 +3220,7 @@ int Port_M4ASelfCheck(void) {
         M4A_CHECK(cgb[1].length == 0x20);
         /* pan_sweep 0x44: not & 0x80, but & 0x70 → n4 = 8. */
         M4A_CHECK(cgb[1].sweep == 8);
-        M4A_CHECK(cgb[1].track == (u32)(uintptr_t)&track_local);
+        M4A_CHECK(cgb[1].track == (uintptr_t)&track_local);
         /* MidiKeyToCgbFreq was NULL → frequency stays 0. */
         M4A_CHECK(cgb[1].frequency == 0);
     }
@@ -3535,13 +3533,13 @@ int Port_M4ASelfCheck(void) {
     }
 
     /* Single-chan walk with NULL terminator: the walk processes
-     * the chan and exits cleanly on chan->next == 0. (A true
-     * 2-chan chain isn't testable on a 64-bit host because
-     * SoundChannel.next is a u32 and stack addresses don't fit;
-     * the engine's real chan arena exercises the multi-chan path
-     * at runtime, where addresses do fit u32. The self-loop
-     * break in the walker is preserved for asm parity but is
-     * similarly untestable here.) */
+     * the chan and exits cleanly on chan->next == 0. Multi-chan
+     * chains are now safely testable on a 64-bit host because
+     * `SoundChannel.next` is widened to `uintptr_t` under
+     * `__PORT__` (see `include/gba/m4a.h`); extending coverage
+     * here belongs in a follow-up that builds out the surrounding
+     * fixture. The self-loop break in the walker is preserved for
+     * asm parity. */
     {
         MusicPlayerInfo mp_local;
         MusicPlayerTrack track_local;
@@ -3899,15 +3897,14 @@ int Port_M4ASelfCheck(void) {
     /*                                                              */
     /* Six scenarios — three each for the DirectSound and CGB chan  */
     /* shapes that `ClearChain()` (jump-table slot 34) is called    */
-    /* with from `ply_note_impl` — restricted to the combinations   */
-    /* the asm reaches without dereferencing `chan->prev` /         */
-    /* `chan->next`. Those slots are u32-typed (faithful to the     */
-    /* GBA's 32-bit pointer layout) and truncate any host pointer   */
-    /* stored in them, so following them is undefined on a 64-bit   */
-    /* host. The production runtime path never builds a multi-      */
-    /* element chain that would force the deref (see the function   */
-    /* comment above), so this coverage matches the cases the       */
-    /* runtime can actually hit.                                    */
+    /* with from `ply_note_impl`. The PR #7 part 2.3.5 follow-up    */
+    /* widened `prev` / `next` to `uintptr_t` under `__PORT__` so   */
+    /* multi-element chain walks are now host-safe; this section    */
+    /* stays scoped to the early-out, the singleton chain, and      */
+    /* idempotent re-call cases the asm actually reaches via        */
+    /* `ply_note_impl`'s freshly-allocated chan and detach paths.   */
+    /* Extending coverage to head-of-list re-stitching belongs in   */
+    /* a follow-up.                                                 */
     /*                                                              */
     /* For each shape:                                              */
     /*   (1) chan->track == NULL early-out (with the right `type`  */
@@ -3981,7 +3978,7 @@ int Port_M4ASelfCheck(void) {
      *
      * Coverage is limited to the early-out and idempotency cases:
      * the singleton-chain test from the DS section can't be mirrored
-     * here because storing `(u32)(uintptr_t)&track_local` truncates
+     * here because storing `(uintptr_t)&track_local` truncates
      * the host stack pointer, and the asm's
      * `track->chan = chan->next` then dereferences that truncated
      * pointer. The singleton case is documented but unreachable
@@ -4030,15 +4027,21 @@ int Port_M4ASelfCheck(void) {
     /* ----------------------------------------------------------- */
     /* PR #7 part 2.3.5: TrackStop.                                 */
     /*                                                              */
-    /* Six scenarios. The first four cover the chan-walk / detach  */
-    /* logic the asm spells out, restricted (like RealClearChain)  */
-    /* to combinations that don't dereference a u32 `chan->next`   */
-    /* slot (the host truncates host pointers stored there). The   */
-    /* fifth exercises the `chan->next == chan` self-loop break.   */
-    /* The sixth exercises the CGB path's `CgbOscOff` invocation,  */
-    /* with the soundInfo overlay's `CgbOscOff` slot wired through */
-    /* a counter so the test can assert it fired exactly once with */
-    /* the correct `type & 7` argument.                            */
+    /* Eight scenarios. The first four cover the chan-walk /        */
+    /* detach logic the asm spells out for singleton chains. The    */
+    /* fifth exercises the `chan->next == chan` self-loop break.    */
+    /* The sixth exercises the CGB path's `CgbOscOff` invocation,   */
+    /* with the soundInfo overlay's `CgbOscOff` slot wired through  */
+    /* a counter so the test can assert it fired exactly once with  */
+    /* the correct `type & 7` argument. The seventh walks a real    */
+    /* multi-element DirectSound chain — possible to validate now   */
+    /* that `prev` / `next` are widened to `uintptr_t` under        */
+    /* `__PORT__` (no truncation, no UB on a 64-bit host). The      */
+    /* eighth walks a mixed-shape chain (DirectSound + CGB head     */
+    /* installed via the same `track->chan` slot), exercising the   */
+    /* per-iteration `type & 7` dispatch — `ply_note_impl` builds   */
+    /* such chains in production whenever a track retriggers a      */
+    /* different voice while prior notes are still active.          */
     /*                                                              */
     /* The CgbOscOff slot is restored to NULL after each scenario   */
     /* that mutates it so the surrounding self-check sections (and  */
@@ -4132,7 +4135,7 @@ int Port_M4ASelfCheck(void) {
 
     {
         /* (5) Self-loop break (DirectSound). chan->next stores
-         *     `(u32)(uintptr_t)&chan` — the asm's flat 32-bit
+         *     `(uintptr_t)&chan` — the asm's flat 32-bit
          *     equality matches when comparing `chan->next` (u32)
          *     against `chan` truncated the same way. After
          *     TrackStop, chan->next must be 0 (asm clears it so
@@ -4153,7 +4156,7 @@ int Port_M4ASelfCheck(void) {
          * vs the 32-bit register holding `chan`; on the GBA both
          * are full pointers. On the host we mirror that by
          * truncating the host pointer the same way the asm would. */
-        chan.next = (u32)(uintptr_t)&chan;
+        chan.next = (uintptr_t)&chan;
         TrackStop(&mp_local, &t);
         M4A_CHECK(chan.next == 0);
         M4A_CHECK(chan.statusFlags == 0);
@@ -4186,7 +4189,7 @@ int Port_M4ASelfCheck(void) {
         t.chan = (SoundChannel*)&cgb; /* ply_note_impl-style cast */
         cgb.type = 2;                 /* CGB square 2 → kind = 2 */
         cgb.statusFlags = 0x83;
-        cgb.track = (u32)(uintptr_t)&t;
+        cgb.track = (uintptr_t)&t;
         cgb.next = 0;
         TrackStop(&mp_local, &t);
         M4A_CHECK(s_port_m4a_oscoff_count == 1);
@@ -4197,6 +4200,103 @@ int Port_M4ASelfCheck(void) {
 
         /* Restore the slot so following sections / production code
          * see a NULL slot again. */
+        si->CgbOscOff = NULL;
+        s_port_m4a_oscoff_count = 0;
+        s_port_m4a_oscoff_last_arg = 0;
+    }
+
+    {
+        /* (7) Multi-element DirectSound chain (head → mid → tail).
+         *     Now that `prev` / `next` are widened to `uintptr_t`
+         *     under `__PORT__`, the walker can safely traverse
+         *     chains of arbitrary length without dereferencing
+         *     truncated u32 pointers. Each chan's `statusFlags` is
+         *     non-zero so the asm's status-clear branch fires for
+         *     every element; `chan->track` and `chan->statusFlags`
+         *     must be cleared on every node, the chain detached
+         *     from the track, and the loop must terminate naturally
+         *     on `next == NULL` (no self-loop, no infinite walk). */
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        SoundChannel head, mid, tail;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&head, 0, sizeof(head));
+        memset(&mid, 0, sizeof(mid));
+        memset(&tail, 0, sizeof(tail));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = &head;
+        head.type = 0;
+        head.statusFlags = 0x83;
+        head.track = &t;
+        head.prev = 0;
+        head.next = (uintptr_t)&mid;
+        mid.type = 0;
+        mid.statusFlags = 0x83;
+        mid.track = &t;
+        mid.prev = (uintptr_t)&head;
+        mid.next = (uintptr_t)&tail;
+        tail.type = 0;
+        tail.statusFlags = 0x83;
+        tail.track = &t;
+        tail.prev = (uintptr_t)&mid;
+        tail.next = 0;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(head.statusFlags == 0);
+        M4A_CHECK(head.track == NULL);
+        M4A_CHECK(mid.statusFlags == 0);
+        M4A_CHECK(mid.track == NULL);
+        M4A_CHECK(tail.statusFlags == 0);
+        M4A_CHECK(tail.track == NULL);
+        M4A_CHECK(t.chan == NULL);
+    }
+
+    {
+        /* (8) Mixed-shape chain. `ply_note_impl` prepends both
+         *     DirectSound and CGB chans onto the same `track->chan`
+         *     slot, so a track retriggering a different voice while
+         *     prior notes are still active can produce a chain
+         *     where the head and tail differ in shape. The per-
+         *     iteration `type & 7` dispatch must walk both
+         *     correctly, and the CgbOscOff stand-in must fire
+         *     exactly once (only for the live CGB chan). */
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        memset(si, 0, sizeof(*si));
+        s_port_m4a_oscoff_count = 0;
+        s_port_m4a_oscoff_last_arg = 0xFF;
+        si->CgbOscOff = port_m4a_sc_oscoff;
+
+        MusicPlayerInfo mp_local;
+        MusicPlayerTrack t;
+        M4A_CgbChannel cgb_head;
+        SoundChannel ds_tail;
+        memset(&mp_local, 0, sizeof(mp_local));
+        memset(&t, 0, sizeof(t));
+        memset(&cgb_head, 0, sizeof(cgb_head));
+        memset(&ds_tail, 0, sizeof(ds_tail));
+        t.flags = MPT_FLG_EXIST;
+        t.chan = (SoundChannel*)&cgb_head; /* ply_note_impl-style cast */
+        cgb_head.type = 4;                 /* CGB wave → kind = 4 */
+        cgb_head.statusFlags = 0x83;
+        cgb_head.track = (uintptr_t)&t;
+        cgb_head.prev = 0;
+        cgb_head.next = (uintptr_t)&ds_tail;
+        ds_tail.type = 0; /* DirectSound */
+        ds_tail.statusFlags = 0x83;
+        ds_tail.track = &t;
+        ds_tail.prev = (uintptr_t)&cgb_head;
+        ds_tail.next = 0;
+        TrackStop(&mp_local, &t);
+        M4A_CHECK(cgb_head.statusFlags == 0);
+        M4A_CHECK(cgb_head.track == 0);
+        M4A_CHECK(ds_tail.statusFlags == 0);
+        M4A_CHECK(ds_tail.track == NULL);
+        M4A_CHECK(t.chan == NULL);
+        /* Exactly one CgbOscOff invocation (the CGB head; the DS
+         * tail's `type & 7 == 0` skips the call). */
+        M4A_CHECK(s_port_m4a_oscoff_count == 1);
+        M4A_CHECK(s_port_m4a_oscoff_last_arg == 4);
+
         si->CgbOscOff = NULL;
         s_port_m4a_oscoff_count = 0;
         s_port_m4a_oscoff_last_arg = 0;

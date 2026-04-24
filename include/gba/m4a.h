@@ -79,8 +79,25 @@ typedef struct SoundChannel {
     WaveData* wav;
     u32 currentPointer;
     MusicPlayerTrack* track;
+#ifdef __PORT__
+    /* Widen the doubly-linked-list pointers under the host port so they
+     * can faithfully hold native (8-byte) pointers without truncation.
+     * The asm chan walkers in `asm/lib/m4a_asm.s` (RealClearChain,
+     * TrackStop, ply_fine's chan walk, the m4a MPlayMain second-loop
+     * dead-envelope branch) round-trip these slots through host
+     * pointers via the C ports in `src/platform/shared/m4a_host.c`;
+     * keeping them at u32 truncates host pointers and makes any
+     * multi-element chain walk undefined on a 64-bit host. The matching
+     * ROM build is unaffected (uintptr_t == u32 there). The struct is
+     * not exported to anything outside the m4a TUs (m4a.c only
+     * dereferences the unrelated `nextWave` / `currentWave` slots), so
+     * the byte-layout bump is contained. */
+    uintptr_t prev;
+    uintptr_t next;
+#else
     u32 prev;
     u32 next;
+#endif
     u32 unk3;
     u16 xpi;
     u16 xpc;
