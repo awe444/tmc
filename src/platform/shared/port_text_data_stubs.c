@@ -148,14 +148,12 @@ u32* gUnk_08109248[9] = {
 static uint8_t sPortTranslationZeroBuffer[0x1000] __attribute__((aligned(16)));
 
 u32* gTranslations[16] = {
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
-    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer, (u32*)sPortTranslationZeroBuffer,
+    (u32*)sPortTranslationZeroBuffer,
 };
 
 /* ------------------------------------------------------------------
@@ -206,14 +204,12 @@ u32* gTranslations[16] = {
 static uint8_t sPortTextBorderZeroBuffer[0x400] __attribute__((aligned(16)));
 
 void* gUnk_081092AC[16] = {
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
-    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer, (void*)sPortTextBorderZeroBuffer,
+    (void*)sPortTextBorderZeroBuffer,
 };
 
 #endif /* __PORT__ */
