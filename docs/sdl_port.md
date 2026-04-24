@@ -1456,9 +1456,10 @@ are tracked here for future contributors.
         preserved `=OFF` (`0xf9b70c534973f325`) builds remain
         bit-for-bit unchanged because `ChnVolSetAsm` is reached
         only from `MPlayMain`'s second per-track loop and
-        `ply_note_impl`, and on the title-screen idle the smoke
-        test exercises no song has been requested so neither path
-        runs live — only the self-check exercises the new code.
+        `ply_note_impl`, and on the title-screen idle that the
+        smoke test exercises no song has been requested, so
+        neither path runs live — only the self-check exercises
+        the new code.
 
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
