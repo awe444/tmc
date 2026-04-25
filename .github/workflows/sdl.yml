@@ -105,6 +105,8 @@ jobs:
               "$@"
               echo "[$label] tmc_sdl exited cleanly"
           }
+          save_dir="$(mktemp -d build/ci-save.XXXXXX)"
+          trap 'rm -rf "$save_dir"' EXIT
 
           # Inline `--press=` form. Real progression presses, in order:
           #   START@350, START@500    -- past the title screen
@@ -116,7 +118,7 @@ jobs:
           # those frames (logos / fade) and are included only to keep
           # the multi-entry parser exercised end-to-end.
           run_until_title_passed inline \
-              ./build/tmc_sdl --frames=1100 --mute --save-dir=. \
+              ./build/tmc_sdl --frames=1100 --mute --save-dir="$save_dir" \
                   --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5'
 
           # File-based `--input-script=` form, via a transient script.
@@ -136,6 +138,9 @@ jobs:
           START@840+5
           A@900+5
           EOF
+          # Keep the second run on the same deterministic "all slots empty"
+          # path as CI's first run.
+          rm -f "$save_dir/tmc.sav"
           run_until_title_passed file \
-              ./build/tmc_sdl --frames=1100 --mute --save-dir=. \
+              ./build/tmc_sdl --frames=1100 --mute --save-dir="$save_dir" \
                   --input-script="$script"

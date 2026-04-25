@@ -111,14 +111,8 @@ PORT_ASM_STUB(sub_0800419C)
 PORT_ASM_STUB(EntityInRectRadius)
 PORT_ASM_STUB(sub_080041DC)
 PORT_ASM_STUB(sub_080041E8)
-PORT_ASM_STUB(CalcDistance)
 PORT_ASM_STUB(sub_08004202)
 PORT_ASM_STUB(sub_08004212)
-PORT_ASM_STUB(InitializeAnimation)
-PORT_ASM_STUB(GetNextFrame)
-PORT_ASM_STUB(UpdateAnimationVariableFrames)
-PORT_ASM_STUB(InitAnimationForceUpdate)
-PORT_ASM_STUB(UpdateAnimationSingleFrame)
 PORT_ASM_STUB(sub_080042BA)
 PORT_ASM_STUB(sub_080042D0)
 PORT_ASM_STUB(CreateDrownFx)
@@ -142,7 +136,6 @@ PORT_ASM_STUB(sub_08004596)
 PORT_ASM_STUB(sub_080045B4)
 PORT_ASM_STUB(GetFacingDirection)
 PORT_ASM_STUB(CalculateDirectionTo)
-PORT_ASM_STUB(CalculateDirectionFromOffsets)
 
 /* ---- asm/src/code_08007CAC.s (3 symbols) ---- */
 PORT_ASM_STUB(sub_08007DCE)
@@ -214,8 +207,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     BounceUpdate,
     CalcCollisionDirectionOLD,
     CalcCollisionStaticEntity,
-    CalcDistance,
-    CalculateDirectionFromOffsets,
     CalculateDirectionTo,
     CheckBits,
     CheckEntityPickup,
@@ -244,7 +235,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     GenericKnockback2,
     GetFacingDirection,
     GetFuserId,
-    GetNextFrame,
     GetNextFunction,
     GetNextScriptCommandHalfword,
     GetNextScriptCommandHalfwordAfterCommandMetadata,
@@ -254,8 +244,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     GetRandomByWeight,
     GetTileHazardType,
     GravityUpdate,
-    InitAnimationForceUpdate,
-    InitializeAnimation,
     LinearMoveDirectionOLD,
     PlayerCheckNEastTile,
     ProjectileUpdate,
@@ -266,8 +254,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     SoundReqClipped,
     SumDropProbabilities,
     SumDropProbabilities2,
-    UpdateAnimationSingleFrame,
-    UpdateAnimationVariableFrames,
     UpdateCollisionLayer,
     UpdateIcePlayerVelocity,
     sub_08000E44,

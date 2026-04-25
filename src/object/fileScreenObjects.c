@@ -14,6 +14,9 @@
 #include "physics.h"
 #include "player.h"
 #include "gfx.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 
 typedef struct {
     /*0x00*/ Entity base;
@@ -459,7 +462,11 @@ void FileScreenObjects_Type10(FileScreenObjectsEntity* this) {
     };
     s32 var0, var1, var2;
 
+#ifdef __PORT__
+    var0 = ((SaveHeader*)Port_TranslateHwAddr(0x02000000u))->language != 0;
+#else
     var0 = ((SaveHeader*)0x2000000)->language != 0;
+#endif
     var1 = super->type - 10;
     super->frameIndex = gUnk_08121D38[var0][var1];
     super->x.HALF.HI = gUnk_08121D18[var0][var1];
@@ -509,10 +516,15 @@ void FileScreenObjects_Type21(FileScreenObjectsEntity* this) {
         super->spriteSettings.draw = 0;
     } else {
         super->spriteSettings.draw = 2;
+#ifdef __PORT__
+        SaveHeader* saveHeader = (SaveHeader*)Port_TranslateHwAddr(0x02000000u);
+#else
+        SaveHeader* saveHeader = (SaveHeader*)0x2000000;
+#endif
         if (super->type == 21) {
-            var0 = ((SaveHeader*)0x2000000)->msg_speed;
+            var0 = saveHeader->msg_speed;
         } else {
-            var0 = ((SaveHeader*)0x2000000)->brightness;
+            var0 = saveHeader->brightness;
         }
         super->frameIndex = super->lastFrameIndex + var0;
     }
