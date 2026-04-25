@@ -147,6 +147,12 @@ void sub_0804AF90(void) {
 
 void sub_0804AFB0(void** properties) {
     u32 i;
+#ifdef __PORT__
+    static void* sPortNullRoomProperties[8];
+    if (properties == NULL) {
+        properties = sPortNullRoomProperties;
+    }
+#endif
 
     gCurrentRoomProperties = properties;
     for (i = 0; i < 8; ++i) {

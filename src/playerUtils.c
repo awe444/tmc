@@ -3820,6 +3820,12 @@ void LoadRoomTileSet(void) {
     MemFill16(0xffff, gMapTop.tileTypes, 0x1000);
     gMapTop.tileTypes[0] = 0;
 
+#ifdef __PORT__
+    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->tileSet == NULL || gArea.pCurrentRoomInfo->tiles == NULL) {
+        return;
+    }
+#endif
+
     if ((void*)gRoomControls.tileSet != gArea.pCurrentRoomInfo->tileSet) {
         gRoomControls.tileSet = (u32)gArea.pCurrentRoomInfo->tileSet;
         LoadMapData(gArea.pCurrentRoomInfo->tileSet);
@@ -3869,6 +3875,11 @@ void LoadRoomGfx(void) {
     MemClear(gMapTop.collisionData, sizeof(gMapTop.collisionData));
     MemClear(&gMapDataBottomSpecial, 0x8000);
     MemClear(&gMapDataTopSpecial, 0x8000);
+#ifdef __PORT__
+    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->map == NULL) {
+        return;
+    }
+#endif
     LoadMapData((gArea.pCurrentRoomInfo)->map);
     if (gMapBottom.mapData[0] != 0xffff) {
         sub_0807C8B0(gMapBottom.mapData, roomControls->width / 16, roomControls->height / 16);

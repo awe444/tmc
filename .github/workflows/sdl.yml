@@ -91,10 +91,12 @@ jobs:
       # now run cleanly through frame 1100. Keep `set -euo pipefail`
       # so any future regression on this path fails the step.
       #
-      # The frame budget (1100) deliberately runs past f=900 so that any
-      # regression in the save-creation flow is observed on this CI step
-      # rather than being silently truncated by an earlier --frames cap.
-      - name: Scripted-input smoke test (headless, drives "type A" on the file-name keyboard)
+      # The frame budget (7200) deliberately runs for roughly 2 minutes of
+      # emulated time at ~59.7 fps and runs past f=900 so that regressions
+      # in both save creation and post-create transition into TASK_GAME are
+      # observed on this CI step rather than being silently truncated by an
+      # earlier --frames cap.
+      - name: Scripted-input smoke test (headless, creates file and enters gameplay)
         env:
           SDL_VIDEODRIVER: dummy
           SDL_AUDIODRIVER: dummy
@@ -114,12 +116,17 @@ jobs:
           #   A@780                   -- type 'A' at the default cursor
           #   START@840               -- jump cursor to END
           #   A@900                   -- confirm the name → save-creation
+          #   A@980                   -- select slot 0 after file creation
+          #   START@1040              -- advance to STATE_START
+          #   A@1100, START@1160...   -- continue in-game input pulses so
+          #                              the remaining ~2 minute budget
+          #                              exercises TASK_GAME runtime too
           # The earlier `START@60+5` and `A@380+5` entries are no-ops at
           # those frames (logos / fade) and are included only to keep
           # the multi-entry parser exercised end-to-end.
           run_until_title_passed inline \
-              ./build/tmc_sdl --frames=1100 --mute --save-dir="$save_dir" \
-                  --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5'
+              ./build/tmc_sdl --frames=7200 --mute --save-dir="$save_dir" \
+                  --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5,A@980+5,START@1040+5,A@1100+5,START@1160+5,A@1220+5,START@1280+5'
 
           # File-based `--input-script=` form, via a transient script.
           script=$(mktemp build/scripted-input.XXXXXX.txt)
@@ -137,10 +144,16 @@ jobs:
           A@780+5
           START@840+5
           A@900+5
+          A@980+5
+          START@1040+5
+          A@1100+5
+          START@1160+5
+          A@1220+5
+          START@1280+5
           EOF
           # Keep the second run on the same deterministic "all slots empty"
           # path as CI's first run.
           rm -f "$save_dir/tmc.sav"
           run_until_title_passed file \
-              ./build/tmc_sdl --frames=1100 --mute --save-dir="$save_dir" \
+              ./build/tmc_sdl --frames=7200 --mute --save-dir="$save_dir" \
                   --input-script="$script"
