@@ -615,6 +615,103 @@ def load_assets_json_blob(
     return None
 
 
+@dataclass
+class FixedGfx:
+    """One entry in `gFixedTypeGfxData[]`.
+
+    Mirrors the GAS macro in `asm/macros/gfx.inc`:
+
+        .macro fixed_gfx src:req, size=0, compressed=0
+            .4byte \\src + \\compressed + (\\size/0x200 << 24)
+        .endm
+
+    `src` is an `offset_<sym>` expression resolved against the offsets
+    table built from `gfx.json`. `compressed` is a raw integer that gets
+    added directly to the source offset (so its bit 0 marks compression
+    in the loader's `paletteIndex & 1` check). `size` is the byte count;
+    the loader recovers the slot count via
+    `((data & 0x7f000000) >> 0x18)` -- i.e. `size/0x200`.
+    """
+
+    src_symbol: str
+    size: int
+    compressed: int
+
+
+_FIXED_GFX_RE = re.compile(r"^\s*fixed_gfx\b(.*)$")
+
+
+def parse_fixed_type_gfx(path: Path, defines: Set[str]) -> List[FixedGfx]:
+    """Parse `data/gfx/fixed_type_gfx.s` honouring `.ifdef`/`.else`
+    branches for the active variant. Returns the ordered list of entries
+    (one per `fixed_gfx` macro invocation actually selected for this
+    variant).
+    """
+    cond_stack: List[Tuple[bool, bool]] = []  # (cond_value, in_else_branch)
+
+    def is_active() -> bool:
+        for value, in_else in cond_stack:
+            taken = (not value) if in_else else value
+            if not taken:
+                return False
+        return True
+
+    out: List[FixedGfx] = []
+    with path.open() as f:
+        for raw_line in f:
+            line = raw_line.split("@", 1)[0].rstrip()
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith(".ifdef "):
+                sym = stripped.split(None, 1)[1].strip()
+                cond_stack.append((sym in defines, False))
+                continue
+            if stripped.startswith(".ifndef "):
+                sym = stripped.split(None, 1)[1].strip()
+                cond_stack.append((sym not in defines, False))
+                continue
+            if stripped == ".else":
+                if not cond_stack:
+                    raise SystemExit(f"{path}: stray .else")
+                value, _ = cond_stack[-1]
+                cond_stack[-1] = (value, True)
+                continue
+            if stripped == ".endif":
+                if not cond_stack:
+                    raise SystemExit(f"{path}: stray .endif")
+                cond_stack.pop()
+                continue
+            if not is_active():
+                continue
+            m = _FIXED_GFX_RE.match(stripped)
+            if not m:
+                continue
+            args = parse_gfx_args(m.group(1))
+            if "src" not in args:
+                raise SystemExit(f"{path}: fixed_gfx missing src: {stripped!r}")
+            out.append(
+                FixedGfx(
+                    src_symbol=args["src"],
+                    size=parse_int(args.get("size", "0")),
+                    compressed=parse_int(args.get("compressed", "0")),
+                )
+            )
+    if cond_stack:
+        raise SystemExit(f"{path}: unterminated conditional")
+    return out
+
+
+def encode_fixed_gfx(item: FixedGfx, offsets: Dict[str, int]) -> int:
+    """Pack one `fixed_gfx` entry into its 32-bit `gFixedTypeGfxData`
+    slot per the GAS macro.
+    """
+    src = offsets.get(item.src_symbol, 0)
+    size_field = (item.size // 0x200) & 0x7F
+    word = (src + item.compressed + (size_field << 24)) & 0xFFFFFFFF
+    return word
+
+
 def write_assets_source(
     out_path: Path,
     blob: bytes,
@@ -622,6 +719,7 @@ def write_assets_source(
     parsed: ParsedAsmFile,
     offsets: Dict[str, int],
     frame_obj_lists: Optional[bytes] = None,
+    fixed_type_gfx: Optional[List[FixedGfx]] = None,
 ) -> None:
     """Emit `port_rom_assets.c`.
 
@@ -746,6 +844,30 @@ def write_assets_source(
             row = ", ".join(f"0x{b:02x}" for b in frame_obj_lists[i : i + chunk])
             comma = "," if i + chunk < n else ""
             lines.append(f"    {row}{comma}")
+        lines.append("};")
+        lines.append("")
+
+    # ---- gFixedTypeGfxData ----------------------------------------------
+    # Sprite-tile descriptor table consumed by `vram.c::LoadFixedGFX`
+    # (and indirectly by `objectUtils.c::LoadObjectSprite` for any
+    # object whose `gObjectDefinitions[id].bitfield.gfx_type == 0`).
+    # Each 32-bit entry packs the source byte offset into
+    # `gGlobalGfxAndPalettes`, a `compressed` flag (bit 0 of the
+    # offset), and the slot count derived from the asset size; the
+    # encoding is fixed by the GAS macro in `asm/macros/gfx.inc`.
+    # The `port_unresolved_stubs.c` placeholder is a 256-byte zero
+    # buffer, so the title-screen Zelda logo (gfx indices 511-514)
+    # would otherwise read garbage and load wrong tiles into VRAM.
+    if fixed_type_gfx is not None:
+        n = len(fixed_type_gfx)
+        lines.append(f"/* gFixedTypeGfxData: {n} u32 entries from data/gfx/fixed_type_gfx.s. */")
+        lines.append(f"const uint32_t gFixedTypeGfxData[{n}] = {{")
+        for i, item in enumerate(fixed_type_gfx):
+            word = encode_fixed_gfx(item, offsets)
+            lines.append(
+                f"    /* [{i:3d}] */ 0x{word:08x}u, /* src={item.src_symbol}"
+                f" size=0x{item.size:x} compressed={item.compressed} */"
+            )
         lines.append("};")
         lines.append("")
 
@@ -924,6 +1046,16 @@ def cmd_gen(args: argparse.Namespace) -> None:
             )
         frame_obj_lists_bytes = bytes(baserom[fol_off : fol_off + fol_size])
 
+    # 6. parse `data/gfx/fixed_type_gfx.s` so the strong host
+    # definition of `gFixedTypeGfxData[]` overrides the 256-byte zero
+    # placeholder in `port_unresolved_stubs.c`. Without this the
+    # title-screen Zelda logo (gfx indices 511-514, plus every other
+    # `gfx_type=0` sprite) would resolve to source offset 0, slot
+    # count 0, and `LoadFixedGFX` would never DMA real tile data
+    # into OBJ VRAM.
+    fixed_type_gfx_s = repo_root / "data" / "gfx" / "fixed_type_gfx.s"
+    fixed_type_gfx = parse_fixed_type_gfx(fixed_type_gfx_s, defines)
+
     write_assets_source(
         out_dir / "port_rom_assets.c",
         blob,
@@ -931,6 +1063,7 @@ def cmd_gen(args: argparse.Namespace) -> None:
         parsed,
         offset_table,
         frame_obj_lists=frame_obj_lists_bytes,
+        fixed_type_gfx=fixed_type_gfx,
     )
 
     if args.verbose:
@@ -944,7 +1077,8 @@ def cmd_gen(args: argparse.Namespace) -> None:
             f"blob={blob_size} bytes "
             f"gfx_groups={len(parsed.gfx_groups)} ({len(parsed.gfx_index_order)} idx) "
             f"palette_groups={len(parsed.palette_groups)} ({len(parsed.palette_index_order)} idx) "
-            f"enum_count={len(parsed.enum_table)}"
+            f"enum_count={len(parsed.enum_table)} "
+            f"fixed_type_gfx={len(fixed_type_gfx)}"
             f"{fol_msg}"
         )
 

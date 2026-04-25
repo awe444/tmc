@@ -86,57 +86,16 @@ void ram_MakeFadeBuff256(const void* src, void* dst, unsigned int unk2, unsigned
     }
 }
 
-/* Per-frame entity dispatcher. The real (still-unported) ARM
- * implementation in `asm/src/intr.s::arm_UpdateEntities` walks
- * `gEntityLists[0..7]` (mode 0) or `gEntityLists[8]` (mode 1, managers)
- * and, for each entity in the list, dispatches to a per-kind update
- * function (PlayerUpdate / EnemyUpdate / ProjectileUpdate /
- * ObjectUpdate / NPCUpdate / ItemUpdate / ManagerUpdate /
- * DeleteThisEntity), then calls `UpdateCollision` on the survivor.
- *
- * A silent no-op is safe during the runtime-flip ramp-up because the
- * entity lists during the headless `--frames=30` smoke test are still
- * populated only by code paths whose loaders are themselves stubs (see
- * `port_rom_data_stubs.c::sPortGfxGroupTerminator` -- `LoadGfxGroup`
- * short-circuits before any entity is spawned). With no entities live,
- * the real iterator's body would also be a no-op, so skipping the walk
- * matches the engine's observable state and prevents the SIGABRT that
- * the previous weak `Port_UnresolvedTrap` placeholder produced. When
- * the real C decomp of `arm_UpdateEntities` lands (or a future PR
- * starts spawning entities through real loaders), this stub must be
- * removed in the same commit so the strong real definition wins. */
-void ram_UpdateEntities(unsigned int mode) {
-    (void)mode;
-}
-
-/* Longjmp-style "abort the current entity update and resume the
- * iteration loop" helper. The real ARM implementation in
- * `asm/src/intr.s::arm_ClearAndUpdateEntities` reuses
- * `arm_UpdateEntities`'s saved register frame (stashed in
- * `gUpdateContext.restore_sp`) to skip past the dispatch's call site
- * straight to the per-entity post-update bookkeeping. It is reached
- * from `entity.c::DeleteThisEntity`, which is itself only called from
- * inside the entity update path -- and that path is short-circuited
- * by the no-op `ram_UpdateEntities` above. A silent no-op here is
- * therefore reachable only by future code paths that we have not yet
- * exercised; if such a path lands before the real decomp does, this
- * stub is preferable to an abort because it does not deadlock the
- * frame loop. The same removal contract as `ram_UpdateEntities`
- * applies. */
-void ram_ClearAndUpdateEntities(void) {
-}
-
-/* Per-frame OAM compositor for entities. The real ARM implementation
- * in `asm/src/code_080A1A30.s::arm_DrawEntities` walks the entity
- * lists again (this time for rendering only) and pushes per-entity
- * `OAMCommand`s into `gOamBuffer`. Because the host has no live
- * entities (see `ram_UpdateEntities` notes above), there is nothing
- * to draw; the host renderer (`render.c`) reads OAM directly from
- * `gPortOam` and composites whatever the rest of the engine has
- * already written there. Same removal contract as
- * `ram_UpdateEntities`. */
-void ram_DrawEntities(void) {
-}
+/* `ram_UpdateEntities`, `ram_DrawEntities`, and
+ * `ram_ClearAndUpdateEntities` previously lived here as silent no-ops;
+ * they now have strong host-side ports in `port_entity_runtime.c`,
+ * which also provides the real `DrawEntity` (no longer a trap stub
+ * in `asm_stubs.c`). Keeping the stubs here would multiply-define
+ * the symbols at link time. See that TU's banner comment for why
+ * directly emitting OAM from `DrawEntity` is the smallest slice that
+ * gets the title-screen Zelda logo and chain sprites onto the screen.
+ * The matching ROM build never sees this file or the entity-runtime
+ * port (both are `__PORT__`-only). */
 
 /* `ram_DrawDirect` and `ram_sub_080ADA04` previously lived here as
  * silent no-ops; they now have strong host-side ports in
@@ -145,6 +104,23 @@ void ram_DrawEntities(void) {
  * was the smallest slice that restores the title-screen "PRESS START"
  * and copyright "©" sprites. The matching ROM build never sees either
  * file. */
+
+/* `UpdateCollision` is the survivor-bookkeeping call the entity
+ * iterator (now in `port_entity_runtime.c::ram_UpdateEntities`) makes
+ * after each per-entity dispatch. The ROM body lives in
+ * `asm/src/intr.s` and starts by checking `entity->flags & ENT_COLLIDE`
+ * (offset 0x10, mask 0x80); for any entity with that bit clear it
+ * exits in a single instruction. Title-screen `TITLE_SCREEN_OBJECT`
+ * entities never set `ENT_COLLIDE` (`AppendEntityToList` does not
+ * touch it and `sub_080A2340` never opts in via `COLLISION_ON`), so a
+ * silent no-op here is observably identical to the real body for the
+ * title screen. When a future scene spawns colliding entities, this
+ * stub must be replaced with a real port (or the ARM body must be
+ * wired in) -- otherwise hitbox / damage processing silently drops on
+ * the floor. Same removal contract as the other silent ram_* stubs. */
+void UpdateCollision(void* this) {
+    (void)this;
+}
 
 /* `collision.c::CollisionMain` -> ram_CollideAll. Walks the entity
  * collision list (also empty during the smoke test). With nothing to

@@ -96,7 +96,10 @@ PORT_ASM_STUB(CheckPlayerInRegion)
 PORT_ASM_STUB(GravityUpdate)
 PORT_ASM_STUB(sub_08003FDE)
 PORT_ASM_STUB(CheckEntityPickup)
-PORT_ASM_STUB(DrawEntity)
+/* `DrawEntity` is now a real C port in
+ * src/platform/shared/port_entity_runtime.c (it composes an
+ * OAMCommand from the entity fields and emits OAM directly via
+ * `ram_DrawDirect`). */
 PORT_ASM_STUB(sub_080040A2)
 PORT_ASM_STUB(CheckOnScreen)
 PORT_ASM_STUB(sub_080040D8)
@@ -108,14 +111,8 @@ PORT_ASM_STUB(sub_0800419C)
 PORT_ASM_STUB(EntityInRectRadius)
 PORT_ASM_STUB(sub_080041DC)
 PORT_ASM_STUB(sub_080041E8)
-PORT_ASM_STUB(CalcDistance)
 PORT_ASM_STUB(sub_08004202)
 PORT_ASM_STUB(sub_08004212)
-PORT_ASM_STUB(InitializeAnimation)
-PORT_ASM_STUB(GetNextFrame)
-PORT_ASM_STUB(UpdateAnimationVariableFrames)
-PORT_ASM_STUB(InitAnimationForceUpdate)
-PORT_ASM_STUB(UpdateAnimationSingleFrame)
 PORT_ASM_STUB(sub_080042BA)
 PORT_ASM_STUB(sub_080042D0)
 PORT_ASM_STUB(CreateDrownFx)
@@ -139,7 +136,6 @@ PORT_ASM_STUB(sub_08004596)
 PORT_ASM_STUB(sub_080045B4)
 PORT_ASM_STUB(GetFacingDirection)
 PORT_ASM_STUB(CalculateDirectionTo)
-PORT_ASM_STUB(CalculateDirectionFromOffsets)
 
 /* ---- asm/src/code_08007CAC.s (3 symbols) ---- */
 PORT_ASM_STUB(sub_08007DCE)
@@ -188,7 +184,9 @@ PORT_ASM_STUB(GetNextScriptCommandHalfword)
 PORT_ASM_STUB(GetNextScriptCommandHalfwordAfterCommandMetadata)
 PORT_ASM_STUB(GetNextScriptCommandWord)
 PORT_ASM_STUB(GetNextScriptCommandWordAfterCommandMetadata)
-PORT_ASM_STUB(UpdateSpriteForCollisionLayer)
+/* `UpdateSpriteForCollisionLayer` is a real C port now in
+ * src/platform/shared/port_entity_runtime.c (16 ARM instructions
+ * decoded byte-for-byte from asm/src/script.s::UpdateSpriteForCollisionLayer). */
 PORT_ASM_STUB(ResolveCollisionLayer)
 PORT_ASM_STUB(CheckOnLayerTransition)
 PORT_ASM_STUB(UpdateCollisionLayer)
@@ -209,8 +207,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     BounceUpdate,
     CalcCollisionDirectionOLD,
     CalcCollisionStaticEntity,
-    CalcDistance,
-    CalculateDirectionFromOffsets,
     CalculateDirectionTo,
     CheckBits,
     CheckEntityPickup,
@@ -228,7 +224,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     DoTileInteraction,
     DoTileInteractionHere,
     DoTileInteractionOffset,
-    DrawEntity,
     EnemyFunctionHandler,
     EnemyUpdate,
     EnqueueSFX,
@@ -240,7 +235,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     GenericKnockback2,
     GetFacingDirection,
     GetFuserId,
-    GetNextFrame,
     GetNextFunction,
     GetNextScriptCommandHalfword,
     GetNextScriptCommandHalfwordAfterCommandMetadata,
@@ -250,8 +244,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     GetRandomByWeight,
     GetTileHazardType,
     GravityUpdate,
-    InitAnimationForceUpdate,
-    InitializeAnimation,
     LinearMoveDirectionOLD,
     PlayerCheckNEastTile,
     ProjectileUpdate,
@@ -262,11 +254,8 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     SoundReqClipped,
     SumDropProbabilities,
     SumDropProbabilities2,
-    UpdateAnimationSingleFrame,
-    UpdateAnimationVariableFrames,
     UpdateCollisionLayer,
     UpdateIcePlayerVelocity,
-    UpdateSpriteForCollisionLayer,
     sub_08000E44,
     sub_08000E62,
     sub_08001214,

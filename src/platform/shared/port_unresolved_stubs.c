@@ -993,3 +993,34 @@ PORT_UNRESOLVED_DATA(sfxWaterWalk);
 PORT_UNRESOLVED_DATA(sfxWind1);
 PORT_UNRESOLVED_DATA(sfxWind2);
 PORT_UNRESOLVED_DATA(sfxWind3);
+
+/* ---- Title-screen entity-pipeline transitive deps -------------------- */
+/*
+ * The following symbols become required when `port_entity_runtime.c`
+ * (PR: title-screen Zelda-logo OAM emission) takes a strong reference to
+ * `ObjectUpdate`. That single reference pulls `object.c.o` into the
+ * link, which in turn carries function-pointer tables that reference
+ * every per-subkind object updater (`bench.c`, `cloud.c`, `fourElements.c`,
+ * `greatFairy.c`, `mask.c`, `mazaalBossObject.c`, `pinwheel.c`,
+ * `pullableLever.c`, `pushableFurniture.c`) plus a couple of manager
+ * neighbours (`minishPortalManager.c`, `templeOfDropletsManager.c`).
+ * None of those updaters run on the title screen (the only OBJECT
+ * subkind alive then is `TITLE_SCREEN_OBJECT`), but their unresolved
+ * external references still need *something* at link time. These
+ * weak placeholders satisfy that requirement; if the title-screen
+ * code path ever actually reaches one of them we get the same
+ * loud-abort / zero-data behaviour the rest of this file uses. Real
+ * definitions land when the corresponding scenes are wired in.
+ */
+PORT_UNRESOLVED_FUNC(SetCollisionData)
+PORT_UNRESOLVED_FUNC(GetActTileAtRoomCoords)
+PORT_UNRESOLVED_DATA(script_PlayerGetElement);
+PORT_UNRESOLVED_DATA(script_MazaalBossObjectMazaal);
+PORT_UNRESOLVED_DATA(gUnk_080DD750);
+PORT_UNRESOLVED_DATA(gUnk_0812079C);
+PORT_UNRESOLVED_DATA(gUnk_081207A4);
+PORT_UNRESOLVED_DATA(gUnk_081207AC);
+PORT_UNRESOLVED_DATA(gUnk_020342F8);
+PORT_UNRESOLVED_DATA(gUnk_02021F00);
+PORT_UNRESOLVED_DATA(gUnk_080E4C08);
+PORT_UNRESOLVED_DATA(gUnk_085A97A0);

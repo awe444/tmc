@@ -545,6 +545,16 @@ void InitAllRoomResInfo(void) {
     RoomHeader* r_hdr = gAreaRoomHeaders[gRoomControls.area];
     RoomResInfo* info = gArea.roomResInfos;
     u32 i;
+#ifdef __PORT__
+    if (r_hdr == NULL) {
+        /* Host fallback: unresolved room-header tables are weak-BSS
+         * placeholders until the full area-data link path is wired.
+         * Keep GAME-task smoke tests alive by publishing a zeroed room
+         * info instead of dereferencing NULL. */
+        gArea.pCurrentRoomInfo = &gArea.roomResInfos[0];
+        return;
+    }
+#endif
     for (i = 0; i < MAX_ROOMS && *(u16*)r_hdr != 0xFFFF; i++, r_hdr++) {
         if (r_hdr->tileSet_id != 0xFFFF)
             InitRoomResInfo(info, r_hdr, gRoomControls.area, i);
@@ -558,11 +568,25 @@ void InitRoomResInfo(RoomResInfo* info, RoomHeader* r_hdr, u32 area, u32 room) {
     info->map_y = r_hdr->map_y;
     info->pixel_width = r_hdr->pixel_width;
     info->pixel_height = r_hdr->pixel_height;
+#ifdef __PORT__
+    if (gAreaTileSets[area] != NULL) {
+        info->tileSet = *(gAreaTileSets[area] + r_hdr->tileSet_id);
+    }
+    if (gAreaRoomMaps[area] != NULL) {
+        info->map = *(gAreaRoomMaps[area] + room);
+    }
+    info->tiles = gAreaTiles[area];
+    info->bg_anim = (void*)gUnk_080B755C[area];
+    if (gExitLists[area] != NULL) {
+        info->exits = gExitLists[area][room];
+    }
+#else
     info->tileSet = *(gAreaTileSets[area] + r_hdr->tileSet_id);
     info->map = *(gAreaRoomMaps[area] + room);
     info->tiles = gAreaTiles[area];
     info->bg_anim = (void*)gUnk_080B755C[area];
     info->exits = gExitLists[area][room];
+#endif
     if (gAreaTable[area] != NULL) {
         info->properties = *(gAreaTable[area] + room);
     }
