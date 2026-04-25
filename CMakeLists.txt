@@ -215,6 +215,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/audio_ring.c
     src/platform/shared/ram_silent_stubs.c
     src/platform/shared/port_oam_renderer.c
+    src/platform/shared/port_entity_runtime.c
     src/platform/shared/save_file.c
     src/platform/shared/port_globals.c
     src/platform/shared/port_headers_check.c
