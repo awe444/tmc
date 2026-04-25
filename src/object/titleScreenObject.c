@@ -6,6 +6,9 @@
  */
 #include "object.h"
 #include "asm.h"
+#ifdef __PORT__
+#include "platform/port.h"
+#endif
 
 void TitleScreenObject_Type0(Entity*);
 void TitleScreenObject_Type1(Entity*);
@@ -40,7 +43,18 @@ void TitleScreenObject_Type0(Entity* this) {
         sub_080A2340(this);
         CreateObject(TITLE_SCREEN_OBJECT, 1, 0);
         addr = 0x02000000; // TODO write to 0x2000007
+#ifdef __PORT__
+        /* On real hardware this dereferences GBA EWRAM at 0x02000007;
+         * on the host port that literal is unmapped low memory.
+         * Translate through the EWRAM emulation array. The byte at
+         * EWRAM+7 picks between the two side ornaments around the
+         * Zelda logo (game-A vs game-B variant). It is zero-initialised
+         * by `Port_InitMemory`, which matches the freshly-booted ROM
+         * behaviour and selects the same `type=3` arm. */
+        if (*(u8*)Port_TranslateHwAddr((uintptr_t)(addr + 7)) == 1) {
+#else
         if (*(u8*)(addr + 7) == 1) {
+#endif
             type = 2;
         } else {
             type = 3;

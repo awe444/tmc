@@ -60,9 +60,15 @@ goal here is the equivalent `tmc.sdl`.
 > `IWRAM_DATA`, `NAKED`, `FORCE_REGISTER`, `MEMORY_BARRIER`, `ASM_FUNC`,
 > `NONMATCH`, `SystemCall`, …) collapsing to no-ops. The real game
 > logic now both **links cleanly** and **boots** as far as the
-> title-screen idle; advancing further into file-select / game-task
-> transitions is the remaining audio-and-asm work tracked under
-> PR #7 (m4a) and the asm-decomp track. PR #7 part 2.2 is now
+> title-screen idle (with the foreground "ZELDA / Minish Cap" logo
+> composited over the sword + grass background, since `DrawEntity`
+> and `ram_UpdateEntities` now have C ports in
+> `src/platform/shared/port_entity_runtime.c` that drive the
+> 5 `TITLE_SCREEN_OBJECT` entities through `ObjectUpdate` and emit
+> OAM directly via `ram_DrawDirect`); advancing further into
+> file-select / game-task transitions is the remaining
+> audio-and-asm work tracked under PR #7 (m4a) and the asm-decomp
+> track. PR #7 part 2.2 is now
 > feature-complete: the dispatcher, every `ply_*` handler, the
 > per-track `TrkVolPitSet` second loop, and the `m4aSoundInit`
 > boot-time `MPlayOpen` walk against the full 32-entry
@@ -714,6 +720,95 @@ are tracked here for future contributors.
     later roadmap entries (PR #5 affine BGs / windows, PR #6 EEPROM
     save persistence, PR #7 m4a, asm-decomp track) rather than
     landing under this checkbox.
+
+    *Title-screen entity-pipeline activation (Zelda-logo OAM emission):*
+    The `=ON` build reached `HandleTitlescreen` and lit up its BG
+    layers correctly, but the foreground "ZELDA / Minish Cap" logo
+    stayed invisible because the entity update / draw kernel was a
+    silent no-op: `ram_UpdateEntities`, `ram_DrawEntities`, and
+    `ram_ClearAndUpdateEntities` were tailored stubs in
+    `ram_silent_stubs.c`, and `DrawEntity` was a `noreturn` trap stub
+    in `asm_stubs.c`. The 5 `TITLE_SCREEN_OBJECT` entities
+    `HandleTitlescreen` spawns therefore never received their per-frame
+    `ObjectUpdate` and never emitted OAM. Strong host-side ports of
+    those four functions now live in
+    `src/platform/shared/port_entity_runtime.c`. Implementation notes:
+    * `DrawEntity` collapses the ROM body's two-phase
+      "enqueue-into-priority-bucket then drain in `arm_DrawEntities`"
+      into a single synchronous OAM emission via the existing
+      `ram_DrawDirect` (see `port_oam_renderer.c`). The
+      `port_compose_oam_cmd` helper mirrors `sub_080B299C` from
+      `asm/src/intr.s` byte-for-byte (iframes flash modifier, the
+      `ip & 3 == 2` skip-camera-offset case for screen-space
+      title-screen entities, the `0x3E003F00` attr1/attr2 mask for
+      the `ext` field, and the high-bit XOR between
+      `frameSpriteSettings` and `spriteSettings` for the size
+      override). Title-screen sprites do not overlap each other, so
+      the missing intra-priority-bucket back-to-front sort is
+      observably equivalent for this scene; future scenes that need
+      that ordering will have to grow back the deferred drain path.
+    * `ram_UpdateEntities` walks `gEntityLists[0..7]` (mode 0) or
+      `gEntityLists[8]` (mode 1) and dispatches each entity to
+      `ObjectUpdate`, which is the only `*Update` symbol we take a
+      strong reference to. Strong references to `PlayerUpdate` /
+      `NPCUpdate` / etc. would force the linker to pull in
+      `npc.c.o` / `playerItem.c.o` / `manager.c.o` / `interrupts.c.o`
+      and their hundreds of transitive dependencies (`gNPCData`,
+      `script_ForestMinish*`, sprite-animation tables, ...) that
+      have no entry in `port_unresolved_stubs.c` yet -- so the
+      dispatch is gated on `ent->kind == OBJECT` and the table only
+      grows when scenes that legitimately need other kinds get wired
+      in. Iteration safety after `DeleteThisEntity` is preserved by
+      reading `gUpdateContext.current_entity->next` *after* dispatch
+      (matching the ROM body's read pattern in
+      `arm_UpdateEntities`).
+    * `ram_DrawEntities` and `ram_ClearAndUpdateEntities` are
+      no-ops. With `DrawEntity` emitting OAM during the update pass
+      there is no deferred drain to run, and with the new iterator
+      advancing via `current_entity->next` (rather than via the
+      ROM's `mov pc` / saved-SP early-exit) `DeleteThisEntity` lands
+      cleanly back in C without longjmp plumbing.
+    * `UpdateSpriteForCollisionLayer` (the 16-instruction THUMB
+      helper from `asm/src/script.s`) was ported alongside; the
+      first iteration used the literal ARM byte offsets
+      (`Entity[0x19]`, `Entity[0x1b]`) and silently overwrote the
+      high byte of `Entity::spriteIndex` because the host's 64-bit
+      `prev`/`next` pointers shift every byte after them by +8.
+      The shipping port therefore reads/writes through the
+      `Entity::spriteRendering` and `Entity::spriteOrientation`
+      bitfield typedefs so the C compiler picks the right host
+      offsets. The same lesson applies to any future asm-to-C port
+      that touches `Entity` -- never index by literal offset.
+    * Linker support: `port_entity_runtime.c::sPortEntityDispatch`
+      pulls `object.c.o` into the link via its strong
+      `ObjectUpdate` reference, which transitively drags in
+      `bench.c`, `cloud.c`, `fourElements.c`, `greatFairy.c`,
+      `mask.c`, `mazaalBossObject.c`, `pinwheel.c`,
+      `pullableLever.c`, `pushableFurniture.c`,
+      `minishPortalManager.c`, and `templeOfDropletsManager.c`.
+      A small "Title-screen entity-pipeline transitive deps" block
+      at the end of `port_unresolved_stubs.c` adds weak placeholders
+      for the ~12 unresolved symbols those TUs reference
+      (`SetCollisionData`, `GetActTileAtRoomCoords`,
+      `script_PlayerGetElement`, `script_MazaalBossObjectMazaal`,
+      and a handful of `gUnk_*` BSS slots).
+    * One game-source patch: `src/object/titleScreenObject.c` was
+      reading the GBA EWRAM literal `0x02000007` directly to choose
+      between the type=2 / type=3 side-ornament variants. On the
+      host that literal is unmapped low memory and SIGSEGV's; the
+      read is now routed through `Port_TranslateHwAddr` under
+      `__PORT__`, which lands at the matching offset inside the
+      emulated `gPortEwram` array (zero-initialised on boot, which
+      selects the same `type=3` arm the ROM picks at first power-on).
+
+    With the above, `tmc_sdl --frames=600` shows the full
+    "THE LEGEND OF / ZELDA / Minish Cap" foreground logo composited
+    over the existing sword + grass background. The 30-frame golden
+    hash in `src/platform/shared/golden/usa_on_frames30.txt`
+    (`0x8f68687253dc1b25`) is unchanged -- the entity pipeline
+    only activates after the Nintendo/Capcom logos finish (frame
+    184), so the smoke-test budget under that file does not exercise
+    it.
 - [x] **PR #3.** `Port_InputPump()` now writes `~mask & 0x3FF` into the
   emulated `REG_KEYINPUT` slot (`gPortIo + 0x130`) every frame, and
   `Port_InputInit()` primes the slot to `0x3FF` (no keys pressed) before

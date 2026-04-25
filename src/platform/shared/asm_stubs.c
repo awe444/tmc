@@ -96,7 +96,10 @@ PORT_ASM_STUB(CheckPlayerInRegion)
 PORT_ASM_STUB(GravityUpdate)
 PORT_ASM_STUB(sub_08003FDE)
 PORT_ASM_STUB(CheckEntityPickup)
-PORT_ASM_STUB(DrawEntity)
+/* `DrawEntity` is now a real C port in
+ * src/platform/shared/port_entity_runtime.c (it composes an
+ * OAMCommand from the entity fields and emits OAM directly via
+ * `ram_DrawDirect`). */
 PORT_ASM_STUB(sub_080040A2)
 PORT_ASM_STUB(CheckOnScreen)
 PORT_ASM_STUB(sub_080040D8)
@@ -188,7 +191,9 @@ PORT_ASM_STUB(GetNextScriptCommandHalfword)
 PORT_ASM_STUB(GetNextScriptCommandHalfwordAfterCommandMetadata)
 PORT_ASM_STUB(GetNextScriptCommandWord)
 PORT_ASM_STUB(GetNextScriptCommandWordAfterCommandMetadata)
-PORT_ASM_STUB(UpdateSpriteForCollisionLayer)
+/* `UpdateSpriteForCollisionLayer` is a real C port now in
+ * src/platform/shared/port_entity_runtime.c (16 ARM instructions
+ * decoded byte-for-byte from asm/src/script.s::UpdateSpriteForCollisionLayer). */
 PORT_ASM_STUB(ResolveCollisionLayer)
 PORT_ASM_STUB(CheckOnLayerTransition)
 PORT_ASM_STUB(UpdateCollisionLayer)
@@ -228,7 +233,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     DoTileInteraction,
     DoTileInteractionHere,
     DoTileInteractionOffset,
-    DrawEntity,
     EnemyFunctionHandler,
     EnemyUpdate,
     EnqueueSFX,
@@ -266,7 +270,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     UpdateAnimationVariableFrames,
     UpdateCollisionLayer,
     UpdateIcePlayerVelocity,
-    UpdateSpriteForCollisionLayer,
     sub_08000E44,
     sub_08000E62,
     sub_08001214,
