@@ -3813,18 +3813,20 @@ void LoadRoomTileSet(void) {
     u16* tileIndices;
     u16* paletteBuffer;
 
+#ifdef __PORT__
+    /* `sub_0807BFA8` dereferences `gArea.pCurrentRoomInfo`; keep this before
+     * any use of room metadata (same ordering fix as `LoadRoomGfx`). */
+    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->tileSet == NULL || gArea.pCurrentRoomInfo->tiles == NULL) {
+        return;
+    }
+#endif
+
     ClearBgAnimations();
     sub_0807BFA8();
     MemFill16(0xffff, gMapBottom.tileTypes, 0x1000);
     gMapBottom.tileTypes[0] = 0;
     MemFill16(0xffff, gMapTop.tileTypes, 0x1000);
     gMapTop.tileTypes[0] = 0;
-
-#ifdef __PORT__
-    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->tileSet == NULL || gArea.pCurrentRoomInfo->tiles == NULL) {
-        return;
-    }
-#endif
 
     if ((void*)gRoomControls.tileSet != gArea.pCurrentRoomInfo->tileSet) {
         gRoomControls.tileSet = (u32)gArea.pCurrentRoomInfo->tileSet;
@@ -3868,6 +3870,11 @@ void LoadRoomGfx(void) {
     // Or is it used anywhere else?
     // Probaby rather is some sort of different scroll mode where only a small part of the map is used?
 
+#ifdef __PORT__
+    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->map == NULL) {
+        return;
+    }
+#endif
     sub_0807BFA8();
     roomControls = &gRoomControls;
     roomControls->scroll_flags &= 0xfc;
@@ -3875,11 +3882,6 @@ void LoadRoomGfx(void) {
     MemClear(gMapTop.collisionData, sizeof(gMapTop.collisionData));
     MemClear(&gMapDataBottomSpecial, 0x8000);
     MemClear(&gMapDataTopSpecial, 0x8000);
-#ifdef __PORT__
-    if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->map == NULL) {
-        return;
-    }
-#endif
     LoadMapData((gArea.pCurrentRoomInfo)->map);
     if (gMapBottom.mapData[0] != 0xffff) {
         sub_0807C8B0(gMapBottom.mapData, roomControls->width / 16, roomControls->height / 16);

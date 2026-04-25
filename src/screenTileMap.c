@@ -1,5 +1,12 @@
 #include "global.h"
 #include "room.h"
+#ifdef __PORT__
+#include "map.h"
+#include "tileMap.h"
+#include "vram.h"
+
+extern u8 gUpdateVisibleTiles;
+#endif
 
 // Called when gUpdateVisibleTiles == 2
 void sub_0807D280(u16* mapspecial, u16* bgbuffer) {
@@ -341,3 +348,71 @@ void sub_0807D6D8(u16* mapSpecial, u16* bgBuffer) {
         r4++;
     }
 }
+
+#ifdef __PORT__
+/**
+ * `sub_080B197C` in asm/src/intr.s — copies visible `gMapData*Special`
+ * rows into the BG tilemap buffer for `gUpdateVisibleTiles == 1`.
+ * On GBA this Thumb routine is copied from ROM into EWRAM at boot
+ * (`ram_sub_080B197C`); the SDL build skips that copy (main.c), so
+ * `UpdateScrollVram` must not indirect through RAM code.
+ *
+ * Each `DmaSet` transfers 0x20 halfwords; the source advances by 0x80
+ * halfwords per row (`0x100` bytes), matching the Thumb loop.
+ */
+static void CopyMapSpecialStrip_Mode1(const u16* mapSpecial, u16* bgBuffer) {
+    s32 xdiff = (s32)(s16)gRoomControls.scroll_x - (s32)(u16)gRoomControls.origin_x;
+    s32 ydiff = (s32)(s16)gRoomControls.scroll_y - (s32)(u16)gRoomControls.origin_y;
+    u32 xt = (u32)xdiff >> 4u;
+    u32 yt = (u32)ydiff >> 4u;
+    const u16* row = mapSpecial + (u32)(2 * (xt + (yt << 7u)));
+    u16* dst = bgBuffer - 0x20;
+    u32 yWhole = (u32)ydiff;
+    u32 i;
+
+    if (yWhole >= 8u) {
+        row -= 0x80;
+    }
+    for (i = 0; i < 24; i++) {
+        DmaSet(3, row, dst, 0x80000020);
+        dst += 0x20;
+        row += 0x80;
+    }
+}
+
+void UpdateScrollVram(void) {
+    u8 mode = gUpdateVisibleTiles;
+
+    if (mode == 0) {
+        return;
+    }
+
+    if (gMapBottom.bgSettings != NULL) {
+        u16* dst1 = gBG1Buffer + 0x20;
+
+        if (mode == 1u) {
+            CopyMapSpecialStrip_Mode1(gMapDataBottomSpecial, dst1);
+        } else if (mode == 2u) {
+            sub_0807D280(gMapDataBottomSpecial, dst1);
+        } else if (mode == 3u) {
+            sub_0807D46C(gMapDataBottomSpecial, dst1);
+        } else if (mode == 4u) {
+            sub_0807D6D8(gMapDataBottomSpecial, dst1);
+        }
+    }
+
+    if (gMapTop.bgSettings != NULL) {
+        u16* dst2 = gBG2Buffer + 0x20;
+
+        if (mode == 1u) {
+            CopyMapSpecialStrip_Mode1(gMapDataTopSpecial, dst2);
+        } else if (mode == 2u) {
+            sub_0807D280(gMapDataTopSpecial, dst2);
+        } else if (mode == 3u) {
+            sub_0807D46C(gMapDataTopSpecial, dst2);
+        } else if (mode == 4u) {
+            sub_0807D6D8(gMapDataTopSpecial, dst2);
+        }
+    }
+}
+#endif /* __PORT__ */

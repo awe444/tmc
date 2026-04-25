@@ -117,10 +117,11 @@ jobs:
           #   START@840               -- jump cursor to END
           #   A@900                   -- confirm the name → save-creation
           #   A@980                   -- select slot 0 after file creation
-          #   START@1040              -- advance to STATE_START
-          #   A@1100, START@1160...   -- continue in-game input pulses so
-          #                              the remaining ~2 minute budget
-          #                              exercises TASK_GAME runtime too
+          #   START@1040              -- advance file-select UI toward start
+          #   A@1100                  -- confirm begin from selected save (on-
+          #                              screen prompt; prefer A over START)
+          #   START@1160...           -- in-game input pulses so the remaining
+          #                              ~2 minute budget exercises TASK_GAME
           # The earlier `START@60+5` and `A@380+5` entries are no-ops at
           # those frames (logos / fade) and are included only to keep
           # the multi-entry parser exercised end-to-end.
