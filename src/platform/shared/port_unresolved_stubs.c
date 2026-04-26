@@ -66,12 +66,11 @@ static PORT_NORETURN void Port_UnresolvedTrap(const char* name) {
     PORT_WEAK PORT_NORETURN void name(void) { \
         Port_UnresolvedTrap(#name);           \
     }
-/* 41 function-like symbols. */
+/* 38 function-like symbols. */
 PORT_UNRESOLVED_FUNC(CloneTile)
 PORT_UNRESOLVED_FUNC(GetActTileAtEntity)
 PORT_UNRESOLVED_FUNC(GetActTileAtTilePos)
 PORT_UNRESOLVED_FUNC(GetActTileAtWorldCoords)
-PORT_UNRESOLVED_FUNC(GetActTileForTileType)
 PORT_UNRESOLVED_FUNC(GetActTileRelativeToEntity)
 PORT_UNRESOLVED_FUNC(GetCollisionDataAtEntity)
 PORT_UNRESOLVED_FUNC(GetCollisionDataAtTilePos)
@@ -80,8 +79,6 @@ PORT_UNRESOLVED_FUNC(GetCollisionDataRelativeTo)
 PORT_UNRESOLVED_FUNC(GetTileIndex)
 PORT_UNRESOLVED_FUNC(GetTileTypeAtEntity)
 PORT_UNRESOLVED_FUNC(GetTileTypeAtRoomCoords)
-PORT_UNRESOLVED_FUNC(GetTileTypeAtTilePos)
-PORT_UNRESOLVED_FUNC(GetTileTypeAtWorldCoords)
 PORT_UNRESOLVED_FUNC(GetTileTypeRelativeToEntity)
 PORT_UNRESOLVED_FUNC(SetActTileAtTilePos)
 PORT_UNRESOLVED_FUNC(SetTile)
@@ -184,7 +181,7 @@ PORT_UNRESOLVED_DATA(bgmVaatiWrath);
 PORT_UNRESOLVED_DATA(bgmWindRuins);
 PORT_UNRESOLVED_DATA(gActiveItems);
 PORT_UNRESOLVED_DATA(gActiveScriptInfo);
-PORT_UNRESOLVED_DATA(gArea);
+/* gArea: strong definition in port_globals.c (real `Area` size on host). */
 PORT_UNRESOLVED_DATA(gAreaRoomHeaders);
 PORT_UNRESOLVED_DATA(gAreaRoomMaps);
 PORT_UNRESOLVED_DATA(gAreaTable);

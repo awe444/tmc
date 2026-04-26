@@ -89,8 +89,14 @@
 #include <string.h>
 
 #include "affine.h"
+#include "collision.h"
 #include "entity.h"
+#include "map.h"
+#include "room.h"
+#include "script.h"
 #include "vram.h"
+
+extern u8 gMapSpecialTileToActTile[];
 
 /* ------------------------------------------------------------------------ */
 /* External symbols                                                          */
@@ -258,13 +264,8 @@ static void port_compose_oam_cmd(Entity* this, OAMCommand* cmd) {
  * a transition. The radius padding (0x3f) and the 0x16e/0x11e total
  * extents below match the magic constants in the ARM body. */
 static int port_check_on_screen(const Entity* this) {
-    /* `gRoomControls.scroll_x` / `scroll_y` are 16-bit at offsets 0xa
-     * and 0xc from the struct base. We read them as bytes through the
-     * typed extern to avoid pulling in the full RoomControls header. */
-    extern struct RoomControls_ gRoomControls;
-    const uint8_t* rc = (const uint8_t*)&gRoomControls;
-    const int32_t scroll_x = (int32_t)(int16_t)((uint16_t)rc[0xa] | ((uint16_t)rc[0xb] << 8));
-    const int32_t scroll_y = (int32_t)(int16_t)((uint16_t)rc[0xc] | ((uint16_t)rc[0xd] << 8));
+    const int32_t scroll_x = (int32_t)gRoomControls.scroll_x;
+    const int32_t scroll_y = (int32_t)gRoomControls.scroll_y;
 
     int32_t dx = (int32_t)(int16_t)this->x.HALF.HI - scroll_x + 0x3f;
     if ((uint32_t)dx >= 0x16eu) {
@@ -464,4 +465,112 @@ void UpdateSpriteForCollisionLayer(Entity* this) {
     uint8_t* so = (uint8_t*)&this->spriteOrientation;
     *sr = (uint8_t)((*sr & ~0xc0u) | entry[0]);
     *so = (uint8_t)((*so & ~0xc0u) | entry[1]);
+}
+
+/* ------------------------------------------------------------------------ */
+/* Tile / act-tile queries + ResolveCollisionLayer (asm/src/script.s)        */
+/* ------------------------------------------------------------------------ */
+
+/* World pixel coords → room tile index (same packing as `TILE()` in entity.h). */
+static u32 Port_TilePosFromWorldPixels(s32 worldX, s32 worldY) {
+    s32 rx = worldX - (s32)gRoomControls.origin_x;
+    s32 ry = worldY - (s32)gRoomControls.origin_y;
+    u32 tx = ((u32)rx >> 4) & 0x3Fu;
+    u32 ty = ((u32)ry >> 4) & 0x3Fu;
+    return tx + (ty << 6);
+}
+
+/* Port of `arm_GetTileTypeAtTilePos` in asm/src/intr.s (via veneer). */
+u32 GetTileTypeAtTilePos(u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+    u16 tileIndex;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return 0;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    tileIndex = mapLayer->mapData[tilePos];
+    if (tileIndex >= 0x4000) {
+        return tileIndex;
+    }
+    if (tileIndex >= TILESET_SIZE) {
+        return 0;
+    }
+    return mapLayer->tileTypes[tileIndex];
+}
+
+u32 GetTileTypeAtWorldCoords(s32 worldX, s32 worldY, u32 layer) {
+    return GetTileTypeAtTilePos(Port_TilePosFromWorldPixels(worldX, worldY), layer);
+}
+
+/* Port of `arm_GetActTileForTileType` in asm/src/intr.s. */
+u32 GetActTileForTileType(u32 tileType) {
+    if (tileType < 0x4000u) {
+        if (tileType >= TILESET_SIZE) {
+            return 0;
+        }
+        return gMapTileTypeToActTile[tileType];
+    } else {
+        u32 idx = tileType - 0x4000u;
+        if (idx >= 0x100u) {
+            return 0;
+        }
+        return gMapSpecialTileToActTile[idx];
+    }
+}
+
+/*
+ * Port of `ResolveCollisionLayer` in asm/src/script.s.
+ * When `collisionLayer == 0`, samples the top map at the entity position,
+ * maps tile type → act tile, then scans the same 4-byte rows the ROM
+ * embeds between `CheckOnLayerTransition` and the `.short 0` terminator
+ * (boss-room rows first, then `gTransitionTiles`, see asm listing).
+ */
+u32 ResolveCollisionLayer(Entity* entity) {
+    static const struct {
+        u16 actKey;
+        u8 srcLayer;
+        u8 destCollisionLayer;
+    } kRows[] = {
+        { 0x002A, 3, 3 },
+        { 0x002D, 3, 3 },
+        { 0x002B, 3, 3 },
+        { 0x002C, 3, 3 },
+        { 0x004C, 3, 3 },
+        { 0x004E, 3, 3 },
+        { 0x004D, 3, 3 },
+        { 0x004F, 3, 3 },
+        { 0x000A, 2, 1 },
+        { 0x0009, 2, 1 },
+        { 0x000C, 1, 2 },
+        { 0x000B, 1, 2 },
+        { 0x0052, 3, 3 },
+        { 0x0027, 3, 3 },
+        { 0x0026, 3, 3 },
+    };
+    u32 tileType;
+    u32 act;
+    u32 layerOut;
+    u32 i;
+
+    if (entity->collisionLayer != 0) {
+        UpdateSpriteForCollisionLayer(entity);
+        return 0;
+    }
+
+    tileType = GetTileTypeAtWorldCoords(entity->x.HALF.HI, entity->y.HALF.HI, LAYER_TOP);
+    layerOut = 1;
+    if (tileType != 0) {
+        act = GetActTileForTileType(tileType);
+        layerOut = 2;
+        for (i = 0; i < sizeof(kRows) / sizeof(kRows[0]); i++) {
+            if (kRows[i].actKey == act) {
+                layerOut = kRows[i].destCollisionLayer;
+                break;
+            }
+        }
+    }
+    entity->collisionLayer = (u8)layerOut;
+    UpdateSpriteForCollisionLayer(entity);
+    return 0;
 }

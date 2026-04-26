@@ -187,7 +187,7 @@ PORT_ASM_STUB(GetNextScriptCommandWordAfterCommandMetadata)
 /* `UpdateSpriteForCollisionLayer` is a real C port now in
  * src/platform/shared/port_entity_runtime.c (16 ARM instructions
  * decoded byte-for-byte from asm/src/script.s::UpdateSpriteForCollisionLayer). */
-PORT_ASM_STUB(ResolveCollisionLayer)
+/* `ResolveCollisionLayer` is a C port in `port_entity_runtime.c`. */
 PORT_ASM_STUB(CheckOnLayerTransition)
 PORT_ASM_STUB(UpdateCollisionLayer)
 
@@ -249,7 +249,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     ProjectileUpdate,
     /* `Random` is a real C port now; no force-reference needed. */
     ResetCollisionLayer,
-    ResolveCollisionLayer,
     SnapToTile,
     SoundReqClipped,
     SumDropProbabilities,

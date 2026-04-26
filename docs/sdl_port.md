@@ -159,6 +159,13 @@ tmc_sdl [options]
                          --press=START@60+10
                          --press='A@30,B@40,UP|A@120+2'
                          --press='A|B|SELECT|START@200+8'   # soft reset
+                       File select: START dismisses the title and moves on the
+                       slot grid; once a valid save is chosen and the file
+                       screen offers Start, schedule `A@…` (keyboard X, gamepad
+                       A) to begin from that slot—the on-screen prompt is A.
+                       Several handlers also accept START, but scripted runs
+                       should send A for the final confirm so timing matches the
+                       real flow into `STATE_START` / `TASK_GAME`.
                        Implemented in
                        `src/platform/shared/scripted_input.c`; the
                        resulting mask is OR'd into the keyboard /

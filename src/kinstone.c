@@ -11,6 +11,8 @@
 #include "subtask.h"
 #include "tiles.h"
 
+#include <stdint.h>
+
 extern const struct_gUnk_080B3D20 gUnk_080B3D20[];
 extern const EntityData gUnk_080FEC28[];
 extern const EntityData gUnk_080FEBE8[];
@@ -205,15 +207,17 @@ void ShuffleEzloHints(int count, u16* basePtr) {
     s32 iVar3;
     u16* puVar4;
     u16* puVar5;
+    uintptr_t base;
 
     uVar4 = count - 1;
     if (uVar4 != 0) {
-        puVar5 = (u16*)(uVar4 * 2 + (int)basePtr);
+        base = (uintptr_t)basePtr;
+        puVar5 = (u16*)(base + (uintptr_t)(uVar4 * 2));
         do {
             uVar2 = Random();
             iVar3 = uVar2 % (uVar4 + 1);
             uVar1 = *puVar5;
-            puVar4 = (u16*)(iVar3 * 2 + (int)basePtr);
+            puVar4 = (u16*)(base + (uintptr_t)(iVar3 * 2));
             *puVar5 = *puVar4;
             *puVar4 = uVar1;
             puVar5--;
