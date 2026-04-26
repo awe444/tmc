@@ -33,6 +33,7 @@ extern u32 sub_080A3B48(void);
 extern void sub_0805ECEC(u32, u32, u32, u32);
 extern void NotifyFusersOnFusionDone(u32);
 extern void RemoveKinstoneFromBag(u32);
+extern u32 Port_GetFuserTextId(Entity*);
 extern WStruct* sub_0805F2C8(void);
 extern void sub_0805F300(WStruct*);
 extern u32 sub_0805F76C(u8*, WStruct*);
@@ -644,7 +645,6 @@ void KinstoneMenu_080A4468(void) {
 u32 KinstoneMenu_080A4494(void) {
     WStruct* psVar1;
     u32 ret;
-    union SplitDWord multiVal;
     // TODO: Change this to union of u8* and u32
     u8* fuserTextId;
 
@@ -655,8 +655,7 @@ u32 KinstoneMenu_080A4494(void) {
         psVar1->bgColor = 5;
         psVar1->unk1 = 0;
         sub_080A44E0(psVar1, gSave.name, 0x80);
-        multiVal = GetFuserIdAndFuserTextId(gFuseInfo.entity);
-        fuserTextId = (u8*)multiVal.HALF_U.HI;
+        fuserTextId = (u8*)Port_GetFuserTextId(gFuseInfo.entity);
         ret = sub_080A44E0(psVar1, fuserTextId, 0xa0);
         sub_0805F300(psVar1);
     }
