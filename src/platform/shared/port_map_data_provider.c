@@ -1,7 +1,12 @@
 #ifdef __PORT__
 
 #include "global.h"
+#include "flags.h"
+#include "fade.h"
 #include "map.h"
+#include "menu.h"
+#include "sound.h"
+#include "subtask.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -32,7 +37,6 @@
 #endif
 
 extern u8 gMapData[];
-extern void** gAreaRoomHeaders[];
 extern void** gAreaRoomMaps[];
 extern void*** gAreaTable[];
 extern void** gAreaTileSets[];
@@ -98,6 +102,46 @@ static uint32_t port_read_rom_u32(uint32_t rom_ptr, uint32_t word_index) {
     return port_read_u32(p + word_index * 4u);
 }
 
+/** Read one little-endian u32 from a host pointer inside `gMapData[]`. */
+static uint32_t port_read_u32_host(const uint8_t* p) {
+    if (p == NULL) {
+        return 0u;
+    }
+    if (!port_off_range_ok((uint32_t)(p - (const uint8_t*)gMapData), 4u)) {
+        return 0u;
+    }
+    return port_read_u32(p);
+}
+
+static uint16_t port_room_header_tile_set_id(const uint8_t* hdr10) {
+    return (uint16_t)hdr10[8] | ((uint16_t)hdr10[9] << 8);
+}
+
+extern u32 sub_unk3_HouseInteriors2_LinksHouseBedroom(void);
+extern void sub_StateChange_HouseInteriors2_LinksHouseBedroom(void);
+
+static void* port_translate_room_callback(uint32_t rom_ptr) {
+    /* Room property callback pointers in entity_headers.s are THUMB
+     * function addresses (LSB set). Match on the full value first, then
+     * on the aligned address for safety. */
+    switch (rom_ptr) {
+        case 0x0804E7D9u:
+            return (void*)sub_unk3_HouseInteriors2_LinksHouseBedroom;
+        case 0x0804E7DDu:
+            return (void*)sub_StateChange_HouseInteriors2_LinksHouseBedroom;
+        default:
+            break;
+    }
+    switch (rom_ptr & ~1u) {
+        case 0x0804E7D8u:
+            return (void*)sub_unk3_HouseInteriors2_LinksHouseBedroom;
+        case 0x0804E7DCu:
+            return (void*)sub_StateChange_HouseInteriors2_LinksHouseBedroom;
+        default:
+            return NULL;
+    }
+}
+
 static int port_load_baserom_into_mapdata(void) {
     if (TMC_BASEROM_PATH[0] == '\0') {
         return -1;
@@ -137,10 +181,11 @@ void Port_MapDataInit(void) {
         uint32_t tiles_ptr = port_read_u32(port_rom_off_to_host(PORT_OFFS_GAREATILES + area * 4u));
 
         gAreaRoomHeaders[area] = (void**)port_rom_ptr_to_host(headers_ptr);
-        (void)maps_ptr;
-        (void)tile_sets_ptr;
-        (void)tiles_ptr;
-        gAreaTiles[area] = (void*)sPortSafeTiles;
+        if (tiles_ptr != 0u) {
+            gAreaTiles[area] = (void*)port_rom_ptr_to_host(tiles_ptr);
+        } else {
+            gAreaTiles[area] = (void*)sPortSafeTiles;
+        }
 
         if (gAreaRoomHeaders[area] == NULL) {
             gAreaRoomMaps[area] = NULL;
@@ -149,11 +194,11 @@ void Port_MapDataInit(void) {
             continue;
         }
 
+        memset(sPortRoomMapsByArea[area], 0, sizeof(sPortRoomMapsByArea[area]));
+        memset(sPortTileSetsByArea[area], 0, sizeof(sPortTileSetsByArea[area]));
+
         room_count = port_count_rooms((const uint8_t*)gAreaRoomHeaders[area]);
         for (room = 0; room < room_count; ++room) {
-            sPortRoomMapsByArea[area][room] = NULL;
-            sPortTileSetsByArea[area][room] = NULL;
-
             if (props_ptr != 0u) {
                 uint32_t prop_list_ptr = port_read_rom_u32(props_ptr, room);
                 uint8_t* prop_list_host = port_rom_ptr_to_host(prop_list_ptr);
@@ -166,15 +211,63 @@ void Port_MapDataInit(void) {
                     uint32_t p = port_read_u32(prop_list_host + k * 4u);
                     sPortPropertiesByAreaRoom[area][room][k] = (void*)port_rom_ptr_to_host(p);
                 }
-                /* Property slots 4..7 are callback function pointers in the ROM data.
-                 * Keep them NULL on host: ROM text addresses are not executable host pointers. */
-                sPortPropertiesByAreaRoom[area][room][4] = NULL;
-                sPortPropertiesByAreaRoom[area][room][5] = NULL;
-                sPortPropertiesByAreaRoom[area][room][6] = NULL;
-                sPortPropertiesByAreaRoom[area][room][7] = NULL;
+                /* Property slots 4..7 are callback function pointers in ROM
+                 * text space. Bridge only the known decompiled callbacks to
+                 * host function pointers; leave the rest NULL. */
+                for (k = 4u; k < 8u; ++k) {
+                    uint32_t p = port_read_u32(prop_list_host + k * 4u);
+                    sPortPropertiesByAreaRoom[area][room][k] = port_translate_room_callback(p);
+                }
                 sPortAreaTableByArea[area][room] = sPortPropertiesByAreaRoom[area][room];
             } else {
                 sPortAreaTableByArea[area][room] = NULL;
+            }
+        }
+
+        /* `gAreaRoomMaps[area]` is a pointer table: one ROM pointer per room
+         * to a `map_bottom` / `map_top` MapDataDefinition chain (see
+         * `data/map/map_headers.s`). Without resolving these, every room's
+         * `RoomResInfo.map` stays NULL and `LoadMapData` either no-ops or
+         * walks garbage — the usual symptom is an apparent hang right after
+         * file select when `LoadRoomGfx` / `LoadRoomTileSet` run. */
+        if (maps_ptr != 0u) {
+            const uint8_t* maps_tbl = (const uint8_t*)port_rom_ptr_to_host(maps_ptr);
+            for (room = 0; room < room_count; ++room) {
+                uint32_t map_chain_rom = 0u;
+                if (maps_tbl != NULL) {
+                    map_chain_rom = port_read_u32_host(maps_tbl + room * 4u);
+                }
+                sPortRoomMapsByArea[area][room] = (void*)port_rom_ptr_to_host(map_chain_rom);
+            }
+        }
+
+        /* `gAreaTileSets[area]` is indexed by `RoomHeader.tileSet_id`, not by
+         * room index (see `data/map/tileset_headers.s`). */
+        if (tile_sets_ptr != 0u) {
+            const uint8_t* headers_base = (const uint8_t*)gAreaRoomHeaders[area];
+            uint32_t max_ts = 0u;
+            uint32_t tid;
+            for (room = 0; room < room_count; ++room) {
+                const uint8_t* rh = headers_base + room * 10u;
+                uint16_t ts_id = port_room_header_tile_set_id(rh);
+                if (ts_id != 0xFFFFu && ts_id > max_ts) {
+                    max_ts = ts_id;
+                }
+            }
+            /* Always include slot 0 when the table is non-empty — some areas
+             * use only tile set 0. Cap by the fixed host array width. */
+            if (max_ts >= PORT_MAX_ROOMS_PER_AREA) {
+                max_ts = PORT_MAX_ROOMS_PER_AREA - 1u;
+            }
+            {
+                const uint8_t* ts_tbl = (const uint8_t*)port_rom_ptr_to_host(tile_sets_ptr);
+                for (tid = 0; tid <= max_ts && tid < PORT_MAX_ROOMS_PER_AREA; ++tid) {
+                    uint32_t tileset_blob_rom = 0u;
+                    if (ts_tbl != NULL) {
+                        tileset_blob_rom = port_read_u32_host(ts_tbl + tid * 4u);
+                    }
+                    sPortTileSetsByArea[area][tid] = (void*)port_rom_ptr_to_host(tileset_blob_rom);
+                }
             }
         }
 

@@ -138,29 +138,107 @@ void SetBGDefaults(void) {
 }
 
 void LoadMapData(MapDataDefinition* dataDefinition) {
-    u32 uVar1;
+#ifdef __PORT__
+    enum {
+        PORT_MAPDATA_MAX_CHAIN = 64,
+        PORT_MAPDATA_SIZE = 16 * 1024 * 1024,
+    };
+    typedef struct {
+        u32 src;
+        u32 dest;
+        u32 size;
+    } PortPackedMapDataDefinition;
+#endif
+    u8* mapDataBase = (u8*)&gMapData;
     u8* src;
     void* dest;
+    u32 step = 0;
+    u32 srcWord;
+    u32 sizeWord;
+    uintptr_t destRaw;
 
     do {
-        dest = dataDefinition->dest;
+#ifdef __PORT__
+        if (step++ >= PORT_MAPDATA_MAX_CHAIN) {
+            PORT_LOG_EVENT("map", "LoadMapData: abort (chain too long, ptr=%p)", (void*)dataDefinition);
+            return;
+        }
+
+        /* ROM-backed map-data chains are packed as three u32 words
+         * (`src`, `dest`, `size`) in `gMapData`. Decode those directly;
+         * the host C `MapDataDefinition` layout is wider on 64-bit due to
+         * pointer size/alignment and cannot be used to index ROM bytes. */
+        if ((u8*)dataDefinition >= mapDataBase && (u8*)dataDefinition < mapDataBase + PORT_MAPDATA_SIZE) {
+            const PortPackedMapDataDefinition* packed = (const PortPackedMapDataDefinition*)dataDefinition;
+            srcWord = packed->src;
+            dest = (void*)(uintptr_t)packed->dest;
+            sizeWord = packed->size;
+            destRaw = (uintptr_t)packed->dest;
+            dataDefinition = (MapDataDefinition*)((u8*)dataDefinition + sizeof(PortPackedMapDataDefinition));
+        } else {
+            srcWord = dataDefinition->src;
+            dest = dataDefinition->dest;
+            sizeWord = dataDefinition->size;
+            destRaw = (uintptr_t)dest;
+            dataDefinition++;
+        }
+
         if (dest != NULL) {
-            src = &gMapData + (dataDefinition->src & 0x7fffffff);
-            if ((dataDefinition->size & MAP_COMPRESSED) != 0) {
-                if ((u32)dest >> 0x18 == 6) {
+            /* MapDataDefinition tables store raw GBA addresses (0x020xxxxx,
+             * 0x060xxxxx, ...). Convert them to host pointers before any
+             * copy/decompress, otherwise memcpy/LZ77 writes to invalid host
+             * addresses and crash in room init. */
+            dest = Port_TranslateHwAddr((uintptr_t)dest);
+        }
+#else
+        srcWord = dataDefinition->src;
+        dest = dataDefinition->dest;
+        sizeWord = dataDefinition->size;
+        destRaw = (uintptr_t)dest;
+        dataDefinition++;
+#endif
+        if (dest != NULL) {
+            u32 srcOff = srcWord & 0x7fffffff;
+            u32 size = sizeWord & 0x7fffffff;
+#ifdef __PORT__
+            if (srcOff >= PORT_MAPDATA_SIZE) {
+                PORT_LOG_EVENT("map",
+                               "LoadMapData: abort (src OOB off=0x%08x size=0x%08x dest=%p entry=%p)",
+                               (unsigned)srcOff, (unsigned)sizeWord, dest, (void*)dataDefinition);
+                return;
+            }
+#endif
+            src = mapDataBase + srcOff;
+            if ((sizeWord & MAP_COMPRESSED) != 0) {
+#ifdef __PORT__
+                if (srcOff > PORT_MAPDATA_SIZE - 4) {
+                    PORT_LOG_EVENT("map",
+                                   "LoadMapData: abort (compressed header OOB off=0x%08x dest=%p entry=%p)",
+                                   (unsigned)srcOff, dest, (void*)dataDefinition);
+                    return;
+                }
+#endif
+                if ((destRaw >= 0x06000000u && destRaw < 0x06018000u) || ((u32)dest >> 0x18 == 6)) {
                     LZ77UnCompVram(src, dest);
                 } else {
                     LZ77UnCompWram(src, dest);
                 }
             } else {
-                MemCopy(src, dest, dataDefinition->size);
+#ifdef __PORT__
+                if (size > PORT_MAPDATA_SIZE - srcOff) {
+                    PORT_LOG_EVENT("map",
+                                   "LoadMapData: abort (copy OOB off=0x%08x size=0x%08x dest=%p entry=%p)",
+                                   (unsigned)srcOff, (unsigned)size, dest, (void*)dataDefinition);
+                    return;
+                }
+#endif
+                MemCopy(src, dest, size);
             }
         } else {
-            LoadPaletteGroup(*(u16*)dataDefinition);
+            LoadPaletteGroup((u16)srcWord);
             sub_080533CC();
         }
-        dataDefinition++;
-    } while (((dataDefinition - 1)->src & MAP_MULTIPLE) != 0);
+    } while ((srcWord & MAP_MULTIPLE) != 0);
 }
 
 // Has ifdefs for other variants

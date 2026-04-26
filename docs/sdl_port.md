@@ -127,7 +127,7 @@ cmake --build --preset sdl-release
 | `TMC_WIDESCREEN`             | `OFF`   | Reserve hooks for future widescreen renderer.            |
 | `TMC_USE_FETCHCONTENT_SDL`   | `OFF`   | Build SDL2 from source via FetchContent if not on disk.  |
 | `TMC_LINK_GAME_SOURCES`      | `ON`    | Link the `src/**/*.c` leaves that build under `__PORT__` into `tmc_sdl` (sub-step 2b.4). The library is always **built** as a dependency; this option controls whether it is also **linked** so that `src/main.c::AgbMain` becomes the entry point. Setting `=OFF` falls back to the empty-loop `agb_main_stub.c` placeholder, which is preserved as an early-bring-up scaffold for future ports and as a platform-layer isolation harness. |
-| `TMC_BASEROM`               | *empty* | Path to a `baserom.gba`. When set, runs `tools/port/gen_host_assets.py` at configure time to populate `gGfxGroups[]`, `gPaletteGroups[]`, and `gGlobalGfxAndPalettes[]` from the player's own ROM, and to emit a real `gfx_offsets.h`. When unset (the default), the `port_rom_data_stubs.c` all-zero fallback is linked. See the "Game assets / `baserom.gba`" section below. |
+| `TMC_BASEROM`               | *empty* | Path to a `baserom.gba`. When set, runs `tools/port/gen_host_assets.py` at configure time to populate `gGfxGroups[]`, `gPaletteGroups[]`, and `gGlobalGfxAndPalettes[]` from the player's own ROM, and to emit real `assets/gfx_offsets.h` and `assets/map_offsets.h`. When unset (the default), the `port_rom_data_stubs.c` all-zero fallback is linked. See the "Game assets / `baserom.gba`" section below. |
 
 ## Running
 
@@ -299,12 +299,13 @@ explicitly for `-O3 -DNDEBUG`). The build directory is keyed off
 Even with `TMC_BASEROM` set, a few neighbouring asset paths remain
 on their stubs (deferred to follow-up PRs to keep this scope small):
 
-- `assets/map_offsets.h` (the map / tileset / dungeon-map blobs at
-  `data/gfx/../maps/` etc.) is still produced by the all-zero
-  `_port_offset_stubs.h` catch-all -- per-variant map symbols would
-  need a similar walk over `assets/map.json` plus parsers for
-  `data/map/*.s` (`tile_headers`, `map_data`, `map_headers`,
-  `tileset_headers`).
+- `assets/map_offsets.h` is now generated under
+  ``${BUILD_DIR}/generated/port_assets/assets/`` when
+  ``tools/port/gen_host_assets.py gen`` runs (walks ``assets/map.json``
+  with the same ``start`` / ``offsets`` / ``variants`` rules as the C++
+  ``asset_processor`` EXTRACT path). The large per-room ``data/map/*.s``
+  logic tables (``tile_headers``, ``map_data``, …) remain asm-only on
+  the GBA side; this covers the ``offset_*`` macros included from C only.
 - `assets/sounds.json` / `samples.json` (m4a song table + PCM samples)
   -- deferred behind the m4a engine itself (PR #7 of the roadmap).
 - The ASM-only data tables under `data/data_*.s`, `data/sound/*`,
@@ -1852,11 +1853,12 @@ are tracked here for future contributors.
   `gPortPltt` / `gPortEwram` instead of SIGSEGVing on an unmapped
   low page.
 
-  Out of scope for this PR (deferred to keep it focused): map /
-  tileset / dungeon-map blobs (`assets/map_offsets.h`), the m4a
+  Out of scope for this PR (deferred to keep it focused): the m4a
   sound table and PCM samples (handled by PR #7), and the ASM-only
-  data tables. See the "Game assets / `baserom.gba`" section above
-  for what each path currently does.
+  data tables. Map / tileset ``offset_*`` macros in
+  ``assets/map_offsets.h`` are now produced by the same generator
+  (walk of ``assets/map.json``). See the "Game assets / `baserom.gba`"
+  section above for what each path currently does.
 - [ ] **PR #9.** (Stretch) Threaded renderer; widescreen mode under
   `TMC_WIDESCREEN`; Win32-OpenGL backend; PSP / PS2 ports following
   the same `src/platform/<name>/` pattern.

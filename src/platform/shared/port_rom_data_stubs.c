@@ -168,6 +168,31 @@ const PaletteGroup* gPaletteGroups[208] = {
     PORT_PALG_192, PORT_PALG_8, PORT_PALG_8, /* 16  -> 208 */
 };
 
+/* ----------------------------------------------------------------------- *
+ * gFrameObjLists / gFixedTypeGfxData
+ *
+ * With `-DTMC_BASEROM=...`, `tools/port/gen_host_assets.py` emits both
+ * symbols into `port_rom_assets.c` instead of this TU. Without baserom
+ * this file is still linked, and `affine.c`, `port_oam_renderer.c`, and
+ * `vram.c` reference these tables as strong externs — they must be defined
+ * here or the default SDL link fails.
+ *
+ * `gFrameObjLists` is a byte blob of relative u32 offsets (see
+ * `ram_DrawDirect`). An all-zero blob makes every first-level offset 0,
+ * every frame offset 0, and every frame stream start with count byte 0,
+ * so direct draws no-op safely (same effective behaviour as the old
+ * too-small weak placeholder, but with enough span for large sprite
+ * indices and frame indices).
+ *
+ * `gFixedTypeGfxData[i] == 0` yields slot count 0 in `LoadFixedGFX`, so
+ * `FindFreeGFXSlots(0)` succeeds without touching palette memory. Size
+ * matches the ROM table row count (~527 `fixed_gfx` lines).
+ * ----------------------------------------------------------------------- */
+
+uint8_t gFrameObjLists[64 * 1024] = { 0 };
+
+const uint32_t gFixedTypeGfxData[540] = { 0 };
+
 /* gUIElementDefinitions[] has moved to
  * src/platform/shared/port_globals.c. It needs to be linked
  * unconditionally regardless of whether `-DTMC_BASEROM=...` is set,
