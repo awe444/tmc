@@ -199,13 +199,15 @@ void SoftReset(uint32_t flags) {
 }
 
 /* `Stop()` (include/gba/syscall.h) sandwiches its `SystemCall(3)` between
- * SoundBiasReset()/SoundBiasSet(). On hardware those silence the audio
- * DAC before powering down; on the host there is nothing to silence and
- * `Stop()` itself is reduced to a no-op (SystemCall is `((void)0)` under
- * __PORT__), so these are pure stubs to keep the linker happy. */
+ * SoundBiasReset()/SoundBiasSet(). On hardware those invoke SVC 0x19
+ * with r0=0 / r0=1 to toggle the DAC bias path. On the host we model the
+ * observable register-level effect on `REG_SOUNDBIAS_H`: clear/set the
+ * bias-enable bit (0x40) while preserving the lower control bits. */
 void SoundBiasReset(void) {
+    gPortIo[0x89] &= 0x3F;
 }
 void SoundBiasSet(void) {
+    gPortIo[0x89] = (uint8_t)((gPortIo[0x89] & 0x3F) | 0x40);
 }
 
 /* Remaining BIOS-syscall aliases referenced by src/ when
@@ -358,28 +360,66 @@ void ObjAffineSet(struct ObjAffineSrcData* src, void* dst_, int32_t count, int32
     }
 }
 
-/* RL (run-length) decompression is used by a small number of asset
- * blobs. The real decoder has not been ported yet; until it is,
- * treat these as no-ops. Callers that dereference the destination
- * will observe whatever the host-side memory arena was initialised
- * to (zero on startup), which is the same state the game sees on
- * freshly-erased EWRAM. */
-void RLUnCompWram(const void* src, void* dst) {
-    (void)src;
-    (void)dst;
-}
-void RLUnCompVram(const void* src, void* dst) {
-    (void)src;
-    (void)dst;
+/* RL (run-length) decompression (BIOS format 0x30).
+ *
+ * Header byte layout (little-endian):
+ *   byte 0       : compression type (0x30 = RL)
+ *   bytes 1..3   : decompressed size (24-bit LE)
+ *
+ * Stream format:
+ *   control byte c
+ *     if (c & 0x80): repeat next byte `(c & 0x7F) + 3` times
+ *     else         : copy next `(c & 0x7F) + 1` literal bytes
+ */
+static void rl_decompress(const uint8_t* src, uint8_t* dst) {
+    uint32_t header = (uint32_t)src[0] | ((uint32_t)src[1] << 8) | ((uint32_t)src[2] << 16) | ((uint32_t)src[3] << 24);
+    uint32_t out_size = header >> 8;
+    uint8_t* out_end = dst + out_size;
+    src += 4;
+
+    while (dst < out_end) {
+        uint8_t c = *src++;
+        uint32_t len = (uint32_t)(c & 0x7F);
+        if (c & 0x80) {
+            uint8_t value = *src++;
+            len += 3u;
+            while (len-- > 0 && dst < out_end) {
+                *dst++ = value;
+            }
+        } else {
+            len += 1u;
+            while (len-- > 0 && dst < out_end) {
+                *dst++ = *src++;
+            }
+        }
+    }
 }
 
-/* Temporary stub for the BIOS arc-tangent. Returns 0 until a real
- * atan2 implementation is wired in (the existing call sites feed the
- * result into rotation math that the SDL port's PR #5 renderer will
- * consume). */
+void RLUnCompWram(const void* src, void* dst) {
+    rl_decompress((const uint8_t*)Port_TranslateHwAddr((uintptr_t)src),
+                  (uint8_t*)Port_TranslateHwAddr((uintptr_t)dst));
+}
+void RLUnCompVram(const void* src, void* dst) {
+    rl_decompress((const uint8_t*)Port_TranslateHwAddr((uintptr_t)src),
+                  (uint8_t*)Port_TranslateHwAddr((uintptr_t)dst));
+}
+
+/* Host implementation of the BIOS ArcTan2 helper.
+ *
+ * The GBA uses 16-bit binary-angle units (0x0000..0xFFFF across a full
+ * rotation). Map the C library's atan2 result into that same domain:
+ *   - 0x0000 = +X axis
+ *   - 0x4000 = +Y axis
+ *   - 0x8000 = -X axis
+ *   - 0xC000 = -Y axis
+ * The return type is `u16`, so wrapping naturally matches BIOS behavior. */
 uint16_t ArcTan2(int16_t x, int16_t y) {
-    (void)x;
-    (void)y;
-    return 0;
+    const double two_pi = 6.28318530717958647692;
+    double theta = atan2((double)y, (double)x); /* [-pi, pi] */
+    double unit = theta / two_pi;               /* [-0.5, 0.5] turns */
+    if (unit < 0.0) {
+        unit += 1.0;
+    }
+    return (uint16_t)(unit * 65536.0);
 }
 #endif
