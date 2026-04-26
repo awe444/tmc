@@ -117,6 +117,9 @@ void Port_RunGameLoop(void (*entry)(void));
  */
 void Port_GlobalsInit(void);
 
+/** Populate room/map/property tables from baserom-backed map data. */
+void Port_MapDataInit(void);
+
 /* ------------------------------------------------------------------------ */
 /* Input.                                                                   */
 /*                                                                          */

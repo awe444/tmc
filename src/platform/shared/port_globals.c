@@ -306,4 +306,5 @@ void Port_GlobalsInit(void) {
     initialised = 1;
     port_init_entity_lists(gEntityLists);
     port_init_entity_lists(gEntityListsBackup);
+    Port_MapDataInit();
 }
