@@ -354,7 +354,15 @@ void ram_UpdateEntities(uint32_t mode) {
     for (int i = start; i < end; i++) {
         LinkedList* list = &gEntityLists[i];
         Entity* ent = list->first;
-        while ((uintptr_t)ent != (uintptr_t)list) {
+        if (ent == NULL) {
+            /* Host safety net: if a list head was clobbered by unresolved
+             * state elsewhere, recover the empty-sentinel invariant instead
+             * of crashing on a null entity pointer. */
+            list->first = (Entity*)list;
+            list->last = (Entity*)list;
+            continue;
+        }
+        while (ent != NULL && (uintptr_t)ent != (uintptr_t)list) {
             gUpdateContext.current_entity = ent;
 
             /* OBJECT-only dispatch: see the rationale at the top of
@@ -374,6 +382,9 @@ void ram_UpdateEntities(uint32_t mode) {
              * the head). Either way `current_entity->next` is the
              * correct next list element to walk. */
             Entity* current = gUpdateContext.current_entity;
+            if (current == NULL) {
+                break;
+            }
             if (current == ent) {
                 UpdateCollision(ent);
             }

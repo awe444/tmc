@@ -1138,6 +1138,27 @@ void Port_RenderFrame(uint32_t* framebuffer) {
     for (int y = 0; y < DISP_H; ++y) {
         composite_scanline(framebuffer + (uint32_t)y * DISP_W, y, dispcnt);
     }
+
+#ifdef __PORT__
+    /* Host-only visibility fallback: when unresolved room/map assets produce
+     * an all-black frame, tint it so users can distinguish "running with
+     * missing data" from a perceived hard hang. Keep self-check semantics
+     * intact by only enabling this once the game loop has advanced. */
+    if (Port_GetFrameCount() > 0) {
+        int any_non_black = 0;
+        for (int i = 0; i < DISP_W * DISP_H; ++i) {
+            if (framebuffer[i] != 0xFF000000u) {
+                any_non_black = 1;
+                break;
+            }
+        }
+        if (!any_non_black) {
+            for (int i = 0; i < DISP_W * DISP_H; ++i) {
+                framebuffer[i] = 0xFF00A000u;
+            }
+        }
+    }
+#endif
 }
 
 /* ------------------------------------------------------------------------ */

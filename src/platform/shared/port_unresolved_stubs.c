@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include "map.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #define PORT_WEAK __attribute__((weak))
@@ -113,7 +114,7 @@ PORT_UNRESOLVED_FUNC(sub_080B1BA4)
  * source / data tables, so there is no struct-size requirement to
  * honour here.
  */
-#define PORT_UNRESOLVED_DATA(name) char name[256] PORT_WEAK __attribute__((aligned(16)))
+#define PORT_UNRESOLVED_DATA(name) char name[4096] PORT_WEAK __attribute__((aligned(16)))
 
 PORT_UNRESOLVED_DATA(ButtonUIElement_Actions);
 PORT_UNRESOLVED_DATA(EzloNagUIElement_Actions);
@@ -182,11 +183,20 @@ PORT_UNRESOLVED_DATA(bgmWindRuins);
 PORT_UNRESOLVED_DATA(gActiveItems);
 PORT_UNRESOLVED_DATA(gActiveScriptInfo);
 /* gArea: strong definition in port_globals.c (real `Area` size on host). */
-PORT_UNRESOLVED_DATA(gAreaRoomHeaders);
-PORT_UNRESOLVED_DATA(gAreaRoomMaps);
-PORT_UNRESOLVED_DATA(gAreaTable);
-PORT_UNRESOLVED_DATA(gAreaTileSets);
-PORT_UNRESOLVED_DATA(gAreaTiles);
+/* Area-indexed resource tables.
+ *
+ * These are pointer arrays indexed by `AreaID` (0..AREA_98), not opaque
+ * blobs. The default 256-byte placeholder only holds 32 pointers on a
+ * 64-bit host, so entering areas >= 32 (e.g. area 34 during save-load)
+ * reads/writes out of bounds and corrupts neighboring globals in room init.
+ * Keep them weak but give them the correct pointer-array extent so missing
+ * data degrades to NULL entries instead of memory corruption. */
+#define PORT_AREA_TABLE_COUNT 0x99
+void* gAreaRoomHeaders[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
+void* gAreaRoomMaps[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
+void* gAreaTable[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
+void* gAreaTileSets[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
+void* gAreaTiles[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
 /* gAuxPlayerEntities lives in port_globals.c (entity arena). */
 /* BG tilemap buffers. Real declarations in include/vram.h are
  * `u16 gBG{0,1,2}Buffer[0x400]` (2 KiB each) and `u16 gBG3Buffer[0x800]`
@@ -255,8 +265,11 @@ PORT_UNRESOLVED_DATA(gLilypadRails);
  * loop once `NUM_MUSIC_PLAYERS` was promoted from 0 back to 0x20 in
  * PR #7 part 2.2.2.3 — see docs/sdl_port.md. */
 PORT_UNRESOLVED_DATA(gManagerCount);
-PORT_UNRESOLVED_DATA(gMapBottom);
-PORT_UNRESOLVED_DATA(gMapData);
+MapLayer gMapBottom __attribute__((aligned(16)));
+/* Main map-data blob source (`LoadMapData` reads offset ranges out of this).
+ * Keep a host-local backing store large enough that offset-based reads don't
+ * walk off a 256-byte placeholder when room/map assets are missing. */
+u8 gMapData[16 * 1024 * 1024] __attribute__((aligned(16)));
 /* gMapDataBottomSpecial / gMapDataTopSpecial are the special-tile
  * scratch buffers for the two map layers. ClearTileMaps() (called
  * from HandleFileScreenEnter() via gameUtils.c, and from playerUtils.c
@@ -270,7 +283,7 @@ PORT_UNRESOLVED_DATA(gMapData);
  * (== 0x4000 u16 entries) to match the game's expected extent. */
 char gMapDataBottomSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
 char gMapDataTopSpecial[0x8000] PORT_WEAK __attribute__((aligned(16)));
-PORT_UNRESOLVED_DATA(gMapTop);
+MapLayer gMapTop __attribute__((aligned(16)));
 /* gMenu has its strong host definition in port_globals.c (with
  * gIntroState / gChooseFileState aliased to it). */
 PORT_UNRESOLVED_DATA(gMessageChoices);
@@ -292,7 +305,7 @@ PORT_UNRESOLVED_DATA(gOamCmd);
  * gBG3Buffer so `gSave.name` never received a non-zero byte). The matching
  * ROM build is unaffected: linker.ld places gOAMControls at IWRAM 0x0
  * with plenty of room before the next symbol. */
-char gOAMControls[0x920] PORT_WEAK __attribute__((aligned(16)));
+char gOAMControls[0xB74] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gPaletteBufferBackup);
 /* gPaletteGroups has moved to src/platform/shared/port_rom_data_stubs.c
  * for the same reason as gGfxGroups above (LoadPaletteGroup needs a
@@ -334,7 +347,7 @@ PORT_UNRESOLVED_DATA(gUnk_02006F00);
 PORT_UNRESOLVED_DATA(gUnk_0200B640);
 PORT_UNRESOLVED_DATA(gUnk_02017830);
 PORT_UNRESOLVED_DATA(gUnk_02017AA0);
-PORT_UNRESOLVED_DATA(gUnk_02018EA0);
+void* gUnk_02018EA0 __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gUnk_02018EB0);
 PORT_UNRESOLVED_DATA(gUnk_02018EE0);
 PORT_UNRESOLVED_DATA(gUnk_020227DC);
@@ -344,7 +357,8 @@ PORT_UNRESOLVED_DATA(gUnk_020227F8);
 PORT_UNRESOLVED_DATA(gUnk_02022800);
 PORT_UNRESOLVED_DATA(gUnk_02022830);
 PORT_UNRESOLVED_DATA(gUnk_020246B0);
-PORT_UNRESOLVED_DATA(gUnk_02033290);
+/* Cleared as a 2 KiB scratch block by `EraseAllEntities()`. */
+u8 gUnk_02033290[2048] PORT_WEAK __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gUnk_02034330);
 PORT_UNRESOLVED_DATA(gUnk_02034480);
 PORT_UNRESOLVED_DATA(gUnk_02034492);
@@ -359,7 +373,8 @@ PORT_UNRESOLVED_DATA(gUnk_03000420);
 /* `gUnk_03000C30` is a strong override in port_load_resource.c (the
  * deferred-resource queue buffer; placeholder size was too small). */
 PORT_UNRESOLVED_DATA(gUnk_03001020);
-PORT_UNRESOLVED_DATA(gUnk_03003C70);
+/* collision.c uses this as LinkedList2[16]; host size is >= 0x200 bytes. */
+u8 gUnk_03003C70[0x200] __attribute__((aligned(16)));
 PORT_UNRESOLVED_DATA(gUnk_03003DE0);
 PORT_UNRESOLVED_DATA(gUnk_080012C8);
 PORT_UNRESOLVED_DATA(gUnk_08001A7C);

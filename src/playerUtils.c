@@ -3817,6 +3817,10 @@ void LoadRoomTileSet(void) {
     /* `sub_0807BFA8` dereferences `gArea.pCurrentRoomInfo`; keep this before
      * any use of room metadata (same ordering fix as `LoadRoomGfx`). */
     if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->tileSet == NULL || gArea.pCurrentRoomInfo->tiles == NULL) {
+        /* Host fallback for unresolved room resources: keep the frame visibly
+         * alive (non-black) so this state is distinguishable from a hard hang. */
+        gPaletteBuffer[0] = 0x03E0; /* green backdrop */
+        USE_PALETTE(0);
         return;
     }
 #endif
@@ -3872,6 +3876,10 @@ void LoadRoomGfx(void) {
 
 #ifdef __PORT__
     if (gArea.pCurrentRoomInfo == NULL || gArea.pCurrentRoomInfo->map == NULL) {
+        /* Host fallback for unresolved room resources: keep backdrop visible
+         * instead of presenting a black screen that looks like a freeze. */
+        gPaletteBuffer[0] = 0x03E0; /* green backdrop */
+        USE_PALETTE(0);
         return;
     }
 #endif
