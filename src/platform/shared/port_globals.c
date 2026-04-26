@@ -24,17 +24,22 @@
  * `include/global.h` for exactly this reason (PR #2b.3 wave 1).
  */
 #include "area.h"
+#include "beanstalkSubtask.h"
 #include "common.h"
 #include "color.h"
 #include "entity.h"
 #include "fade.h"
 #include "main.h"
 #include "message.h"
+#include "enemy.h"
 #include "pauseMenu.h"
 #include "player.h"
 #include "room.h"
+#include "script.h"
 #include "screen.h"
 #include "save.h"
+#include "sound.h"
+#include "structures.h"
 #include "ui.h"
 #include "vram.h"
 
@@ -66,6 +71,69 @@ RoomVars gRoomVars;
 SaveFile gSave;
 void** gCurrentRoomProperties;
 struct_gUnk_020000C0 gUnk_020000C0[0x30];
+ActiveScriptInfo gActiveScriptInfo;
+ScriptExecutionContext gScriptExecutionContextArray[0x20];
+ScriptExecutionContext gPlayerScriptExecutionContext;
+SoundPlayingInfo gSoundPlayingInfo;
+RoomMemory gRoomMemory[8];
+RoomMemory* gCurrentRoomMemory = gRoomMemory;
+Entity* gEnemyTarget;
+u8 gEntCount;
+u8 gManagerCount;
+u8 gCollidableCount;
+u32 gUsedPalettes;
+Palette gPaletteList[0x10];
+VBlankDMA gVBlankDMA;
+
+/* Minimal host-safe sprite table.
+ *
+ * `gFrameObjLists` itself is provided by generated host assets
+ * (`generated/port_assets/port_rom_assets.c`). Here we only provide an
+ * inert fallback for `gSpritePtrs`.
+ */
+static const SpriteFrame sPortEmptySpriteFrame = {
+    .numTiles = 0,
+    .unk_1 = 0,
+    .firstTileIndex = 0,
+};
+
+/* `gSpritePtrs[idx].frames[frame]` is read in multiple UI/entity paths.
+ * Point every entry at a single inert frame table so any unresolved sprite
+ * index safely yields a zero-tile frame. */
+const SpritePtr gSpritePtrs[2048] = {
+    [0 ... 2047] = {
+        .animations = NULL,
+        .frames = (SpriteFrame*)&sPortEmptySpriteFrame,
+        .ptr = NULL,
+        .pad = 0,
+    },
+};
+
+TileEntity gSmallChests[8];
+SpecialTileEntry gTilesForSpecialTiles[MAX_SPECIAL_TILES];
+InteractableObject gInteractableObjects[0x20];
+
+typedef struct {
+    u16 index;
+} PortFrameAnimation;
+
+static const PortFrameAnimation sPortFrameAnimationZero = {
+    .index = 0,
+};
+
+const PortFrameAnimation* gSpriteAnimations_322[512] = {
+    [0 ... 511] = &sPortFrameAnimationZero,
+};
+
+static u16 sPortMoreSpritePtrsLut[4096];
+static u16 sPortMoreSpritePtrsTiles[4096];
+u16* gMoreSpritePtrs[3] = {
+    NULL,
+    sPortMoreSpritePtrsLut,
+    sPortMoreSpritePtrsTiles,
+};
+
+u16 gExtraFrameOffsets[4096];
 
 /* `Area` is ~0x894 bytes on the GBA but much larger on the host (64-bit
  * pointers in `RoomResInfo`). The 256-byte `PORT_UNRESOLVED_DATA(gArea)`

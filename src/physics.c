@@ -670,6 +670,15 @@ static bool32 sub_0807007C(struct_gUnk_020000C0* this, u32 param_2) {
 }
 
 u8* GetSpriteSubEntryOffsetDataPointer(u32 param_1, u32 param_2) {
+#ifdef __PORT__
+    uintptr_t base = (uintptr_t)gExtraFrameOffsets;
+    uintptr_t table = base + 0x10;
+    u16 firstOffset = ((u16*)table)[param_1];
+    uintptr_t first = base + firstOffset;
+    uintptr_t second = base + ((u8*)first)[param_2] * 4u;
+    uintptr_t third = (uintptr_t)(*(u32*)base) + second;
+    return (u8*)third;
+#else
     u32 val;
     u32 val2;
     val = ((u16*)(((u8*)gExtraFrameOffsets) + 0x10))[param_1];
@@ -678,6 +687,7 @@ u8* GetSpriteSubEntryOffsetDataPointer(u32 param_1, u32 param_2) {
     val2 += (u32)gExtraFrameOffsets;
     val = *((u32*)gExtraFrameOffsets) + val2;
     return (u8*)val;
+#endif
 }
 
 const u8 gMapDirectionToAnimationState4[] = {

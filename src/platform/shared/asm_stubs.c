@@ -89,8 +89,10 @@ PORT_ASM_STUB(LinearMoveDirectionOLD)
 PORT_ASM_STUB(CalcCollisionDirectionOLD)
 PORT_ASM_STUB(sub_080028E0)
 PORT_ASM_STUB(GetRandomByWeight)
-PORT_ASM_STUB(CheckRectOnScreen)
-PORT_ASM_STUB(CheckPlayerInRegion)
+/* `CheckRectOnScreen` is now a real C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `CheckPlayerInRegion` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
 
 /* ---- asm/src/code_08003FC4.s (29 symbols) ---- */
 PORT_ASM_STUB(GravityUpdate)
@@ -102,19 +104,23 @@ PORT_ASM_STUB(CheckEntityPickup)
  * `ram_DrawDirect`). */
 PORT_ASM_STUB(sub_080040A2)
 PORT_ASM_STUB(CheckOnScreen)
-PORT_ASM_STUB(sub_080040D8)
-PORT_ASM_STUB(sub_080040E2)
-PORT_ASM_STUB(sub_080040EC)
+/* `sub_080040D8` / `sub_080040E2` / `sub_080040EC` are now
+ * C ports in src/platform/shared/port_asm_misc.c. */
 PORT_ASM_STUB(SnapToTile)
-PORT_ASM_STUB(sub_0800417E)
-PORT_ASM_STUB(sub_0800419C)
-PORT_ASM_STUB(EntityInRectRadius)
-PORT_ASM_STUB(sub_080041DC)
-PORT_ASM_STUB(sub_080041E8)
-PORT_ASM_STUB(sub_08004202)
-PORT_ASM_STUB(sub_08004212)
-PORT_ASM_STUB(sub_080042BA)
-PORT_ASM_STUB(sub_080042D0)
+/* `sub_0800417E` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_0800419C` / `EntityInRectRadius` are now C ports in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_080041DC` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_080041E8` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_08004202` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_08004212` is now a C port in
+ * src/platform/shared/port_asm_misc.c. */
+/* `sub_080042BA` / `sub_080042D0` are now C ports in
+ * src/platform/shared/port_asm_misc.c. */
 PORT_ASM_STUB(CreateDrownFx)
 PORT_ASM_STUB(CreateLavaDrownFx)
 PORT_ASM_STUB(CreateSwampDrownFx)
@@ -131,16 +137,15 @@ PORT_ASM_STUB(sub_080044AE)
 PORT_ASM_STUB(BounceUpdate)
 PORT_ASM_STUB(sub_0800451C)
 PORT_ASM_STUB(sub_08004542)
-PORT_ASM_STUB(ResetCollisionLayer)
-PORT_ASM_STUB(sub_08004596)
-PORT_ASM_STUB(sub_080045B4)
-PORT_ASM_STUB(GetFacingDirection)
-PORT_ASM_STUB(CalculateDirectionTo)
+/* `ResetCollisionLayer` / `sub_08004596` / `sub_080045B4` are now
+ * C ports in src/platform/shared/port_asm_misc.c. */
+/* `GetFacingDirection` / `CalculateDirectionTo` are now C ports in
+ * src/platform/shared/port_asm_misc.c. */
 
 /* ---- asm/src/code_08007CAC.s (3 symbols) ---- */
 PORT_ASM_STUB(sub_08007DCE)
-PORT_ASM_STUB(FindValueForKey)
-PORT_ASM_STUB(FindEntryForKey)
+/* `FindValueForKey` / `FindEntryForKey` are now C ports in
+ * src/platform/shared/port_asm_misc.c. */
 
 /* ---- asm/src/enemy.s (10 symbols) ---- */
 PORT_ASM_STUB(EnemyUpdate)
@@ -180,10 +185,8 @@ PORT_ASM_STUB(PlayerCheckNEastTile)
 PORT_ASM_STUB(ProjectileUpdate)
 
 /* ---- asm/src/script.s (8 symbols) ---- */
-PORT_ASM_STUB(GetNextScriptCommandHalfword)
-PORT_ASM_STUB(GetNextScriptCommandHalfwordAfterCommandMetadata)
-PORT_ASM_STUB(GetNextScriptCommandWord)
-PORT_ASM_STUB(GetNextScriptCommandWordAfterCommandMetadata)
+/* Script command readers are now C ports in
+ * src/platform/shared/port_asm_misc.c. */
 /* `UpdateSpriteForCollisionLayer` is a real C port now in
  * src/platform/shared/port_entity_runtime.c (16 ARM instructions
  * decoded byte-for-byte from asm/src/script.s::UpdateSpriteForCollisionLayer). */
@@ -207,14 +210,11 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     BounceUpdate,
     CalcCollisionDirectionOLD,
     CalcCollisionStaticEntity,
-    CalculateDirectionTo,
     CheckBits,
     CheckEntityPickup,
     CheckNEastTile,
     CheckOnLayerTransition,
     CheckOnScreen,
-    CheckPlayerInRegion,
-    CheckRectOnScreen,
     ClampPlayerVelocity,
     CreateDrownFx,
     CreateLavaDrownFx,
@@ -226,19 +226,11 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     DoTileInteractionOffset,
     EnemyFunctionHandler,
     EnemyUpdate,
-    EntityInRectRadius,
-    FindEntryForKey,
-    FindValueForKey,
     GenericConfused,
     GenericKnockback,
     GenericKnockback2,
-    GetFacingDirection,
     GetFuserId,
     GetNextFunction,
-    GetNextScriptCommandHalfword,
-    GetNextScriptCommandHalfwordAfterCommandMetadata,
-    GetNextScriptCommandWord,
-    GetNextScriptCommandWordAfterCommandMetadata,
     GetNonCollidedSide,
     GetRandomByWeight,
     GetTileHazardType,
@@ -247,7 +239,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     PlayerCheckNEastTile,
     ProjectileUpdate,
     /* `Random` is a real C port now; no force-reference needed. */
-    ResetCollisionLayer,
     SnapToTile,
     SumDropProbabilities,
     SumDropProbabilities2,
@@ -263,24 +254,11 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     sub_080028E0,
     sub_08003FDE,
     sub_080040A2,
-    sub_080040D8,
-    sub_080040E2,
-    sub_080040EC,
-    sub_0800417E,
-    sub_0800419C,
-    sub_080041DC,
-    sub_080041E8,
-    sub_08004202,
-    sub_08004212,
-    sub_080042BA,
-    sub_080042D0,
     sub_0800442E,
     sub_0800445C,
     sub_080044AE,
     sub_0800451C,
     sub_08004542,
-    sub_08004596,
-    sub_080045B4,
     sub_08007DCE,
     sub_0800857C,
     sub_080085B0,
