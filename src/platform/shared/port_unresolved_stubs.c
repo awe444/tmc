@@ -181,7 +181,7 @@ PORT_UNRESOLVED_DATA(bgmVaatiWrath);
 PORT_UNRESOLVED_DATA(bgmWindRuins);
 PORT_UNRESOLVED_DATA(gActiveItems);
 PORT_UNRESOLVED_DATA(gActiveScriptInfo);
-PORT_UNRESOLVED_DATA(gArea);
+/* gArea: strong definition in port_globals.c (real `Area` size on host). */
 PORT_UNRESOLVED_DATA(gAreaRoomHeaders);
 PORT_UNRESOLVED_DATA(gAreaRoomMaps);
 PORT_UNRESOLVED_DATA(gAreaTable);

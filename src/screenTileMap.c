@@ -361,10 +361,13 @@ void sub_0807D6D8(u16* mapSpecial, u16* bgBuffer) {
  * halfwords per row (`0x100` bytes), matching the Thumb loop.
  */
 static void CopyMapSpecialStrip_Mode1(const u16* mapSpecial, u16* bgBuffer) {
-    s32 xdiff = (s32)(s16)gRoomControls.scroll_x - (s32)(u16)gRoomControls.origin_x;
-    s32 ydiff = (s32)(s16)gRoomControls.scroll_y - (s32)(u16)gRoomControls.origin_y;
-    u32 xt = (u32)xdiff >> 4u;
-    u32 yt = (u32)ydiff >> 4u;
+    /* Match `sub_080B197C` exactly: these are 16-bit subtracts (`ldrh` on
+     * both operands) followed by logical shifts. Widening signed deltas to
+     * u32 first can produce huge host-only offsets and crash DmaSet memcpy. */
+    u32 xdiff = (u16)((u16)gRoomControls.scroll_x - (u16)gRoomControls.origin_x);
+    u32 ydiff = (u16)((u16)gRoomControls.scroll_y - (u16)gRoomControls.origin_y);
+    u32 xt = xdiff >> 4u;
+    u32 yt = ydiff >> 4u;
     const u16* row = mapSpecial + (u32)(2 * (xt + (yt << 7u)));
     u16* dst = bgBuffer - 0x20;
     u32 yWhole = (u32)ydiff;

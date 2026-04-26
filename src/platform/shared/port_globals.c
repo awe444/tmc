@@ -23,6 +23,7 @@
  * the real layout assertions; the SDL build collapsed them to no-ops in
  * `include/global.h` for exactly this reason (PR #2b.3 wave 1).
  */
+#include "area.h"
 #include "common.h"
 #include "entity.h"
 #include "main.h"
@@ -41,6 +42,13 @@ Screen gScreen;
 RoomControls gRoomControls;
 struct_02000010 gUnk_02000010;
 u32 gRand;
+
+/* `Area` is ~0x894 bytes on the GBA but much larger on the host (64-bit
+ * pointers in `RoomResInfo`). The 256-byte `PORT_UNRESOLVED_DATA(gArea)`
+ * placeholder was far too small: `InitRoom` / `LoadRoomGfx` write the
+ * full `roomResInfos[]` table and `pCurrentRoomInfo`, corrupting adjacent
+ * BSS and producing flaky SIGSEGVs during the CI smoke test. */
+Area gArea;
 
 /* HUD / UI subsystem state.
  *
