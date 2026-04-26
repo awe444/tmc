@@ -125,8 +125,8 @@ PORT_ASM_STUB(GetTileHazardType)
 PORT_ASM_STUB(sub_0800442E)
 PORT_ASM_STUB(sub_0800445C)
 PORT_ASM_STUB(CalcCollisionStaticEntity)
-PORT_ASM_STUB(EnqueueSFX)
-PORT_ASM_STUB(SoundReqClipped)
+/* `EnqueueSFX` / `SoundReqClipped` are now C ports in
+ * src/platform/shared/port_entity_runtime.c. */
 PORT_ASM_STUB(sub_080044AE)
 PORT_ASM_STUB(BounceUpdate)
 PORT_ASM_STUB(sub_0800451C)
@@ -226,7 +226,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     DoTileInteractionOffset,
     EnemyFunctionHandler,
     EnemyUpdate,
-    EnqueueSFX,
     EntityInRectRadius,
     FindEntryForKey,
     FindValueForKey,
@@ -250,7 +249,6 @@ static const PortAsmStubFn sPortAsmStubTable[] = {
     /* `Random` is a real C port now; no force-reference needed. */
     ResetCollisionLayer,
     SnapToTile,
-    SoundReqClipped,
     SumDropProbabilities,
     SumDropProbabilities2,
     UpdateCollisionLayer,
