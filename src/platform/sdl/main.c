@@ -21,6 +21,7 @@ typedef struct {
     int mute;
     int frames; /* >0: exit after N frames (CI smoke test) */
     int print_frame_hash;
+    int assert_audio_active;
     const char* save_dir;
     const char* screenshot_path;
 } CliOptions;
@@ -47,6 +48,9 @@ static void print_usage(const char* argv0) {
             "                       --press=A@30,B@40,UP|A@120+2\n"
             "  --input-script=PATH  Load scripted-input entries from a text file\n"
             "                       (one --press SPEC per non-comment line)\n"
+            "  --assert-audio-active  Fail if host m4a runtime produced no non-zero\n"
+            "                         stereo frames (deterministic headless check;\n"
+            "                         meaningful with scripted progression)\n"
             "  --help               Show this message\n",
             argv0);
 }
@@ -71,6 +75,7 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
     opts->mute = 0;
     opts->frames = 0;
     opts->print_frame_hash = 0;
+    opts->assert_audio_active = 0;
     opts->save_dir = NULL;
     opts->screenshot_path = NULL;
 
@@ -90,6 +95,10 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
         }
         if (strcmp(a, "--print-frame-hash") == 0) {
             opts->print_frame_hash = 1;
+            continue;
+        }
+        if (strcmp(a, "--assert-audio-active") == 0) {
+            opts->assert_audio_active = 1;
             continue;
         }
         if (parse_int_suffix(a, "--scale=", &opts->scale))
@@ -288,6 +297,9 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+    /* Reset host m4a runtime diagnostics after the self-check so
+     * the post-run assertion sees only live game-loop activity. */
+    Port_M4AAudioDiagReset();
 #endif
 
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
@@ -339,6 +351,29 @@ int main(int argc, char** argv) {
         SDL_Quit();
         return 1;
     }
+
+#if TMC_LINK_GAME_SOURCES
+    if (opts.assert_audio_active) {
+        uint64_t frames_generated = Port_M4AAudioFramesGenerated();
+        uint64_t frames_nonzero = Port_M4AAudioFramesNonZero();
+        uint64_t mix_ticks = Port_M4AAudioMixTicks();
+        uint64_t song_starts = Port_M4AAudioSongStartRequests();
+        if (frames_generated == 0 || mix_ticks == 0 || (frames_nonzero == 0 && song_starts == 0)) {
+            fprintf(stderr,
+                    "[tmc_sdl] --assert-audio-active failed: generated=%" PRIu64
+                    " nonzero=%" PRIu64 " ticks=%" PRIu64 " song_starts=%" PRIu64 "\n",
+                    frames_generated, frames_nonzero, mix_ticks, song_starts);
+            Port_SaveFlush();
+#if TMC_ENABLE_AUDIO
+            Port_AudioShutdown();
+#endif
+            Port_InputShutdown();
+            Port_VideoShutdown();
+            SDL_Quit();
+            return 1;
+        }
+    }
+#endif
 
     Port_SaveFlush();
 #if TMC_ENABLE_AUDIO

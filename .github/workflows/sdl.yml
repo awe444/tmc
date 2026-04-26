@@ -156,3 +156,30 @@ jobs:
           run_until_title_passed file \
               ./build/tmc_sdl --frames=3600 --mute --save-dir="$save_dir" \
                   --input-script="$script"
+
+      # PR #7 part 2.3.9: audio-path CI coverage.
+      #
+      # Keep the existing --mute scripted smoke test above (covers the
+      # visual/gameplay path with deterministic silent audio behavior),
+      # and add one audio-enabled run that asserts runtime audio
+      # activity via the host-side diagnostics counters exposed by
+      # `--assert-audio-active`:
+      #   - generated frames > 0
+      #   - mix ticks > 0
+      #   - non-zero mixed frames > 0 OR at least one m4a song-start
+      #     request observed on the runtime path
+      #
+      # This remains headless (`SDL_AUDIODRIVER=dummy`) and therefore
+      # deterministic / CI-friendly while still proving the runtime audio
+      # bridge is active under scripted progression.
+      - name: Scripted-input audio activity check (headless, runtime audio path)
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          set -euo pipefail
+          save_dir="$(mktemp -d build/ci-save-audio.XXXXXX)"
+          trap 'rm -rf "$save_dir"' EXIT
+          ./build/tmc_sdl --frames=3600 --save-dir="$save_dir" \
+              --assert-audio-active \
+              --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5,A@980+5,START@1040+5,A@1100+5,START@1160+5,A@1220+5,START@1280+5'
