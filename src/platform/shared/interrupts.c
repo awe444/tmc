@@ -23,6 +23,7 @@ static volatile int s_quit_requested = 0;
 static volatile int s_frame_budget = 0;
 static volatile uint32_t s_frame_count = 0;
 static uint64_t s_last_vblank_ns = 0;
+static int s_uncapped_frame_pacing = 0;
 
 /* Non-local jump checkpoint installed by Port_RunGameLoop(). The real
  * `src/main.c::AgbMain` never returns under TMC_LINK_GAME_SOURCES=ON,
@@ -68,7 +69,7 @@ void Port_VBlankIntrWait(void) {
         target = now + (uint64_t)PORT_FRAME_NS;
     }
 
-    if (now < target) {
+    if (!s_uncapped_frame_pacing && now < target) {
         sleep_ns(target - now);
     }
     s_last_vblank_ns = target;
@@ -100,6 +101,12 @@ int Port_ShouldQuit(void) {
 
 void Port_RequestQuit(void) {
     s_quit_requested = 1;
+}
+
+void Port_SetUncappedFramePacing(int enabled) {
+    s_uncapped_frame_pacing = (enabled != 0);
+    /* Reset the pacer anchor so toggling mode does not carry stale timing. */
+    s_last_vblank_ns = 0;
 }
 
 void Port_RunGameLoop(void (*entry)(void)) {

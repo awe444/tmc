@@ -25,6 +25,11 @@ static SDL_Window* s_window = NULL;
 static SDL_Renderer* s_renderer = NULL;
 static SDL_Texture* s_texture = NULL;
 static uint32_t s_framebuffer[GBA_DISPLAY_W * GBA_DISPLAY_H];
+static int s_vsync_enabled = 1;
+
+void Port_SetVideoVSync(int enabled) {
+    s_vsync_enabled = (enabled != 0);
+}
 
 int Port_VideoInit(int scale, int fullscreen) {
     if (scale < 1)
@@ -47,7 +52,11 @@ int Port_VideoInit(int scale, int fullscreen) {
         return -1;
     }
 
-    s_renderer = SDL_CreateRenderer(s_window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    Uint32 renderer_flags = SDL_RENDERER_ACCELERATED;
+    if (s_vsync_enabled) {
+        renderer_flags |= SDL_RENDERER_PRESENTVSYNC;
+    }
+    s_renderer = SDL_CreateRenderer(s_window, -1, renderer_flags);
     if (s_renderer == NULL) {
         /* Fall back to software renderer (e.g. SDL_VIDEODRIVER=dummy in CI). */
         s_renderer = SDL_CreateRenderer(s_window, -1, SDL_RENDERER_SOFTWARE);

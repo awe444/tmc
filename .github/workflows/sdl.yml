@@ -91,7 +91,7 @@ jobs:
       # now run cleanly through frame 1100. Keep `set -euo pipefail`
       # so any future regression on this path fails the step.
       #
-      # The frame budget (3600) runs well past the title → file-select →
+      # The frame budget (5400) runs well past the title → file-select →
       # save-creation → TASK_GAME transition so CI can observe sustained
       # post-file-select progress, not just the transition itself.
       - name: Scripted-input smoke test (headless, creates file and enters gameplay)
@@ -119,12 +119,12 @@ jobs:
           #   A@1100                  -- confirm begin from selected save (on-
           #                              screen prompt; prefer A over START)
           #   START@1160...           -- in-game input pulses through the end
-          #                              of the 3600-frame smoke budget
+          #                              of the 5400-frame smoke budget
           # The earlier `START@60+5` and `A@380+5` entries are no-ops at
           # those frames (logos / fade) and are included only to keep
           # the multi-entry parser exercised end-to-end.
           run_until_title_passed inline \
-              ./build/tmc_sdl --frames=3600 --mute --save-dir="$save_dir" \
+              ./build/tmc_sdl --uncapped-fps --frames=5400 --mute --save-dir="$save_dir" \
                   --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5,A@980+5,START@1040+5,A@1100+5,START@1160+5,A@1220+5,START@1280+5'
 
           # File-based `--input-script=` form, via a transient script.
@@ -154,7 +154,7 @@ jobs:
           # path as CI's first run.
           rm -f "$save_dir/tmc.sav"
           run_until_title_passed file \
-              ./build/tmc_sdl --frames=3600 --mute --save-dir="$save_dir" \
+              ./build/tmc_sdl --uncapped-fps --frames=5400 --mute --save-dir="$save_dir" \
                   --input-script="$script"
 
       # PR #7 part 2.3.9: audio-path CI coverage.
@@ -180,6 +180,6 @@ jobs:
           set -euo pipefail
           save_dir="$(mktemp -d build/ci-save-audio.XXXXXX)"
           trap 'rm -rf "$save_dir"' EXIT
-          ./build/tmc_sdl --frames=3600 --save-dir="$save_dir" \
+          ./build/tmc_sdl --uncapped-fps --frames=5400 --save-dir="$save_dir" \
               --assert-audio-active \
               --press='START@60+5,START@350+5,A@380+5,START@500+5,START@720+5,A@780+5,START@840+5,A@900+5,A@980+5,START@1040+5,A@1100+5,START@1160+5,A@1220+5,START@1280+5'
