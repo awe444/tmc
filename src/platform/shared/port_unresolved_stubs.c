@@ -192,11 +192,18 @@ PORT_UNRESOLVED_DATA(gActiveScriptInfo);
  * Keep them weak but give them the correct pointer-array extent so missing
  * data degrades to NULL entries instead of memory corruption. */
 #define PORT_AREA_TABLE_COUNT 0x99
-void* gAreaRoomHeaders[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
-void* gAreaRoomMaps[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
-void* gAreaTable[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
-void* gAreaTileSets[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
-void* gAreaTiles[PORT_AREA_TABLE_COUNT] __attribute__((aligned(16)));
+/*
+ * Keep these placeholders weak so any real table emitted from baserom
+ * extraction can override them. They are arrays of pointers-to-arrays:
+ *   area -> room -> payload pointer
+ * so the element type must preserve pointer depth (void** / void***),
+ * not plain void*.
+ */
+void** gAreaRoomHeaders[PORT_AREA_TABLE_COUNT] PORT_WEAK __attribute__((aligned(16)));
+void** gAreaRoomMaps[PORT_AREA_TABLE_COUNT] PORT_WEAK __attribute__((aligned(16)));
+void*** gAreaTable[PORT_AREA_TABLE_COUNT] PORT_WEAK __attribute__((aligned(16)));
+void** gAreaTileSets[PORT_AREA_TABLE_COUNT] PORT_WEAK __attribute__((aligned(16)));
+void* gAreaTiles[PORT_AREA_TABLE_COUNT] PORT_WEAK __attribute__((aligned(16)));
 /* gAuxPlayerEntities lives in port_globals.c (entity arena). */
 /* BG tilemap buffers. Real declarations in include/vram.h are
  * `u16 gBG{0,1,2}Buffer[0x400]` (2 KiB each) and `u16 gBG3Buffer[0x800]`

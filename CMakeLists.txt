@@ -229,6 +229,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/render.c
     src/platform/shared/scripted_input.c
     src/platform/shared/port_log.c
+    src/platform/shared/port_map_data_provider.c
 )
 
 # ---------------------------------------------------------------------------
@@ -293,6 +294,7 @@ set_property(DIRECTORY APPEND PROPERTY
 # all-zero stub at `src/platform/shared/generated/assets/gfx_offsets.h`.
 # ---------------------------------------------------------------------------
 set(TMC_GENERATED_ASSETS_INCLUDE_DIRS "")
+set(TMC_PLATFORM_EXTRA_DEFINES "")
 if(TMC_BASEROM)
     if(NOT EXISTS "${TMC_BASEROM}")
         message(FATAL_ERROR
@@ -334,6 +336,7 @@ if(TMC_BASEROM)
     list(APPEND TMC_GENERATED_ASSETS_INCLUDE_DIRS
         "${_tmc_assets_out}")
     list(APPEND TMC_PLATFORM_SHARED_SOURCES "${_tmc_gen_assets_c}")
+    list(APPEND TMC_PLATFORM_EXTRA_DEFINES TMC_BASEROM_PATH="${TMC_BASEROM}")
 else()
     list(APPEND TMC_PLATFORM_SHARED_SOURCES
         src/platform/shared/port_rom_data_stubs.c)
@@ -373,6 +376,7 @@ target_include_directories(tmc_sdl PRIVATE
 target_compile_definitions(tmc_sdl PRIVATE
     __PORT__
     PORT_SDL
+    ${TMC_PLATFORM_EXTRA_DEFINES}
     ${TMC_VERSION_DEFINES}
 )
 
