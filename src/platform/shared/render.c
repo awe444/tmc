@@ -672,15 +672,11 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
                     out->obj_window[screen_x] = 1;
                     continue;
                 }
-                if (out->opaque[prio][screen_x]) {
-                    continue;
-                }
+                /* GBA: for equal OBJ priority, higher OAM index draws on top. */
                 int pal_index = is_8bpp ? pix : (pal_bank * 16 + pix);
                 out->colors[prio][screen_x] = pltt_read16(256 + pal_index);
                 out->opaque[prio][screen_x] = 1;
-                if (mode == 1) {
-                    out->semi[prio][screen_x] = 1;
-                }
+                out->semi[prio][screen_x] = (mode == 1);
             }
         } else {
             int hflip = (a1 & OBJ_ATTR1_HFLIP) != 0;
@@ -721,15 +717,10 @@ static void render_obj_scanline(int y, int obj_1d_mapping, ObjScanline* out) {
                     out->obj_window[screen_x] = 1;
                     continue;
                 }
-                if (out->opaque[prio][screen_x]) {
-                    continue;
-                }
                 int pal_index = is_8bpp ? pix : (pal_bank * 16 + pix);
                 out->colors[prio][screen_x] = pltt_read16(256 + pal_index);
                 out->opaque[prio][screen_x] = 1;
-                if (mode == 1) {
-                    out->semi[prio][screen_x] = 1;
-                }
+                out->semi[prio][screen_x] = (mode == 1);
             }
         }
     }
@@ -1330,6 +1321,21 @@ int Port_RendererSelfCheck(void) {
     oam_write16(4, 0x0C00);
     Port_RenderFrame(fb);
     ok = ok && (fb[0] == green_argb);
+
+    /* Same OBJ priority: higher OAM index draws on top (GBA behaviour). */
+    oam_write16(4, 0x0000);
+    pltt_write16(256 + 1, 0x001F); /* OBJ pal 0 idx 1 = red */
+    pltt_write16(256 + 16 + 1, 0x7FFF); /* OBJ pal 1 idx 1 = white */
+    memset(&gPortVram[VRAM_OBJ_BASE], 0x11, 32); /* tile 0: all palette idx 1 */
+    oam_write16(0, 0x0000);
+    oam_write16(2, 0x0000);
+    oam_write16(4, 0x0000); /* pal 0 */
+    oam_write16(80 + 0, 0x0000);
+    oam_write16(80 + 2, 0x0000);
+    oam_write16(80 + 4, 0x1000); /* pal 1, same tile, same prio, higher OAM idx */
+    io_write16(IO_DISPCNT, DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
+    Port_RenderFrame(fb);
+    ok = ok && (fb[0] == white_argb);
 
     /* ---------- 7. Affine BG (mode 1, BG2). ----------------------- */
     /* Build a 16x16-tile (128x128 px) affine map where tile 0 covers
