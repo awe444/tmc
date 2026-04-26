@@ -35,12 +35,14 @@ typedef struct {
 } UIElementDefinition;
 
 extern UIElementDefinition gUIElementDefinitions[];
+#if !defined(__PORT__)
 extern void (*const ButtonUIElement_Actions[])(UIElement*);
-extern const u8 gUnk_080C9044[];
 extern void (*const EzloNagUIElement_Actions[])(UIElement*);
+#endif
+extern u8 RupeeKeyDigits[];
+extern const u8 gUnk_080C9044[];
 extern u16 gUnk_080C9058[];
 extern Frame gUnk_080C9094[];
-extern u8 RupeeKeyDigits[];
 
 void sub_0801C2F0(u32, u32);
 void DrawHearts(void);
@@ -627,6 +629,10 @@ void sub_0801CB20(UIElement* element, UIElementDefinition* definition) {
     }
 }
 
+#if defined(__PORT__)
+extern void (*const ButtonUIElement_Actions[])(UIElement*);
+#endif
+
 void ButtonUIElement(UIElement* element) {
     ButtonUIElement_Actions[element->action](element);
 }
@@ -838,6 +844,10 @@ void HeartUIElement(UIElement* element) {
     }
 }
 
+#if defined(__PORT__)
+extern void (*const EzloNagUIElement_Actions[])(UIElement*);
+#endif
+
 void EzloNagUIElement(UIElement* element) {
     EzloNagUIElement_Actions[element->action](element);
 }
@@ -877,3 +887,16 @@ void EzloNagUIElement_Action2(UIElement* element) {
         gHUD.ezloNagFuncIndex = 4;
     }
 }
+
+#if defined(__PORT__)
+void (*const ButtonUIElement_Actions[])(UIElement*) = {
+    ButtonUIElement_Action0,
+    ButtonUIElement_Action1,
+};
+
+void (*const EzloNagUIElement_Actions[])(UIElement*) = {
+    EzloNagUIElement_Action0,
+    EzloNagUIElement_Action1,
+    EzloNagUIElement_Action2,
+};
+#endif

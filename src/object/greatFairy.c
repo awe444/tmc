@@ -40,7 +40,9 @@ extern void (*const GreatFairy_BigRippleBehaviors[])(GreatFairyEntity*);
 extern void (*const GreatFairy_EnergyBehaviors[])(GreatFairyEntity*);
 extern void (*const GreatFairy_Form1Behaviors[])(GreatFairyEntity*);
 extern void (*const GreatFairy_Form2Behaviors[])(GreatFairyEntity*);
+#if !defined(__PORT__)
 extern void (*const gUnk_081207A4[])(GreatFairyEntity*);
+#endif
 
 extern const s16 GreatFairy_RippleOffsets[10];
 extern u8 gUnk_0812079C[8];
@@ -467,10 +469,6 @@ void sub_0808727C(GreatFairyEntity* this) {
     }
 }
 
-void sub_08087294(GreatFairyEntity* this) {
-    gUnk_081207A4[super->action](this);
-}
-
 void sub_080872AC(GreatFairyEntity* this) {
     super->spriteSettings.draw = 1;
     super->spriteOrientation.flipY = 1;
@@ -494,6 +492,17 @@ void sub_080872F8(GreatFairyEntity* this) {
     temp = gSineTable[super->timer + 64];
     super->z.HALF.HI = (temp >> 6) - 8;
     super->timer++;
+}
+
+#if defined(__PORT__)
+void (*const gUnk_081207A4[])(GreatFairyEntity*) = {
+    sub_080872AC,
+    sub_080872F8,
+};
+#endif
+
+void sub_08087294(GreatFairyEntity* this) {
+    gUnk_081207A4[super->action](this);
 }
 
 void GreatFairy_InitializeAnimation(GreatFairyEntity* this) {
