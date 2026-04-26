@@ -479,6 +479,11 @@ void RecycleEntities(void) {
 
     list = &gEntityLists[0];
     do {
+        if (list->first == NULL || list->last == NULL) {
+            list->first = (Entity*)list;
+            list->last = (Entity*)list;
+            continue;
+        }
         for (i = list->first; (u32)i != (u32)list; i = i->next) {
             i->flags &= ~ENT_SCRIPTED;
             if ((i->flags & ENT_PERSIST) == 0) {
@@ -495,7 +500,12 @@ void DeleteSleepingEntities(void) {
 
     list = &gEntityLists[0];
     do {
-        for (ent = list->first; (intptr_t)ent != (intptr_t)list; ent = next) {
+        if (list->first == NULL || list->last == NULL) {
+            list->first = (Entity*)list;
+            list->last = (Entity*)list;
+            continue;
+        }
+        for (ent = list->first; ent != NULL && (intptr_t)ent != (intptr_t)list; ent = next) {
             next = ent->next;
             if (ent->flags & ENT_DELETED)
                 DeleteEntityAny(ent);

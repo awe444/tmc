@@ -25,13 +25,18 @@
  */
 #include "area.h"
 #include "common.h"
+#include "color.h"
 #include "entity.h"
+#include "fade.h"
 #include "main.h"
 #include "message.h"
+#include "pauseMenu.h"
 #include "player.h"
 #include "room.h"
 #include "screen.h"
+#include "save.h"
 #include "ui.h"
+#include "vram.h"
 
 #include <stddef.h>
 
@@ -42,6 +47,25 @@ Screen gScreen;
 RoomControls gRoomControls;
 struct_02000010 gUnk_02000010;
 u32 gRand;
+
+/* Core gameplay/session globals.
+ *
+ * These are heavily written during the TASK_GAME room-init path
+ * (`MemClear(&gRoomTransition, sizeof...)`, `MemClear(&gRoomVars, sizeof...)`,
+ * `MemCopy` into `gSave`, etc.). Leaving them as 256-byte unresolved stubs
+ * causes large host-side overruns and state corruption that manifests as
+ * black-screen stalls after "scene: room init". */
+FadeControl gFadeControl;
+GfxSlotList gGFXSlots;
+PauseMenuOptions gPauseMenuOptions;
+PlayerState gPlayerState;
+PossibleInteraction gPossibleInteraction;
+PriorityHandler gPriorityHandler;
+RoomTransition gRoomTransition;
+RoomVars gRoomVars;
+SaveFile gSave;
+void** gCurrentRoomProperties;
+struct_gUnk_020000C0 gUnk_020000C0[0x30];
 
 /* `Area` is ~0x894 bytes on the GBA but much larger on the host (64-bit
  * pointers in `RoomResInfo`). The 256-byte `PORT_UNRESOLVED_DATA(gArea)`
@@ -176,6 +200,7 @@ Window gCurrentWindow;
  * game code treats this as a 0x400-byte mirror and may copy the entire
  * BG+OBJ palette into it, so allocate 512 u16 entries (1024 B). */
 u16 gPaletteBuffer[512];
+
 
 /* IWRAM-resident byte arrays. `gUnk_03003DE4` is a 12-byte mailbox used
  * by the VBlank-DMA helpers in src/main.c::SetVBlankDMA(). */

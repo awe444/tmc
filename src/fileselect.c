@@ -262,17 +262,39 @@ static void (*const sFileScreenSubHandlers[])(void) = {
     HandleFileView,   HandleFileCopy, HandleFileDelete,         HandleFileStart,
 };
 
-static const KeyButtonLayout gUnk_080FC8D0 = {
-    .aButtonX = 0xFF,
-    .aButtonY = 0xD8,
-    .aButtonText = 0x0,
-    .bButtonX = 0xFF,
-    .bButtonY = 0xD8,
-    .bButtonText = 0x0,
-    .rButtonX = 0xE0,
-    .rButtonY = 0x10,
-    .rButtonText = 0xF,
-    .settingDict = { 0x5, 0x0, 0x2, 0x0, 0xFF },
+/* Host/ASAN-safe button layout list: sub_080A70AC() walks forward until it
+ * sees a layout entry with aButtonX == -1, so provide an explicit sentinel
+ * entry instead of relying on neighboring object bytes in ROM layout. */
+static const struct {
+    KeyButtonLayout first;
+    u8 firstSettings[5];
+    KeyButtonLayout sentinel;
+} gUnk_080FC8D0 = {
+    .first =
+        {
+            .aButtonX = 0xFF,
+            .aButtonY = 0xD8,
+            .aButtonText = 0x0,
+            .bButtonX = 0xFF,
+            .bButtonY = 0xD8,
+            .bButtonText = 0x0,
+            .rButtonX = 0xE0,
+            .rButtonY = 0x10,
+            .rButtonText = 0xF,
+        },
+    .firstSettings = { 0x5, 0x0, 0x2, 0x0, 0xFF },
+    .sentinel =
+        {
+            .aButtonX = 0xFF,
+            .aButtonY = 0x0,
+            .aButtonText = 0x0,
+            .bButtonX = 0x0,
+            .bButtonY = 0x0,
+            .bButtonText = 0x0,
+            .rButtonX = 0x0,
+            .rButtonY = 0x0,
+            .rButtonText = 0x0,
+        },
 };
 
 static const u16 gUnk_080FC8DE[] = {
@@ -507,7 +529,7 @@ static void HandleFileScreenEnter(void) {
         CreateObject(FILE_SCREEN_OBJECTS, i, 0);
     }
 
-    sub_080A70AC(&gUnk_080FC8D0);
+    sub_080A70AC(&gUnk_080FC8D0.first);
     HideButtonR();
     gScreen.lcd.displayControl |= DISPCNT_BG_ALL_ON | DISPCNT_OBJ_ON;
     gScreen.bg3.control = BGCNT_PRIORITY(3) | BGCNT_CHARBASE(2) | BGCNT_SCREENBASE(30);
