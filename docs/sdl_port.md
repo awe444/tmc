@@ -1728,6 +1728,67 @@ are tracked here for future contributors.
         chan). Golden hashes for both `=ON` and `=OFF` builds and
         the scripted-input smoke test stay bit-for-bit unchanged.
 
+      Remaining 2.3 work is the actual sample path (the dispatcher
+      and control handlers are now in place). Landing plan:
+      - [x] **PR #7 part 2.3.6** Host C `SoundMainBTM` sample-generation
+        scaffold landed in `src/platform/shared/m4a_host.c`. The
+        function now keeps its existing 64-byte-clear jump-table role
+        (`Clear64byte` callers pass a non-NULL pointer) and, when
+        entered as a mixer step (`SoundMain` calls `SoundMainBTM(NULL)`),
+        executes a host-side tick that advances DirectSound + CGB
+        gate/release/envelope state and accumulates one interleaved
+        stereo sample into a host scratch PCM ring
+        (`sPortM4aPcmScratch[]`) while recording the latest mixed
+        sample (`sPortM4aLastMix{L,R}`) and tick count
+        (`sPortM4aMixTickCount`). This stays intentionally silent at
+        the platform boundary (no `Port_AudioPushSamples` call yet);
+        PR #7 part 2.3.7 will bridge scratch output into the SDL audio
+        ring. `Port_M4ASelfCheck()` now has a focused 2.3.6 section
+        that seeds one synthetic DirectSound channel plus one synthetic
+        CGB channel, runs two mixer ticks, and asserts gate countdown /
+        release transitions, envelope progression, scratch write-index
+        advancement, and non-zero mixed output for non-muted inputs.
+      - [x] **PR #7 part 2.3.7** Bridged `m4aSoundVSync` to the SDL ring
+        buffer. A new host helper
+        `src/platform/shared/m4a_host.c::Port_M4AAudioVSyncPush()`
+        computes the per-vblank frame budget from
+        `Port_AudioGetSampleRate()` and the GBA cadence
+        (`59.7275 Hz = 597275/10000`) using a persistent fractional
+        accumulator, so non-integer rates (e.g. 48 kHz) stay drift-free.
+        For each budgeted frame, it runs the 2.3.6 mixer tick
+        (`SoundMainBTM(NULL)`), collects interleaved S16 stereo samples,
+        and pushes them into the SDL ring via `Port_AudioPushSamples()`
+        in bounded stack chunks. `src/gba/m4a.c::m4aSoundVSync()` now
+        invokes this helper under `__PORT__` after its existing DMA
+        bookkeeping.
+      - [x] **PR #7 part 2.3.8** Added a deterministic headless runtime
+        audio-activity check for the host path. `m4a_host.c` now tracks
+        runtime mixer diagnostics (`frames generated`, `non-zero frames`,
+        and `mix ticks`) from the `m4aSoundVSync` bridge, with a
+        `Port_M4AAudioDiagReset()` call in `src/platform/sdl/main.c`
+        immediately after `Port_M4ASelfCheck()` so startup harness
+        traffic does not pollute runtime metrics. New CLI flag:
+        `--assert-audio-active` — after `AgbMain` unwinds, it fails
+        unless the mixer actually ran (`generated>0`, `ticks>0`) and
+        either produced non-zero mixed frames or observed at least one
+        runtime song-start request (`m4aSongNumStart*`). This gives CI /
+        local headless tests a speaker-independent pass/fail signal that
+        runtime progression reached the active audio path even when the
+        host is still running with placeholder song/sample data. The
+        existing scripted-input title→file-select→in-game sequence (the
+        `--frames=3600` path used by CI) is the intended driver for this
+        assertion.
+      - [x] **PR #7 part 2.3.9** Added CI coverage for the runtime audio
+        path in `.github/workflows/sdl.yml`: the existing
+        scripted-input `--mute` smoke test remains intact, and a second
+        headless (`SDL_AUDIODRIVER=dummy`) scripted-input run now
+        executes with audio enabled plus `--assert-audio-active`. The
+        assertion checks deterministic host-side diagnostics
+        (`generated frames`, `mix ticks`, and
+        `non-zero frames OR song-start requests`), giving CI a stable
+        speaker-independent pass/fail signal for runtime audio activity
+        while preserving backend-agnostic behavior.
+
 - [x] **PR #8.** Golden-image CI test: snapshot the
   rasterizer's framebuffer at the end of `--frames=N` and assert the
   result against a stored hash. `src/platform/sdl/main.c` grew two

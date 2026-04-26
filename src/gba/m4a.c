@@ -192,6 +192,10 @@ u32 MidiKeyToCgbFreq(u8, u8, u8);
 void nullsub_141(void);
 void MPlayJumpTableCopy(void** mplayJumpTable);
 void SampleFreqSet(u32 freq);
+#ifdef __PORT__
+void Port_M4AAudioVSyncPush(void);
+void Port_M4AAudioNoteSongStart(void);
+#endif
 
 void m4aMPlayVolumeControl(MusicPlayerInfo* mplayInfo, u16 trackBits, u16 volume);
 void m4aMPlayPitchControl(MusicPlayerInfo* mplayInfo, u16 trackBits, s16 pitch);
@@ -400,6 +404,9 @@ void m4aSongNumStart(u16 n) {
     const Song* song = &songTable[n];
     const MusicPlayer* mplay = &mplayTable[song->musicPlayerIndex];
 
+#ifdef __PORT__
+    Port_M4AAudioNoteSongStart();
+#endif
     MPlayStart(mplay->info, song->header);
 }
 
@@ -409,6 +416,9 @@ void m4aSongNumStartOrChange(u16 n) {
     const Song* song = &songTable[n];
     const MusicPlayer* mplay = &mplayTable[song->musicPlayerIndex];
 
+#ifdef __PORT__
+    Port_M4AAudioNoteSongStart();
+#endif
     if (mplay->info->songHeader != song->header) {
         MPlayStart(mplay->info, song->header);
     } else {
@@ -424,6 +434,9 @@ void m4aSongNumStartOrContinue(u16 n) {
     const Song* song = &songTable[n];
     const MusicPlayer* mplay = &mplayTable[song->musicPlayerIndex];
 
+#ifdef __PORT__
+    Port_M4AAudioNoteSongStart();
+#endif
     if (mplay->info->songHeader != song->header)
         MPlayStart(mplay->info, song->header);
     else if ((mplay->info->status & MUSICPLAYER_STATUS_TRACK) == 0)
@@ -817,6 +830,9 @@ void m4aSoundVSync(void) {
     }
     REG_DMA1CNT_H = DMA_32BIT;
     REG_DMA1CNT_H = DMA_ENABLE | DMA_START_SPECIAL | DMA_32BIT | DMA_REPEAT;
+#ifdef __PORT__
+    Port_M4AAudioVSyncPush();
+#endif
 }
 
 void MPlayOpen(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* tracks, u8 trackCount) {

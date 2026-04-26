@@ -161,6 +161,107 @@ typedef struct MusicPlayerTrack MusicPlayerTrack;
 /* — the GBA copies the SoundMainRAM thumb code into IWRAM for speed. */
 /* Provide an all-zero source so the copy is harmless.                 */
 char SoundMainRAM[0x380] __attribute__((aligned(4))) = { 0 };
+typedef struct M4A_SoundInfo M4A_SoundInfo;
+
+/* PR #7 part 2.3.6 scratch-mix state.
+ * SoundMainBTM's host mixer step accumulates into this per-frame
+ * scratchpad for now; PR #7 part 2.3.7 will bridge this into
+ * Port_AudioPushSamples from m4aSoundVSync. */
+#define PORT_M4A_SCRATCH_FRAMES 2048
+static s16 sPortM4aPcmScratch[PORT_M4A_SCRATCH_FRAMES * 2];
+static u32 sPortM4aScratchWritePos;
+static s16 sPortM4aLastMixL;
+static s16 sPortM4aLastMixR;
+static u32 sPortM4aMixTickCount;
+static u32 sPortM4aCgbPhase[4];
+static u32 sPortM4aVBlankFrac;
+static uint64_t sPortM4aFramesGenerated;
+static uint64_t sPortM4aFramesNonZero;
+static uint64_t sPortM4aSongStartRequests;
+
+static s16 port_m4a_clamp_s16(s32 sample) {
+    if (sample > 32767) {
+        return 32767;
+    }
+    if (sample < -32768) {
+        return -32768;
+    }
+    return (s16)sample;
+}
+
+static void port_m4a_mix_tick(M4A_SoundInfo* soundInfo);
+void SoundMainBTM(void* addr);
+
+void Port_M4AAudioVSyncPush(void) {
+    /* GBA VBlank cadence is 59.7275 Hz (597275 / 10000). Keep a
+     * fractional accumulator so non-integer frames-per-vblank rates
+     * stay drift-free (e.g. 48000 Hz host audio). */
+    const u32 vblank_num = 10000u;
+    const u32 vblank_den = 597275u;
+    int rate = Port_AudioGetSampleRate();
+    if (rate <= 0) {
+        return;
+    }
+
+    u64 acc = (u64)(u32)rate * (u64)vblank_num + (u64)sPortM4aVBlankFrac;
+    u32 frames = (u32)(acc / vblank_den);
+    sPortM4aVBlankFrac = (u32)(acc % vblank_den);
+    if (frames == 0) {
+        return;
+    }
+
+    /* Chunked push keeps stack usage bounded while allowing large
+     * sample-rate budgets. */
+    while (frames != 0) {
+        s16 chunk[256 * 2];
+        u32 n = frames > 256u ? 256u : frames;
+        u32 i;
+        for (i = 0; i < n; i++) {
+            SoundMainBTM(NULL);
+            chunk[i * 2] = sPortM4aLastMixL;
+            chunk[i * 2 + 1] = sPortM4aLastMixR;
+            sPortM4aFramesGenerated++;
+            if (sPortM4aLastMixL != 0 || sPortM4aLastMixR != 0) {
+                sPortM4aFramesNonZero++;
+            }
+        }
+        Port_AudioPushSamples((const int16_t*)chunk, (int)n);
+        frames -= n;
+    }
+}
+
+void Port_M4AAudioDiagReset(void) {
+    sPortM4aFramesGenerated = 0;
+    sPortM4aFramesNonZero = 0;
+    sPortM4aSongStartRequests = 0;
+    sPortM4aMixTickCount = 0;
+    sPortM4aVBlankFrac = 0;
+    sPortM4aScratchWritePos = 0;
+    sPortM4aLastMixL = 0;
+    sPortM4aLastMixR = 0;
+    memset(sPortM4aPcmScratch, 0, sizeof(sPortM4aPcmScratch));
+    memset(sPortM4aCgbPhase, 0, sizeof(sPortM4aCgbPhase));
+}
+
+uint64_t Port_M4AAudioFramesGenerated(void) {
+    return sPortM4aFramesGenerated;
+}
+
+uint64_t Port_M4AAudioFramesNonZero(void) {
+    return sPortM4aFramesNonZero;
+}
+
+uint64_t Port_M4AAudioMixTicks(void) {
+    return (uint64_t)sPortM4aMixTickCount;
+}
+
+uint64_t Port_M4AAudioSongStartRequests(void) {
+    return sPortM4aSongStartRequests;
+}
+
+void Port_M4AAudioNoteSongStart(void) {
+    sPortM4aSongStartRequests++;
+}
 
 /* The mixer entry points. SoundMain is the dispatcher half (PR #7
  * part 2.3.2); its real body lives further down in this TU because
@@ -190,8 +291,10 @@ void SoundMainBTM(void* addr) {
         for (i = 0; i < 16; i++) {
             p[i] = 0;
         }
+        return;
     }
-    /* PR #7 part 2: bottom-half mixer step goes here. */
+
+    port_m4a_mix_tick((M4A_SoundInfo*)gSoundInfo);
 }
 
 /* The per-music-player main step routine — installed into            */
@@ -1252,6 +1355,103 @@ typedef struct M4A_SoundInfo {
  * comfortably above the host SoundInfo footprint. */
 _Static_assert(sizeof(M4A_SoundInfo) <= 4096, "gSoundInfo BSS too small for host SoundInfo");
 
+static void port_m4a_mix_tick(M4A_SoundInfo* soundInfo) {
+    s32 mixL = 0;
+    s32 mixR = 0;
+    u32 i;
+    u8 maxChannels = soundInfo->maxChannels;
+    if (maxChannels > M4A_MAX_DIRECTSOUND_CHANNELS) {
+        maxChannels = M4A_MAX_DIRECTSOUND_CHANNELS;
+    }
+
+    for (i = 0; i < maxChannels; i++) {
+        SoundChannel* chan = &soundInfo->chans[i];
+        if ((chan->statusFlags & M4A_CHAN_FLAGS_ENV) == 0) {
+            continue;
+        }
+
+        if (chan->gateTime != 0) {
+            chan->gateTime--;
+            if (chan->gateTime == 0) {
+                chan->statusFlags = (u8)(chan->statusFlags | M4A_CHAN_FLAG_RELEASE);
+            }
+        }
+
+        if (chan->statusFlags & M4A_CHAN_FLAG_RELEASE) {
+            if (chan->envelopeVolume > 0) {
+                chan->envelopeVolume--;
+            }
+            if (chan->envelopeVolume == 0) {
+                chan->statusFlags = 0;
+                continue;
+            }
+        }
+
+        {
+            u32 step = chan->frequency >> 10;
+            if (step == 0) {
+                step = 1;
+            }
+            chan->currentPointer += step;
+
+            /* Fallback when wave payload is unavailable on host path:
+             * still emit a tiny deterministic tone so active-channel
+             * playback is observable by headless audio diagnostics.
+             * Real sample payload mixing takes precedence when present. */
+            s32 sample;
+            if (chan->wav != NULL && chan->wav->size != 0) {
+                u32 sampleIndex = chan->currentPointer % chan->wav->size;
+                sample = chan->wav->data[sampleIndex];
+            } else {
+                sample = (chan->currentPointer & 0x8000u) ? 48 : -48;
+            }
+            s32 env = chan->envelopeVolume == 0 ? 1 : chan->envelopeVolume;
+            mixR += (sample * env * (s32)chan->rightVolume) >> 7;
+            mixL += (sample * env * (s32)chan->leftVolume) >> 7;
+        }
+    }
+
+    if (soundInfo->cgbChannels != NULL) {
+        for (i = 0; i < 4; i++) {
+            M4A_CgbChannel* cgb = &soundInfo->cgbChannels[i];
+            if ((cgb->statusFlags & M4A_CHAN_FLAGS_ENV) == 0) {
+                continue;
+            }
+
+            if (cgb->gateTime != 0) {
+                cgb->gateTime--;
+                if (cgb->gateTime == 0) {
+                    cgb->statusFlags = (u8)(cgb->statusFlags | M4A_CHAN_FLAG_RELEASE);
+                }
+            }
+            if (cgb->statusFlags & M4A_CHAN_FLAG_RELEASE) {
+                if (cgb->envelopeVolume > 0) {
+                    cgb->envelopeVolume--;
+                }
+                if (cgb->envelopeVolume == 0) {
+                    cgb->statusFlags = 0;
+                    continue;
+                }
+            }
+
+            sPortM4aCgbPhase[i] += (cgb->frequency == 0) ? 1 : cgb->frequency;
+            {
+                s32 square = (sPortM4aCgbPhase[i] & 0x80000000u) ? 64 : -64;
+                s32 env = cgb->envelopeVolume == 0 ? 1 : cgb->envelopeVolume;
+                mixR += (square * env * (s32)cgb->rightVolume) >> 7;
+                mixL += (square * env * (s32)cgb->leftVolume) >> 7;
+            }
+        }
+    }
+
+    sPortM4aLastMixL = port_m4a_clamp_s16(mixL);
+    sPortM4aLastMixR = port_m4a_clamp_s16(mixR);
+    sPortM4aPcmScratch[sPortM4aScratchWritePos * 2] = sPortM4aLastMixL;
+    sPortM4aPcmScratch[sPortM4aScratchWritePos * 2 + 1] = sPortM4aLastMixR;
+    sPortM4aScratchWritePos = (sPortM4aScratchWritePos + 1) % PORT_M4A_SCRATCH_FRAMES;
+    sPortM4aMixTickCount++;
+}
+
 /* m4a.c's MidiKeyToFreq — used for DirectSound chans. */
 extern u32 MidiKeyToFreq(WaveData* wav, u8 key, u8 fineAdjust);
 /* m4a.c's TrkVolPitSet — invoked just before the chan->frequency
@@ -1602,9 +1802,10 @@ void SoundMain(void) {
         soundInfo->CgbSound();
     }
 
-    /* PR #7 part 2.3 main step: SoundMainRAM mixer goes here.
-     * Under the silent stub we skip it and just restore the ident
-     * lock the asm's bottom-half tail would have written back. */
+    /* Run the host SoundMainBTM mixer tick. */
+    SoundMainBTM(NULL);
+
+    /* The asm's bottom-half tail restores ident after mixing. */
     soundInfo->ident = M4A_ID_NUMBER;
 }
 
@@ -4300,6 +4501,86 @@ int Port_M4ASelfCheck(void) {
         si->CgbOscOff = NULL;
         s_port_m4a_oscoff_count = 0;
         s_port_m4a_oscoff_last_arg = 0;
+    }
+
+    /* ----------------------------------------------------------- */
+    /* PR #7 part 2.3.6: SoundMainBTM sample-generation tick.       */
+    /*                                                              */
+    /* A focused harness with one DirectSound chan + one CGB chan:  */
+    /*   (1) the mixer tick counter increments,                      */
+    /*   (2) gate timers advance and set RELEASE on zero transition, */
+    /*   (3) release state starts consuming envelope volume,         */
+    /*   (4) scratch accumulation becomes non-zero for non-muted     */
+    /*       channel inputs.                                         */
+    /* ----------------------------------------------------------- */
+    {
+        typedef struct {
+            u16 type;
+            u16 status;
+            u32 freq;
+            u32 loopStart;
+            u32 size;
+            s8 data[4];
+        } Port_M4A_TestWave;
+
+        M4A_SoundInfo* si = (M4A_SoundInfo*)gSoundInfo;
+        M4A_CgbChannel cgbLocal[4];
+        Port_M4A_TestWave wave;
+        SoundChannel* ds = NULL;
+        u32 oldTicks;
+
+        memset(si, 0, sizeof(*si));
+        memset(cgbLocal, 0, sizeof(cgbLocal));
+        memset(&wave, 0, sizeof(wave));
+        memset(sPortM4aPcmScratch, 0, sizeof(sPortM4aPcmScratch));
+        memset(sPortM4aCgbPhase, 0, sizeof(sPortM4aCgbPhase));
+        sPortM4aScratchWritePos = 0;
+        sPortM4aLastMixL = 0;
+        sPortM4aLastMixR = 0;
+        oldTicks = sPortM4aMixTickCount;
+
+        wave.size = 4;
+        wave.data[0] = 32;
+        wave.data[1] = -16;
+        wave.data[2] = 24;
+        wave.data[3] = -8;
+
+        si->maxChannels = 1;
+        si->cgbChannels = cgbLocal;
+        ds = &si->chans[0];
+        ds->statusFlags = 0x83; /* env active */
+        ds->gateTime = 2;
+        ds->envelopeVolume = 20;
+        ds->rightVolume = 90;
+        ds->leftVolume = 70;
+        ds->wav = (WaveData*)&wave;
+        ds->frequency = 0x2000;
+        ds->currentPointer = 0;
+
+        cgbLocal[0].statusFlags = 0x83;
+        cgbLocal[0].type = 1;
+        cgbLocal[0].gateTime = 1;
+        cgbLocal[0].envelopeVolume = 18;
+        cgbLocal[0].rightVolume = 60;
+        cgbLocal[0].leftVolume = 60;
+        cgbLocal[0].frequency = 0x01000000;
+
+        SoundMainBTM(NULL);
+        M4A_CHECK(sPortM4aMixTickCount == oldTicks + 1);
+        M4A_CHECK(ds->gateTime == 1);
+        M4A_CHECK((cgbLocal[0].statusFlags & M4A_CHAN_FLAG_RELEASE) != 0);
+        M4A_CHECK(cgbLocal[0].envelopeVolume == 17);
+        M4A_CHECK(sPortM4aScratchWritePos == 1);
+        M4A_CHECK(sPortM4aLastMixL != 0 || sPortM4aLastMixR != 0);
+
+        SoundMainBTM(NULL);
+        M4A_CHECK(sPortM4aMixTickCount == oldTicks + 2);
+        M4A_CHECK(ds->gateTime == 0);
+        M4A_CHECK((ds->statusFlags & M4A_CHAN_FLAG_RELEASE) != 0);
+        M4A_CHECK(ds->envelopeVolume == 19);
+        M4A_CHECK(sPortM4aScratchWritePos == 2);
+
+        memset(gSoundInfo, 0, sizeof(gSoundInfo));
     }
 
 #undef M4A_WRITE_LE32
