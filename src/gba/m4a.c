@@ -642,10 +642,39 @@ void SoundInit(SoundInfo* soundInfo) {
     soundInfo->maxChannels = 8;
     soundInfo->masterVolume = 15;
     soundInfo->plynote = ply_note;
+#ifdef __PORT__
+    /* Host: promote callable callback from nullsub to the real CGB
+     * updater implementation. */
+    soundInfo->CgbSound = CgbSound;
+#else
     soundInfo->CgbSound = nullsub_544;
+#endif
+#ifdef __PORT__
+    /* Host: promote one callable callback at a time. `CgbOscOff` just
+     * writes channel-off values into NR registers and is safe to use
+     * before MPlayExtender() installs the full CGB callback set. */
+    soundInfo->CgbOscOff = CgbOscOff;
+#else
     soundInfo->CgbOscOff = (CgbOscOffFunc)nullsub_544;
+#endif
+#ifdef __PORT__
+    /* Host: promote one callable no-op path at a time. `MidiKeyToCgbFreq`
+     * is a pure table-driven helper and safe before MPlayExtender() wires
+     * the rest of the CGB callbacks, so we can use the real implementation
+     * here instead of the nullsub placeholder. */
+    soundInfo->MidiKeyToCgbFreq = MidiKeyToCgbFreq;
+#else
     soundInfo->MidiKeyToCgbFreq = (MidiKeyToCgbFreqFunc)nullsub_544;
+#endif
+#ifdef __PORT__
+    /* Host: route ExtVolPit through the real per-track volume/pitch
+     * updater instead of a nullsub. This callback slot is ABI-opaque
+     * in the original m4a code and is routinely assigned via function
+     * pointer casts in this TU. */
+    soundInfo->ExtVolPit = (ExtVolPitFunc)TrkVolPitSet;
+#else
     soundInfo->ExtVolPit = (ExtVolPitFunc)nullsub_544;
+#endif
 
     MPlayJumpTableCopy(gMPlayJumpTable);
 
@@ -1219,7 +1248,7 @@ void CgbSound(void) {
                         *nrx0ptr = channels->sweep;
                         // fallthrough
                     case 2:
-                        *nrx1ptr = ((u32)channels->nextWave << 6) + channels->length;
+                        *nrx1ptr = ((u32)(uintptr_t)channels->nextWave << 6) + channels->length;
                         goto init_env_step_time_dir;
                     case 3:
                         if (channels->nextWave != channels->currentWave) {
@@ -1239,7 +1268,7 @@ void CgbSound(void) {
                         break;
                     default:
                         *nrx1ptr = channels->length;
-                        *nrx3ptr = (u32)channels->nextWave << 3;
+                        *nrx3ptr = (u32)(uintptr_t)channels->nextWave << 3;
                     init_env_step_time_dir:
                         envelopeStepTimeAndDir = channels->attack + CGB_NRx2_ENV_DIR_INC;
                         if (channels->length)
@@ -1687,9 +1716,9 @@ void ply_xxx(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
     }
 
 void ply_xwave(MusicPlayerInfo* mplayInfo, MusicPlayerTrack* track) {
-    u32 wav;
+    uintptr_t wav = 0;
 
-    READ_XCMD_BYTE(wav, 0) // UB: uninitialized variable
+    READ_XCMD_BYTE(wav, 0)
     READ_XCMD_BYTE(wav, 1)
     READ_XCMD_BYTE(wav, 2)
     READ_XCMD_BYTE(wav, 3)

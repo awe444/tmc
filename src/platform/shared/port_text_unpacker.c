@@ -31,17 +31,15 @@
  *       is 0; that's how glyphs preserve the background under
  *       transparent foreground pixels.
  *
- * Without these the host build aborts the moment any text needs to be
- * drawn (see backtrace in PR description: file-select text trips the
- * trap stub and `Port_AsmStubTrap` calls `abort()`). The save-select
- * "missing foreground elements" the user reported are the file-select
- * labels, which also funnel through these primitives.
+ * Before these helpers were ported, any text draw path that reached the
+ * asm-only symbols would fail at link/runtime depending on build mode.
+ * The save-select "missing foreground elements" the user reported are
+ * file-select labels, which also funnel through these primitives.
  *
  * The C ports below are direct, behaviour-preserving translations of
  * the THUMB sequences in `asm/src/code_08001A7C.s` (lines 875-964).
- * They are kept in their own translation unit so the remaining stubs
- * in `asm_stubs.c` continue to mechanically map 1:1 to the unported
- * `.s` files.
+ * They are kept in their own translation unit so the text-path port is
+ * easy to diff against `asm/src/code_08001A7C.s`.
  */
 #include "global.h"
 

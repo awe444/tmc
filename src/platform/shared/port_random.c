@@ -23,13 +23,9 @@
  *
  * Why port this now: the SDL host build's earliest user of `Random`
  * is `src/fileselect.c::sub_0805066C` (the file-select cursor blink
- * driver), which fires every frame the file-select task is alive. The
- * matching `PORT_ASM_STUB(Random)` in `asm_stubs.c` `abort()`s on the
- * first invocation, so the boot path SIGABRTs as soon as the file-
- * select task starts ticking. Replacing the stub with this strong
- * definition unblocks that path; the `Random` entry in the
- * `asm_stubs.c` include list is removed in the same change so the
- * stub is no longer compiled and no symbol-clash warning fires.
+ * driver), which fires every frame the file-select task is alive.
+ * Providing this strong definition keeps that runtime path deterministic
+ * and unblocks file-select progression in host builds.
  */
 
 #ifdef __PORT__

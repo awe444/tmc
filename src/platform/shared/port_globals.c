@@ -25,6 +25,7 @@
  */
 #include "area.h"
 #include "affine.h"
+#include "backgroundAnimations.h"
 #include "beanstalkSubtask.h"
 #include "common.h"
 #include "color.h"
@@ -33,6 +34,8 @@
 #include "main.h"
 #include "message.h"
 #include "enemy.h"
+#include "kinstone.h"
+#include "manager/diggingCaveEntranceManager.h"
 #include "pauseMenu.h"
 #include "player.h"
 #include "room.h"
@@ -373,10 +376,48 @@ SoundPlayingInfo gSoundPlayingInfo;
 RoomMemory gRoomMemory[8];
 RoomMemory* gCurrentRoomMemory = gRoomMemory;
 Entity* gEnemyTarget;
+CarriedEntity gCarriedEntity;
+DiggingCaveEntranceTransition gDiggingCaveEntranceTransition;
+FuseInfo gFuseInfo;
+Entity* gPlayerClones[3];
+const s8 gShakeOffsets[256];
+const void* gLilypadRails[256];
 UpdateContext gUpdateContext;
 u8 gEntCount;
 u8 gManagerCount;
 u8 gCollidableCount;
+
+/* Collision interaction matrix (`data/const/collisionMatrix.s::gCollisionMtx`
+ * on GBA). `src/collision.c` indexes `ColSettings gCollisionMtx[173 * 34]`
+ * (70584 B). The previous 4 KiB weak placeholder in port_unresolved_stubs.c
+ * was far too small and could corrupt neighbouring BSS once collision runs. */
+typedef struct {
+    u8 orgKnockbackSpeed;
+    u8 orgIframes;
+    u8 orgKnockbackDuration;
+    u8 tgtDamage;
+    u8 orgConfusedTime;
+    u8 tgtKnockbackSpeed;
+    s8 tgtIframes;
+    u8 tgtKnockbackDuration;
+    u8 orgDamage;
+    u8 tgtConfusedTime;
+    u8 flags;
+    u8 pad;
+} PortCollisionMatrixColSettings;
+
+_Static_assert(sizeof(PortCollisionMatrixColSettings) == 12,
+               "sync with ColSettings in src/collision.c");
+
+PortCollisionMatrixColSettings gCollisionMtx[173 * 34] __attribute__((aligned(16)));
+
+/* Dungeon map scratch buffer (`src/common.c::DrawDungeonMap`). Needs
+ * `sizeof(u32) * 0x800` bytes; the 4 KiB unresolved stub underran by 4 KiB. */
+u32 gDungeonMap[0x800] __attribute__((aligned(16)));
+
+/* Background animation slots (`include/backgroundAnimations.h`). */
+BgAnimation gBgAnimations[MAX_BG_ANIMATIONS] __attribute__((aligned(16)));
+
 u32 gUsedPalettes;
 Palette gPaletteList[0x10];
 Palette gUnk_02001A3C;

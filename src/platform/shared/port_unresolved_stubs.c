@@ -26,48 +26,23 @@
  *     host platform we support, producing an immediate SIGSEGV - the
  *     same "loud abort" contract asm_stubs.c uses.
  *
- * A small set of symbols that are *always* called as functions (by
- * naming convention) get a proper `abort()` stub that prints the
- * offending name before exiting. This saves a round trip through a
- * debugger for the common case of "the port called into unported code".
- *
  * This file was produced by inspecting the ld error log from a
  * `TMC_LINK_GAME_SOURCES=ON` build. To regenerate after adding more
  * real definitions, see the roadmap notes in docs/sdl_port.md.
  */
-#include <stdio.h>
-#include <stdlib.h>
 #include <stdint.h>
 #include "map.h"
 
 #if defined(__GNUC__) || defined(__clang__)
 #define PORT_WEAK __attribute__((weak))
-#define PORT_NORETURN __attribute__((noreturn))
 #else
 #define PORT_WEAK
-#define PORT_NORETURN
 #endif
 
 /* ---- Function-like stubs ---------------------------------------------- */
-
-static PORT_NORETURN void Port_UnresolvedTrap(const char* name) {
-    fprintf(stderr,
-            "[tmc_sdl] FATAL: unresolved function called: %s()\n"
-            "         See docs/sdl_port.md, roadmap PR #2b.4b.\n",
-            name);
-    fflush(stderr);
-    abort();
-}
-
-/* Each function stub is tagged `weak` so that when the real definition
- * comes online (either from a newly-linked src/ TU or from a future
- * port_* implementation), it transparently replaces the stub. */
-#define PORT_UNRESOLVED_FUNC(name)            \
-    PORT_NORETURN void name(void);            \
-    PORT_WEAK PORT_NORETURN void name(void) { \
-        Port_UnresolvedTrap(#name);           \
-    }
-/* 38 function-like symbols. */
+/* No unresolved function placeholders remain in this TU.
+ * Earlier abort-trap stubs have been replaced by strong host definitions
+ * in dedicated files as systems were ported in. */
 /* Tile clone/index/set helpers are strongly defined in
  * port_entity_runtime.c. */
 /* Tile/act-tile/collision accessors are strongly defined in
@@ -96,16 +71,15 @@ static PORT_NORETURN void Port_UnresolvedTrap(const char* name) {
 
 /* ---- Data placeholders ------------------------------------------------ */
 /*
- * Weak zero-filled BSS for the remaining 809 symbols. Each placeholder
- * is 256 bytes with 16-byte alignment -- large enough for any single
- * struct the game references, plus slack so adjacent stubs do not
- * alias into one another if the game happens to index past the end.
- * The matching ROM build never sees this file (it is SDL-only) and the
- * real layouts of these globals live in the as-yet-unported ARM asm
- * source / data tables, so there is no struct-size requirement to
- * honour here.
+ * This TU used to emit a large batch of generic blob placeholders.
+ * As the host port matured, those have been replaced by either:
+ *   - strong typed host definitions in dedicated TUs (`port_globals.c`,
+ *     `m4a_host.c`, `port_rom_data_stubs.c`, etc.), or
+ *   - explicit weak typed fallbacks below where "missing data degrades
+ *     safely" and real extracted data may override at link time.
+ *
+ * Keep this section focused on named, typed fallbacks only.
  */
-#define PORT_UNRESOLVED_DATA(name) char name[4096] PORT_WEAK __attribute__((aligned(16)))
 
 /* ButtonUIElement_Actions / EzloNagUIElement_Actions: strong host definitions
  * in ui.c (__PORT__). RupeeKeyDigits: port_ui_rom_data.c (USA baserom). */
@@ -150,20 +124,34 @@ char gBG0Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
 char gBG1Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
 char gBG2Buffer[0x800] PORT_WEAK __attribute__((aligned(16)));
 char gBG3Buffer[0x1000] PORT_WEAK __attribute__((aligned(16)));
-PORT_UNRESOLVED_DATA(gBgAnimations);
-PORT_UNRESOLVED_DATA(gCarriedEntity);
+/* gBgAnimations: strong host definition in port_globals.c (real
+ * `BgAnimation[MAX_BG_ANIMATIONS]` size; the 4 KiB placeholder was
+ * oversized but untyped). */
+/* gCarriedEntity: strong host definition in port_globals.c. */
 /* gChooseFileState aliases gMenu via an `alias` attribute in
  * port_globals.c (preserves the GBA's union over offset 0x80). */
-PORT_UNRESOLVED_DATA(gCollisionMtx);
-PORT_UNRESOLVED_DATA(gDiggingCaveEntranceTransition);
-PORT_UNRESOLVED_DATA(gDungeonMap);
+/* gCollisionMtx / gDungeonMap: strong host definitions in port_globals.c. */
+/* gDiggingCaveEntranceTransition: strong host definition in port_globals.c. */
 /* gEEPROMConfig: strong default in port_globals.c (non-demo builds). */
 /* gPlayerEntity / gAuxPlayerEntities / gEntities have strong host
  * definitions in port_globals.c (placed contiguously in a single
  * named BSS section to satisfy `MemClear(&gPlayerEntity, 10880)`).
  * gEntityLists / gEntityListsBackup likewise. */
-PORT_UNRESOLVED_DATA(gFigurines);
-PORT_UNRESOLVED_DATA(gFuseInfo);
+/* Figurine table fallback.
+ *
+ * `src/menu/figurineMenu.c` treats this as an array of
+ *   struct { u8* pal; u8* gfx; int size; int zero; }
+ * and indexes up to 136 entries depending on save progression.
+ * Keep it weak and typed so reads stay in-bounds and future real data
+ * definitions override this host fallback without link changes. */
+typedef struct {
+    u8* pal;
+    u8* gfx;
+    int size;
+    int zero;
+} PortFigurine;
+PORT_WEAK PortFigurine gFigurines[136] __attribute__((aligned(16)));
+/* gFuseInfo: strong host definition in port_globals.c. */
 /* gGfxGroups / gGlobalGfxAndPalettes have moved to
  * src/platform/shared/port_rom_data_stubs.c, which provides strong
  * host-side stand-ins so that LoadGfxGroup() short-circuits cleanly
@@ -177,7 +165,7 @@ PORT_UNRESOLVED_DATA(gFuseInfo);
  * out-of-bounds reads in `UpdateUIElements` produced a NULL function
  * pointer call. */
 /* gIntroState aliases gMenu via an `alias` attribute in port_globals.c. */
-PORT_UNRESOLVED_DATA(gLilypadRails);
+/* gLilypadRails: strong host definition in port_globals.c. */
 /* gMPlayInfos / gMPlayInfos2 / gMPlayTracks have moved to
  * src/platform/shared/m4a_host.c, which provides strong host BSS of
  * the proper `MusicPlayerInfo` / `MusicPlayerTrack` types. The
@@ -230,13 +218,18 @@ char gOAMControls[0xB74] PORT_WEAK __attribute__((aligned(16)));
  * for the same reason as gGfxGroups above (LoadPaletteGroup needs a
  * non-NULL terminator entry to short-circuit). */
 /* gPaletteList has a strong typed host definition in port_globals.c. */
-PORT_UNRESOLVED_DATA(gPeahatChargeDirectionOffsets);
-PORT_UNRESOLVED_DATA(gPlayerClones);
+/* `src/enemy/peahat.c` uses this as `const s8[2]` (±4 heading jitter).
+ * The decomp keeps its in-file definition commented out for alignment,
+ * so provide a weak typed fallback here. */
+PORT_WEAK const s8 gPeahatChargeDirectionOffsets[2] __attribute__((aligned(16))) = {
+    4, -4,
+};
+/* gPlayerClones: strong host definition in port_globals.c. */
 /* gPlayerEntity lives in port_globals.c (entity arena). */
 /* gFadeControl / gPlayerState are strongly defined in port_globals.c. */
 /* gRoomMemory / gRoomTransition / gRoomVars / gSave / script context
  * globals are strongly defined in port_globals.c. */
-PORT_UNRESOLVED_DATA(gShakeOffsets);
+/* gShakeOffsets: strong host definition in port_globals.c. */
 /* Sprite metadata tables have strong typed host definitions in
  * port_globals.c. */
 /* gCollidableCount / gFrameObjLists / gSpritePtrs have strong typed host
