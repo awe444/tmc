@@ -120,6 +120,11 @@ void Port_RunGameLoop(void (*entry)(void)) {
     s_game_loop_active = 0;
 }
 
+/* Host has no hardware IRQ vector dispatch path. Keep this symbol defined
+ * so INTR_VECTOR assignments from game code remain harmless if invoked. */
+void ram_IntrMain(void) {
+}
+
 /* ---------- Unprefixed alias for VBlankIntrWait ------------------------ */
 /*
  * Sub-step 2b.4: the real `src/main.c` and `src/interrupts.c` call

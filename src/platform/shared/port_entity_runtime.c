@@ -92,12 +92,15 @@
 #include "collision.h"
 #include "entity.h"
 #include "map.h"
+#include "menu.h"
 #include "room.h"
 #include "script.h"
 #include "sound.h"
+#include "tileMap.h"
 #include "vram.h"
 
 extern u8 gMapSpecialTileToActTile[];
+extern const u8 gMapTileTypeToCollisionData[];
 
 /* ------------------------------------------------------------------------ */
 /* External symbols                                                          */
@@ -550,6 +553,30 @@ u32 GetTileTypeAtWorldCoords(s32 worldX, s32 worldY, u32 layer) {
     return GetTileTypeAtTilePos(Port_TilePosFromWorldPixels(worldX, worldY), layer);
 }
 
+u32 GetTileTypeAtRoomCoords(u32 roomX, u32 roomY, u32 layer) {
+    return GetTileTypeAtWorldCoords(roomX + gRoomControls.origin_x, roomY + gRoomControls.origin_y, layer);
+}
+
+u32 GetTileTypeAtEntity(Entity* entity) {
+    return GetTileTypeAtTilePos(COORD_TO_TILE(entity), entity->collisionLayer);
+}
+
+u32 GetTileTypeRelativeToEntity(Entity* entity, s32 xOffset, s32 yOffset) {
+    return GetTileTypeAtTilePos(COORD_TO_TILE_OFFSET(entity, xOffset, yOffset), entity->collisionLayer);
+}
+
+u32 sub_080B1B84(u32 tilePos, u32 layer) {
+    u32 tileType = GetTileTypeAtTilePos(tilePos, layer);
+    if (tileType < TILESET_SIZE) {
+        return (u32)gMapTileTypeToCollisionData[tileType];
+    }
+    return 0;
+}
+
+u32 sub_080B1BA4(u32 tilePos, u32 layer, u32 mask) {
+    return sub_080B1B84(tilePos, layer) & mask;
+}
+
 /* Port of `arm_GetActTileForTileType` in asm/src/intr.s. */
 u32 GetActTileForTileType(u32 tileType) {
     if (tileType < 0x4000u) {
@@ -564,6 +591,148 @@ u32 GetActTileForTileType(u32 tileType) {
         }
         return gMapSpecialTileToActTile[idx];
     }
+}
+
+u32 GetActTileAtTilePos(u16 tilePos, u8 layer) {
+    return GetActTileForTileType(GetTileTypeAtTilePos((u32)tilePos, (u32)layer));
+}
+
+u32 GetActTileAtWorldCoords(u32 worldX, u32 worldY, u32 layer) {
+    return GetActTileAtTilePos((u16)Port_TilePosFromWorldPixels((s32)worldX, (s32)worldY), (u8)layer);
+}
+
+u32 GetActTileAtRoomCoords(u32 roomX, u32 roomY, u32 layer) {
+    return GetActTileAtWorldCoords(roomX + gRoomControls.origin_x, roomY + gRoomControls.origin_y, layer);
+}
+
+u32 GetActTileAtEntity(Entity* entity) {
+    return GetActTileAtTilePos((u16)COORD_TO_TILE(entity), entity->collisionLayer);
+}
+
+u32 GetActTileRelativeToEntity(Entity* entity, s32 xOffset, s32 yOffset) {
+    return GetActTileAtTilePos((u16)COORD_TO_TILE_OFFSET(entity, xOffset, yOffset), entity->collisionLayer);
+}
+
+u32 GetCollisionDataAtTilePos(u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return 0;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    return mapLayer->collisionData[tilePos];
+}
+
+u32 GetCollisionDataAtWorldCoords(u32 worldX, u32 worldY, u32 layer) {
+    return GetCollisionDataAtTilePos(Port_TilePosFromWorldPixels((s32)worldX, (s32)worldY), layer);
+}
+
+u32 GetCollisionDataAtEntity(Entity* entity) {
+    return GetCollisionDataAtTilePos(COORD_TO_TILE(entity), entity->collisionLayer);
+}
+
+u32 GetCollisionDataRelativeTo(Entity* entity, s32 xOffset, s32 yOffset) {
+    return GetCollisionDataAtTilePos(COORD_TO_TILE_OFFSET(entity, xOffset, yOffset), entity->collisionLayer);
+}
+
+void SetCollisionData(u32 collisionData, u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    mapLayer->collisionData[tilePos] = (u8)collisionData;
+}
+
+void SetActTileAtTilePos(u32 actTile, u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    mapLayer->actTiles[tilePos] = (u16)actTile;
+}
+
+u32 GetTileIndex(u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return 0;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    return mapLayer->mapData[tilePos];
+}
+
+static void Port_UpdateRenderedTile(MapLayer* mapLayer, u32 tilePos, u32 layer, u16 tileIndex) {
+    u16* dest;
+    u16* subTiles;
+    u32 offset;
+
+    if ((gRoomControls.scroll_flags & 1u) != 0u) {
+        return;
+    }
+    offset = (tilePos & 0x3fu) * 2u + (tilePos & 0xfc0u) * 4u;
+    if (layer != LAYER_TOP) {
+        dest = gMapDataBottomSpecial + offset;
+    } else {
+        dest = gMapDataTopSpecial + offset;
+    }
+    subTiles = mapLayer->subTiles + ((u32)tileIndex * 4u);
+    dest[0] = subTiles[0];
+    dest[1] = subTiles[1];
+    dest[0x80] = subTiles[2];
+    dest[0x81] = subTiles[3];
+    if (gRoomControls.reload_flags != RELOAD_ALL) {
+        gUpdateVisibleTiles = 1;
+    }
+}
+
+void SetTile(u32 tileIndex, u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+    u16 tileType;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    mapLayer->mapData[tilePos] = (u16)tileIndex;
+
+    if (tileIndex < 0x4000u && tileIndex < TILESET_SIZE) {
+        tileType = mapLayer->tileTypes[tileIndex];
+        if (tileType < TILESET_SIZE) {
+            mapLayer->collisionData[tilePos] = gMapTileTypeToCollisionData[tileType];
+            mapLayer->actTiles[tilePos] = gMapTileTypeToActTile[tileType];
+        } else {
+            mapLayer->collisionData[tilePos] = 0;
+            mapLayer->actTiles[tilePos] = 0;
+        }
+    } else if (tileIndex >= 0x4000u && tileIndex < 0x4100u) {
+        mapLayer->actTiles[tilePos] = gMapSpecialTileToActTile[tileIndex - 0x4000u];
+    } else {
+        mapLayer->actTiles[tilePos] = 0;
+    }
+
+    Port_UpdateRenderedTile(mapLayer, tilePos, layer, (u16)tileIndex);
+}
+
+void CloneTile(u32 tileType, u32 tilePos, u32 layer) {
+    MapLayer* mapLayer;
+    u16 tileIndex;
+
+    if (tilePos >= MAX_MAP_SIZE * MAX_MAP_SIZE) {
+        return;
+    }
+    if (tileType >= TILESET_SIZE) {
+        return;
+    }
+    mapLayer = GetLayerByIndex(layer);
+    tileIndex = mapLayer->tileIndices[tileType];
+    if (tileIndex == 0xffffu) {
+        return;
+    }
+    SetTile(tileIndex, tilePos, layer);
 }
 
 /*

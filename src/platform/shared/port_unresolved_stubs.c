@@ -68,22 +68,12 @@ static PORT_NORETURN void Port_UnresolvedTrap(const char* name) {
         Port_UnresolvedTrap(#name);           \
     }
 /* 38 function-like symbols. */
-PORT_UNRESOLVED_FUNC(CloneTile)
-PORT_UNRESOLVED_FUNC(GetActTileAtEntity)
-PORT_UNRESOLVED_FUNC(GetActTileAtTilePos)
-PORT_UNRESOLVED_FUNC(GetActTileAtWorldCoords)
-PORT_UNRESOLVED_FUNC(GetActTileRelativeToEntity)
-PORT_UNRESOLVED_FUNC(GetCollisionDataAtEntity)
-PORT_UNRESOLVED_FUNC(GetCollisionDataAtTilePos)
-PORT_UNRESOLVED_FUNC(GetCollisionDataAtWorldCoords)
-PORT_UNRESOLVED_FUNC(GetCollisionDataRelativeTo)
-PORT_UNRESOLVED_FUNC(GetTileIndex)
-PORT_UNRESOLVED_FUNC(GetTileTypeAtEntity)
-PORT_UNRESOLVED_FUNC(GetTileTypeAtRoomCoords)
-PORT_UNRESOLVED_FUNC(GetTileTypeRelativeToEntity)
-PORT_UNRESOLVED_FUNC(SetActTileAtTilePos)
-PORT_UNRESOLVED_FUNC(SetTile)
-PORT_UNRESOLVED_FUNC(UpdateScrollVram)
+/* Tile clone/index/set helpers are strongly defined in
+ * port_entity_runtime.c. */
+/* Tile/act-tile/collision accessors are strongly defined in
+ * port_entity_runtime.c. */
+/* Tile-type query wrappers are strongly defined in
+ * port_entity_runtime.c. */
 /* The unprefixed `m4a*` entry points are now strongly defined by
  * `src/gba/m4a.c` itself (PR #7 part 1), which is compiled into
  * `tmc_game_sources` with the asm-only mixer routines stubbed
@@ -99,9 +89,10 @@ PORT_UNRESOLVED_FUNC(UpdateScrollVram)
  * strongly defined in port_oam_renderer.c (PR A of the title-screen
  * OAM-pipeline plan), so no abort-trap placeholder is needed for
  * them either. */
-PORT_UNRESOLVED_FUNC(ram_IntrMain)
-PORT_UNRESOLVED_FUNC(sub_080B1B84)
-PORT_UNRESOLVED_FUNC(sub_080B1BA4)
+/* UpdateScrollVram has a strong host definition in screenTileMap.c. */
+/* ram_IntrMain has a strong host definition in interrupts.c. */
+/* sub_080B1B84 / sub_080B1BA4 are strongly defined in
+ * port_entity_runtime.c. */
 
 /* ---- Data placeholders ------------------------------------------------ */
 /*
@@ -181,7 +172,6 @@ PORT_UNRESOLVED_DATA(bgmVaatiTransfigured);
 PORT_UNRESOLVED_DATA(bgmVaatiWrath);
 PORT_UNRESOLVED_DATA(bgmWindRuins);
 PORT_UNRESOLVED_DATA(gActiveItems);
-PORT_UNRESOLVED_DATA(gActiveScriptInfo);
 /* gArea: strong definition in port_globals.c (real `Area` size on host). */
 /* Area-indexed resource tables.
  *
@@ -225,25 +215,16 @@ PORT_UNRESOLVED_DATA(gBgAnimations);
 PORT_UNRESOLVED_DATA(gCarriedEntity);
 /* gChooseFileState aliases gMenu via an `alias` attribute in
  * port_globals.c (preserves the GBA's union over offset 0x80). */
-PORT_UNRESOLVED_DATA(gCollidableCount);
 PORT_UNRESOLVED_DATA(gCollisionMtx);
-PORT_UNRESOLVED_DATA(gCurrentRoomMemory);
-PORT_UNRESOLVED_DATA(gCurrentRoomProperties);
 PORT_UNRESOLVED_DATA(gDiggingCaveEntranceTransition);
 PORT_UNRESOLVED_DATA(gDungeonMap);
 PORT_UNRESOLVED_DATA(gDungeonNames);
 PORT_UNRESOLVED_DATA(gEEPROMConfig);
-PORT_UNRESOLVED_DATA(gEnemyTarget);
-PORT_UNRESOLVED_DATA(gEntCount);
 /* gPlayerEntity / gAuxPlayerEntities / gEntities have strong host
  * definitions in port_globals.c (placed contiguously in a single
  * named BSS section to satisfy `MemClear(&gPlayerEntity, 10880)`).
  * gEntityLists / gEntityListsBackup likewise. */
-PORT_UNRESOLVED_DATA(gExtraFrameOffsets);
-PORT_UNRESOLVED_DATA(gFadeControl);
 PORT_UNRESOLVED_DATA(gFigurines);
-PORT_UNRESOLVED_DATA(gFixedTypeGfxData);
-PORT_UNRESOLVED_DATA(gFrameObjLists);
 PORT_UNRESOLVED_DATA(gFuseInfo);
 PORT_UNRESOLVED_DATA(gGFXSlots);
 /* gGfxGroups / gGlobalGfxAndPalettes have moved to
@@ -258,7 +239,6 @@ PORT_UNRESOLVED_DATA(gGFXSlots);
  * `MemClear(&gHUD, sizeof(gHUD))` in HandleFileScreenEnter() and the
  * out-of-bounds reads in `UpdateUIElements` produced a NULL function
  * pointer call. */
-PORT_UNRESOLVED_DATA(gInteractableObjects);
 /* gIntroState aliases gMenu via an `alias` attribute in port_globals.c. */
 PORT_UNRESOLVED_DATA(gLilypadRails);
 /* gMPlayInfos / gMPlayInfos2 / gMPlayTracks have moved to
@@ -271,7 +251,6 @@ PORT_UNRESOLVED_DATA(gLilypadRails);
  * dereferenced way past their end by `m4aSoundInit()`'s `MPlayOpen`
  * loop once `NUM_MUSIC_PLAYERS` was promoted from 0 back to 0x20 in
  * PR #7 part 2.2.2.3 — see docs/sdl_port.md. */
-PORT_UNRESOLVED_DATA(gManagerCount);
 MapLayer gMapBottom __attribute__((aligned(16)));
 /* Main map-data blob source (`LoadMapData` reads offset ranges out of this).
  * Keep a host-local backing store large enough that offset-based reads don't
@@ -294,7 +273,6 @@ MapLayer gMapTop __attribute__((aligned(16)));
 /* gMenu has its strong host definition in port_globals.c (with
  * gIntroState / gChooseFileState aliased to it). */
 PORT_UNRESOLVED_DATA(gMessageChoices);
-PORT_UNRESOLVED_DATA(gMoreSpritePtrs);
 PORT_UNRESOLVED_DATA(gOamCmd);
 /* gOAMControls is sized explicitly. The struct in include/vram.h is
  *   8 (header) + 0x18 (_0[]) + 0x80*8 (oam[]) + 0xA0*8 (unk[]) = 0x920 bytes,
@@ -317,28 +295,26 @@ PORT_UNRESOLVED_DATA(gPaletteBufferBackup);
 /* gPaletteGroups has moved to src/platform/shared/port_rom_data_stubs.c
  * for the same reason as gGfxGroups above (LoadPaletteGroup needs a
  * non-NULL terminator entry to short-circuit). */
-PORT_UNRESOLVED_DATA(gPaletteList);
+/* gPaletteList has a strong typed host definition in port_globals.c. */
 PORT_UNRESOLVED_DATA(gPauseMenuOptions);
 PORT_UNRESOLVED_DATA(gPeahatChargeDirectionOffsets);
 PORT_UNRESOLVED_DATA(gPlayerClones);
 /* gPlayerEntity lives in port_globals.c (entity arena). */
-PORT_UNRESOLVED_DATA(gPlayerScriptExecutionContext);
-PORT_UNRESOLVED_DATA(gPlayerState);
+/* gFadeControl / gPlayerState are strongly defined in port_globals.c. */
 PORT_UNRESOLVED_DATA(gPossibleInteraction);
 PORT_UNRESOLVED_DATA(gPriorityHandler);
-PORT_UNRESOLVED_DATA(gRoomMemory);
-PORT_UNRESOLVED_DATA(gRoomTransition);
-PORT_UNRESOLVED_DATA(gRoomVars);
-PORT_UNRESOLVED_DATA(gSave);
-PORT_UNRESOLVED_DATA(gScriptExecutionContextArray);
+/* gRoomMemory / gRoomTransition / gRoomVars / gSave / script context
+ * globals are strongly defined in port_globals.c. */
 PORT_UNRESOLVED_DATA(gShakeOffsets);
-PORT_UNRESOLVED_DATA(gSmallChests);
-PORT_UNRESOLVED_DATA(gSoundPlayingInfo);
-PORT_UNRESOLVED_DATA(gSpriteAnimations_322);
-PORT_UNRESOLVED_DATA(gSpritePtrs);
+/* Sprite metadata tables have strong typed host definitions in
+ * port_globals.c. */
+/* gCollidableCount / gFrameObjLists / gSpritePtrs have strong typed host
+ * definitions in port_globals.c. */
 PORT_UNRESOLVED_DATA(gSubtasks);
 PORT_UNRESOLVED_DATA(gTextGfxBuffer);
-PORT_UNRESOLVED_DATA(gTilesForSpecialTiles);
+/* gCurrentRoomProperties / gInteractableObjects / gSmallChests /
+ * gTilesForSpecialTiles have strong typed host definitions (or alias)
+ * in port_globals.c. */
 PORT_UNRESOLVED_DATA(gTranslations);
 /* gUI has moved to src/platform/shared/port_globals.c (real `UI`
  * type) for the same reason as gHUD above. */
@@ -502,8 +478,8 @@ PORT_UNRESOLVED_DATA(gUnk_085C4620);
 PORT_UNRESOLVED_DATA(gUnk_086E8460);
 PORT_UNRESOLVED_DATA(gUpdateContext);
 PORT_UNRESOLVED_DATA(gUpdateVisibleTiles);
-PORT_UNRESOLVED_DATA(gUsedPalettes);
-PORT_UNRESOLVED_DATA(gVBlankDMA);
+/* gUsedPalettes / gVBlankDMA have strong typed host definitions in
+ * port_globals.c. */
 PORT_UNRESOLVED_DATA(gZeldaFollowerText);
 PORT_UNRESOLVED_DATA(gzHeap);
 PORT_UNRESOLVED_DATA(script_08012C48);
@@ -1031,8 +1007,6 @@ PORT_UNRESOLVED_DATA(sfxWind3);
  * loud-abort / zero-data behaviour the rest of this file uses. Real
  * definitions land when the corresponding scenes are wired in.
  */
-PORT_UNRESOLVED_FUNC(SetCollisionData)
-PORT_UNRESOLVED_FUNC(GetActTileAtRoomCoords)
 PORT_UNRESOLVED_DATA(script_PlayerGetElement);
 PORT_UNRESOLVED_DATA(script_MazaalBossObjectMazaal);
 PORT_UNRESOLVED_DATA(gUnk_080DD750);
