@@ -24,6 +24,7 @@
  * `include/global.h` for exactly this reason (PR #2b.3 wave 1).
  */
 #include "area.h"
+#include "affine.h"
 #include "beanstalkSubtask.h"
 #include "common.h"
 #include "color.h"
@@ -35,6 +36,7 @@
 #include "pauseMenu.h"
 #include "player.h"
 #include "room.h"
+#include "scroll.h"
 #include "script.h"
 #include "screen.h"
 #include "save.h"
@@ -45,6 +47,14 @@
 #include "vram.h"
 
 #include <stddef.h>
+
+typedef struct LinkedList2 LinkedList2;
+typedef struct {
+    void* table;
+    void* list_top;
+    Entity* current_entity;
+    void* restore_sp;
+} UpdateContext;
 
 /* Main system state. */
 Main gMain;
@@ -73,6 +83,32 @@ void Subtask_FigurineMenu(void);
 void Subtask_WorldEvent(void);
 void Subtask_FastTravel(void);
 void Subtask_LocalMapHint(void);
+void Subtask_MapHint_0(void);
+void Subtask_MapHint_1(void);
+void sub_080A6B04(void);
+void sub_080A6C1C(void);
+void Subtask_FastTravel_0(void);
+void Subtask_FastTravel_1(void);
+void Subtask_FastTravel_2(void);
+void Subtask_FastTravel_3(void);
+void Subtask_FastTravel_4(void);
+void sub_080A59AC(void);
+void sub_080A59C8(void);
+void sub_080A5A54(void);
+void sub_080A5A90(void);
+void sub_080A5AF4(void);
+void sub_080A5B34(void);
+void sub_080A5BB8(void);
+void sub_080A5C44(void);
+void sub_080A5C9C(void);
+void sub_080A6108(void);
+void sub_080A612C(void);
+void sub_080A6290(void);
+void sub_080A62E0(void);
+void sub_080A6650(void);
+void sub_080A667C(void);
+void sub_080A6024(void);
+void sub_080A6044(void);
 
 void (*const gUnk_0812901C[])(void) = {
     Subtask_FadeIn,
@@ -96,6 +132,221 @@ void (*const gSubtasks[])(void) = {
     Subtask_LocalMapHint,
 };
 
+/* Subtask dispatch/data tables from data/const/subtask.s.
+ *
+ * These symbols were previously weak byte blobs from
+ * port_roominit_graph_stubs.c. They are dereferenced as typed function/data
+ * tables by map-hint and fast-travel subtasks, so provide concrete host
+ * definitions to avoid indexing into untyped stub storage. */
+void (*const Subtask_MapHint_Functions[])(void) = {
+    Subtask_MapHint_0,
+    Subtask_MapHint_1,
+};
+
+void (*const gUnk_08128F1C[])(void) = {
+    sub_080A6B04,
+    sub_080A6C1C,
+};
+
+void (*const Subtask_FastTravel_Functions[])(void) = {
+    Subtask_FastTravel_0,
+    Subtask_FastTravel_1,
+    Subtask_FastTravel_2,
+    Subtask_FastTravel_3,
+    Subtask_FastTravel_4,
+};
+
+/* gUnk_08128F4C is a map-hint bit table indexed by `gUI.field_0x3`.
+ * Use a stable one-hot fallback mapping so hints still set deterministic
+ * bits without depending on unresolved data blobs. */
+const u16 gUnk_08128F4C[16] = {
+    0x0001, 0x0002, 0x0004, 0x0008, 0x0010, 0x0020, 0x0040, 0x0080,
+    0x0100, 0x0200, 0x0400, 0x0800, 0x1000, 0x2000, 0x4000, 0x8000,
+};
+
+/* Pause-menu dispatch tables from data/const/subtask.s.
+ * These are indexed directly by menuType in pause-menu handlers. */
+void (*const gUnk_08128D14[])(void) = {
+    sub_080A59AC,
+    sub_080A59C8,
+    sub_080A5A54,
+    sub_080A5A90,
+};
+
+void (*const gUnk_08128D24[])(void) = {
+    sub_080A5AF4,
+    sub_080A5B34,
+    sub_080A5BB8,
+};
+
+void (*const gUnk_08128D30[])(void) = {
+    sub_080A5C44,
+    sub_080A5C9C,
+};
+
+void (*const gUnk_08128DB0[])(void) = {
+    sub_080A6108,
+    sub_080A612C,
+};
+
+void (*const gUnk_08128DCC[])(void) = {
+    sub_080A6290,
+    sub_080A62E0,
+};
+
+void (*const gUnk_08128E78[])(void) = {
+    sub_080A6650,
+    sub_080A667C,
+};
+
+/* Pause/subtask small data tables that are still ROM-only in this port.
+ * Keep host fallbacks explicit and bounded instead of weak blob stubs. */
+u8 gUnk_08128DD4[4] = { 0, 0, 0, 0 };
+u8 gUnk_08128E80[4] = { 0, 0, 0, 0 };
+
+/* KeyButtonLayout streams consumed by sub_080A70AC(). Setting
+ * aButtonText=0xFF makes the encoded follow-up entry terminate the walk
+ * after one CreateUIElement() step, matching the host-safe sentinel
+ * strategy used in fileselect.c. */
+u8 gUnk_08128DD8[9] = {
+    0xFF, 0xD8, 0xFF, /* A button */
+    0xFF, 0xD8, 0x00, /* B button */
+    0xFF, 0xD8, 0x00, /* R button */
+};
+
+u8 gUnk_08128E84[9] = {
+    0xFF, 0xD8, 0xFF, /* A button */
+    0xFF, 0xD8, 0x00, /* B button */
+    0xFF, 0xD8, 0x00, /* R button */
+};
+
+/* sub_080A6F40() walks 2-byte pairs until first byte is zero. */
+u8 gUnk_08128F38[2] = { 0, 0 };
+
+/* Map-hint icon table: loops terminate on frameIndex == 0. */
+struct_gUnk_08128F58 gUnk_08128F58[] = {
+    { 0, 0, 0, 0, 0, 0 },
+};
+
+/* Text resources used by subtask.c.
+ * Keep these as explicit typed stand-ins instead of weak blob stubs. */
+u16 gDungeonNames[32] = { 0 };
+Font gUnk_08128FA8 = { 0 };
+Font gUnk_08128FC0 = { 0 };
+Font gUnk_08128FD8 = { 0 };
+Font gUnk_08129004 = { 0 };
+
+/* Pause-menu screen 7 tables. */
+void (*const gUnk_08128D58[])(void) = {
+    sub_080A6024,
+    sub_080A6044,
+};
+
+/* Input remap/routing byte tables consumed through gMenu.field_0xc. */
+u8 gUnk_08128C00[4] = { 0, 0, 0, 0 };
+u8 gUnk_08128DB8[4] = { 0, 0, 0, 0 };
+
+/* KeyButtonLayout blobs consumed by sub_080A70AC(). */
+u8 gUnk_08128D60[9] = {
+    0xFF, 0xD8, 0xFF, /* A button */
+    0xFF, 0xD8, 0x00, /* B button */
+    0xFF, 0xD8, 0x00, /* R button */
+};
+
+u8 gUnk_08128DBC[9] = {
+    0xFF, 0xD8, 0xFF, /* A button */
+    0xFF, 0xD8, 0x00, /* B button */
+    0xFF, 0xD8, 0x00, /* R button */
+};
+
+/* Pause-menu screen 2/5 routing and placement tables. */
+u8 gUnk_08128D38[4] = { 0, 0, 0, 0 };
+u8 gUnk_08128D3C[32] = { 0 };
+u8 gUnk_08128D43[64] = { 0 };
+u8 gUnk_08128D51[4] = { 0, 0, 0, 0 };
+
+u8 gUnk_08128C04[9] = {
+    0xFF, 0xD8, 0xFF, /* A button */
+    0xFF, 0xD8, 0x00, /* B button */
+    0xFF, 0xD8, 0x00, /* R button */
+};
+
+typedef struct {
+    u8 unk0;
+    u8 unk1;
+    u8 unk2;
+    u8 unk3;
+    u8 unk4;
+    u8 unk5;
+    u8 unk6;
+    u8 unk7;
+} PortPauseMenuGridEntry;
+
+#define PORT_PMENU_GRID_ENTRY \
+    {                         \
+        0xFF, 0xFF, 0xFF, 0xFF, 0, 0, 0, 0 \
+    }
+
+PortPauseMenuGridEntry gUnk_08128C14[16] = {
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+};
+
+PortPauseMenuGridEntry gUnk_08128C94[16] = {
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+    PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY, PORT_PMENU_GRID_ENTRY,
+};
+
+/* Remaining pause/map-hint metadata tables. */
+const struct_gUnk_08128D70 gUnk_08128D70[8] = {
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0 },
+};
+
+const struct_gUnk_08128E94 gUnk_08128E94[16] = {
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+};
+
+typedef struct {
+    u8 unk0;
+    u8 unk1;
+    u8 unk2;
+    u8 unk3;
+    u8 unk4;
+    u8 unk5;
+    u8 unk6;
+    u8 unk7;
+} PortUnk08128DE8Entry;
+
+PortUnk08128DE8Entry gUnk_08128DE8[17] = {
+    { 0, 0, 0, 0, 0, 0, 0, 0 },
+};
+
 /* Core gameplay/session globals.
  *
  * These are heavily written during the TASK_GAME room-init path
@@ -113,6 +364,7 @@ RoomTransition gRoomTransition;
 RoomVars gRoomVars;
 SaveFile gSave;
 void** gCurrentRoomProperties;
+struct_02000040 gUnk_02000040;
 struct_gUnk_020000C0 gUnk_020000C0[0x30];
 ActiveScriptInfo gActiveScriptInfo;
 ScriptExecutionContext gScriptExecutionContextArray[0x20];
@@ -121,11 +373,13 @@ SoundPlayingInfo gSoundPlayingInfo;
 RoomMemory gRoomMemory[8];
 RoomMemory* gCurrentRoomMemory = gRoomMemory;
 Entity* gEnemyTarget;
+UpdateContext gUpdateContext;
 u8 gEntCount;
 u8 gManagerCount;
 u8 gCollidableCount;
 u32 gUsedPalettes;
 Palette gPaletteList[0x10];
+Palette gUnk_02001A3C;
 VBlankDMA gVBlankDMA;
 
 /* Minimal host-safe sprite table.
@@ -331,11 +585,328 @@ Window gCurrentWindow;
  * game code treats this as a 0x400-byte mirror and may copy the entire
  * BG+OBJ palette into it, so allocate 512 u16 entries (1024 B). */
 u16 gPaletteBuffer[512];
+u8 gPaletteBufferBackup[0x400];
+
+/* VBlank DMA staging buffers used by several map/effect managers.
+ * 0x500 u16 entries per page; host path uses one of two pages via
+ * gUnk_03003DE4[0], so allocate 0xA00 entries total. */
+u16 gUnk_02017AA0[0xA00];
+u16 gUnk_02017BA0[0xA00];
+
+/* Dungeon-map palette rotation scratch (8 entries). */
+u16 gUnk_02017830[8];
 
 
 /* IWRAM-resident byte arrays. `gUnk_03003DE4` is a 12-byte mailbox used
  * by the VBlank-DMA helpers in src/main.c::SetVBlankDMA(). */
 u8 gUnk_03003DE4[0xC];
+u8 gUnk_03003DE0;
+Screen gUnk_03001020;
+LinkedList2* gUnk_02018EA0;
+
+static void Port_EnemyActionNoOp(Entity* entity) {
+    (void)entity;
+}
+
+static void Port_MenuOverlayNoOp(void) {
+}
+
+/* Generic enemy action-dispatch fallback used by many enemy TUs. */
+void (*const gUnk_080012C8[256])(Entity*) = {
+    [0 ... 255] = Port_EnemyActionNoOp,
+};
+
+/* Fuser metadata fallback:
+ * - gUnk_08001A7C[fuserId][0..2] are consumed as three u16 fields.
+ * - gUnk_08001DCC[fuserId][0] gates offer availability against progress.
+ * Keep both tables safe and deterministic on host when ROM data is absent. */
+static u16 sPortFuserNpcDefault[3] = { 0, 0, 0 };
+u16* gUnk_08001A7C[256] = {
+    [0 ... 255] = sPortFuserNpcDefault,
+};
+
+static u8 sPortFuserOfferDefault[6] = { 0xFF, 0, 0, 0, 0, 0 };
+u8* gUnk_08001DCC[256] = {
+    [0 ... 255] = sPortFuserOfferDefault,
+};
+
+const u16 gUnk_08016984 = 0;
+u16 gUnk_080B2CD8[4];
+u16 gUnk_080B4410[7];
+void (*const gUnk_080B4458[8])(void) = {
+    [0 ... 7] = Port_MenuOverlayNoOp,
+};
+s16 gUnk_080B4468[16];
+s16 gUnk_080B4478[16];
+s16 gUnk_080B4488[16];
+s16 gUnk_080B4490[16];
+u16 gUnk_080B44A0[32];
+s16 gUnk_080B44A8[16];
+u32 gUnk_080B44B8[256];
+u16 gUnk_080C8F2C[11];
+u16 gUnk_080C8F54[11];
+static u32 sPortChargeBarTiles0[0x30];
+static u32 sPortChargeBarTiles1[0x30];
+static u32 sPortChargeBarTiles2[0x30];
+static u32 sPortChargeBarTiles3[0x30];
+u32* gUnk_080C8F7C[4] = {
+    sPortChargeBarTiles0,
+    sPortChargeBarTiles1,
+    sPortChargeBarTiles2,
+    sPortChargeBarTiles3,
+};
+u8 gUnk_080C9044[8];
+u16 gUnk_080C9058[2];
+/* Minimal looping frame script for Ezlo nag icon animation. */
+Frame gUnk_080C9094[3] = {
+    { .index = 0, .duration = 1, .spriteSettings.raw = 0, .frameSettings.raw = 0x80 },
+    { .index = 0, .duration = 30, .spriteSettings.raw = 0, .frameSettings.raw = 0x80 },
+    { .index = 1, .duration = 30, .spriteSettings.raw = 0, .frameSettings.raw = 0x80 },
+};
+const s8 gUnk_080CA2B4[16];
+const s8 gUnk_080CA6D4[3] = { 0, 8, -8 };
+static const Hitbox sPortSpearMoblinHitbox = {
+    .offset_x = 0,
+    .offset_y = 0,
+    .width = 8,
+    .height = 8,
+};
+const Hitbox* const gUnk_080CC944[4] = {
+    &sPortSpearMoblinHitbox,
+    &sPortSpearMoblinHitbox,
+    &sPortSpearMoblinHitbox,
+    &sPortSpearMoblinHitbox,
+};
+typedef struct {
+    union SplitHWord unk0;
+    u8 unk2;
+    u8 unk3;
+} PortGleerokHeapStruct2;
+PortGleerokHeapStruct2 gUnk_080CD7C4[8];
+static void Port_GleerokNoOp(void* this_) {
+    (void)this_;
+}
+void (*const gUnk_080CD7E4[16])(void*) = {
+    [0 ... 15] = Port_GleerokNoOp,
+};
+u8 gUnk_080CD7F8[1] = { 0xFF };
+void (*const gUnk_080CD810[16])(void*) = {
+    [0 ... 15] = Port_GleerokNoOp,
+};
+void (*const gUnk_080CD828[8])(void*) = {
+    [0 ... 7] = Port_GleerokNoOp,
+};
+u8 gUnk_080CD840[4];
+u8 gUnk_080CD844[128];
+void (*const gUnk_080CD848[8])(void*) = {
+    [0 ... 7] = Port_GleerokNoOp,
+};
+u8 gUnk_080CD850[1] = { 0xFF };
+u8 gUnk_080CD854[1] = { 0 };
+static const u8 sPortGleerokWeightTable0[1] = { 0xFF };
+static const u8 sPortGleerokWeightTable1[1] = { 0xFF };
+static const u8 sPortGleerokWeightTable2[1] = { 0xFF };
+const u8* gUnk_080CD86C[3] = {
+    sPortGleerokWeightTable0,
+    sPortGleerokWeightTable1,
+    sPortGleerokWeightTable2,
+};
+static const u8 sPortGleerokThresholdTable0[1] = { 0 };
+static const u8 sPortGleerokThresholdTable1[1] = { 0 };
+static const u8 sPortGleerokThresholdTable2[1] = { 0 };
+const u8* gUnk_080CD878[3] = {
+    sPortGleerokThresholdTable0,
+    sPortGleerokThresholdTable1,
+    sPortGleerokThresholdTable2,
+};
+u8 gUnk_080CD884[2];
+const u8 gUnk_080D15B4[4];
+TileEntity gUnk_080FEAC8[256];
+const EntityData gUnk_080FEBE8[1] = {
+    { .kind = 0xFF },
+};
+EntityData gUnk_080FEC28[1] = {
+    { .kind = 0xFF },
+};
+EntityData gUnk_080FECC8[1] = {
+    { .kind = 0xFF },
+};
+const EntityData gUnk_080FED18[1] = {
+    { .kind = 0xFF },
+};
+EntityData gUnk_080FED58[1] = {
+    { .kind = 0xFF },
+};
+const EntityData gUnk_080FEE18[1] = {
+    { .kind = 0xFF },
+};
+const EntityData gUnk_080FEE38[1] = {
+    { .kind = 0xFF },
+};
+const EntityData gUnk_080FEE48[1] = {
+    { .kind = 0xFF },
+};
+const EntityData gUnk_080FEE58[1] = {
+    { .kind = 0xFF },
+};
+EntityData gUnk_080FEE78[1] = {
+    { .kind = 0xFF },
+};
+
+/* Item pickup / Pegasus dash input masks (indexed by `animationState >> 1`). */
+u16 gUnk_0811BE38[8];
+const u16 gUnk_0811BE40[8];
+
+/* `cutsceneMiscObject.c` ROM tables (host zero-init until assets land). */
+u8 gUnk_08122AE0[32];
+u16 gUnk_08122AE8[32];
+s8 gUnk_08122AF8[64];
+u16 gUnk_08122B00[32];
+s16 gUnk_08122B0E[8];
+u16 gUnk_08122B1E[8];
+Coords8 gUnk_08122B2E[256];
+typedef struct {
+    Hitbox hit;
+    u8 _8[4];
+    u8 _c;
+} PortCutsceneHitboxCfg;
+PortCutsceneHitboxCfg gUnk_08122B3C[256];
+
+/* Staffroll task tables (layout must match `src/staffroll.c`). */
+typedef struct {
+    u8 menuType;
+    u16 font;
+    u8 unk_3;
+    u16 transitionTimer;
+    u16 gfxEntry;
+    u16 bg2XOffset;
+    u16 sm_unk_14;
+} PACKED StaffrollEntry;
+
+typedef struct {
+    u8 paletteGroup;
+    u8 gfxGroup;
+} PACKED StaffrollGfxEntry;
+
+StaffrollEntry gUnk_081272F0[128];
+StaffrollEntry gUnk_08127644[128];
+StaffrollEntry gUnk_08127998[128];
+const StaffrollGfxEntry gUnk_08127CEC[64];
+
+extern void StaffrollTask_State0(void);
+extern void StaffrollTask_State1(void);
+extern void StaffrollTask_State2(void);
+extern void StaffrollTask_State3(void);
+extern void StaffrollTask_State1MenuType0(void);
+extern void StaffrollTask_State1MenuType1(void);
+extern void StaffrollTask_State1MenuType2(void);
+extern void StaffrollTask_State1MenuType3(void);
+extern void StaffrollTask_State1MenuType4(void);
+extern void StaffrollTask_State1MenuType5(void);
+extern void StaffrollTask_State1MenuType6(void);
+extern void StaffrollTask_State1MenuType7(void);
+
+void (*const gUnk_08127D00[])(void) = {
+    StaffrollTask_State0,
+    StaffrollTask_State1,
+    StaffrollTask_State2,
+    StaffrollTask_State3,
+};
+
+void (*const gUnk_08127D10[])(void) = {
+    StaffrollTask_State1MenuType0,
+    StaffrollTask_State1MenuType1,
+    StaffrollTask_State1MenuType2,
+    StaffrollTask_State1MenuType3,
+    StaffrollTask_State1MenuType4,
+    StaffrollTask_State1MenuType5,
+    StaffrollTask_State1MenuType6,
+    StaffrollTask_State1MenuType7,
+};
+
+/* `HyruleTownTileSetManager_BuildSecondOracleHouse` DMAs one BG screen from here. */
+u8 gUnk_086E8460[0x800] __attribute__((aligned(16)));
+
+#if !defined(DEMO_USA) && !defined(DEMO_JP)
+/* `eeprom.c` declares this `extern` and assigns it in EEPROMConfigure(); a
+ * NULL default before configure runs was observable on the host when
+ * adjacent BSS was clobbered. Point at the TU-local 512-byte profile. */
+typedef struct EEPROMConfig EEPROMConfig;
+extern const EEPROMConfig gEEPROMConfig512;
+const EEPROMConfig* gEEPROMConfig = &gEEPROMConfig512;
+#endif
+
+/* Portal / macro-player scratch (`enterPortalSubtask.c`, `subtask.c`,
+ * `macroPlayer.c`, etc.); `MemClear(&gUnk_02018EB0, 0x28)` matches the GBA
+ * span (see `struct_02018EB0` in beanstalkSubtask.h). */
+struct_02018EB0 gUnk_02018EB0;
+
+/* `common.c::sub_0801AE44` clears 0x780 bytes as u16 fill. */
+s16 gUnk_02018EE0[0x780 / sizeof(s16)];
+
+/* `subtask.c` mirrors `gUI.unk_2a8` (0x100 bytes, see main.h). */
+u8 gUnk_03000420[0x100];
+
+/* Pause / UI digit tiles: `DmaCopy32` indexes up to (19 * 8) u32 words. */
+u32 gUnk_085C4620[256];
+
+u16* gZeldaFollowerText[8];
+
+u8 gzHeap[0x1000];
+
+u8 gUpdateVisibleTiles;
+
+OAMCommand gOamCmd;
+u8 gTextGfxBuffer[0x1000];
+struct {
+    u8 unk_00;
+    u8 unk_01[1];
+    s8 choiceCount;
+    s8 currentChoice;
+    u8 unk_04[4];
+    u16 unk_08[4];
+    u16 unk_10[4];
+} gMessageChoices;
+String8 gUnk_020227E8[8];
+u8 gUnk_020227DC;
+u8 gUnk_020227F0;
+u8 gUnk_020227F8;
+u8 gUnk_02022800;
+u16 gUnk_02022830[0xC00];
+u16 gUnk_020246B0[0xC00];
+
+typedef struct {
+    u16 unk0;
+    s8 unk2;
+    s8 unk3;
+    u8 filler[0x4];
+    u16 unk8[4];
+    u16 unk10[4];
+} PortTextState02034330;
+
+PortTextState02034330 gUnk_02034330;
+struct_02034480 gUnk_02034480;
+u8 gUnk_02034492[0x20];
+u8 gUnk_020344A0[8];
+
+typedef struct {
+    u8 unk0;
+    u8 unk1;
+    u16 unk2;
+} PortFadePaletteState;
+
+PortFadePaletteState gUnk_020354C0[0x20];
+/* `common.c` treats this symbol as the heap-entry table rooted at gzHeap+2. */
+extern u8 gUnk_02035542[0x0];
+__asm__(".global gUnk_02035542\n.set gUnk_02035542, gzHeap+2");
+WStruct gUnk_02036540[4];
+
+/* Minish-path / rafters parallax tilemap source (second plane at +0x2000). */
+u8 gUnk_02006F00[0x4000] __attribute__((aligned(16)));
+u16 gUnk_0200B640;
+u8 gUnk_02036A58[0x100];
+u8 gUnk_02036AD8[0x200];
+bool32 gUnk_02036BB8;
 
 /* Entity arena layout. The GBA build places `gPlayerEntity`,
  * `gAuxPlayerEntities`, and `gEntities` contiguously in EWRAM via
@@ -413,6 +984,15 @@ __asm__(".globl gPlayerEntity\n"
  * `gEntityListsBackup`, which `sub_0805E958` / `sub_0805E974`
  * `MemCopy` against and which any later traversal would otherwise
  * also walk through NULL. */
+/* EWRAM mirrors (linker.ld): gUnk_02021F00 @ 0x02021F00..0x02021F20,
+ * gUnk_020342F8 @ 0x020342F8..0x02034330. Pulled in by the title-screen
+ * object pipeline (pullableLever / npc / delayedEntityLoadManager). */
+u8 gUnk_020342F8[0x38];
+u16 gUnk_02021F00[0x10];
+
+/* Active item behaviors (see include/player.h static_assert). */
+ItemBehavior gActiveItems[MAX_ACTIVE_ITEMS];
+
 LinkedList gEntityLists[9];
 LinkedList gEntityListsBackup[9];
 

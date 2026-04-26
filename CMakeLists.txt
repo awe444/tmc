@@ -218,6 +218,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/port_entity_runtime.c
     src/platform/shared/save_file.c
     src/platform/shared/port_globals.c
+    src/platform/shared/port_collision_rom_data.c
     src/platform/shared/port_headers_check.c
     src/platform/shared/asm_stubs.c
     src/platform/shared/port_asm_misc.c
@@ -231,6 +232,13 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/scripted_input.c
     src/platform/shared/port_log.c
     src/platform/shared/port_map_data_provider.c
+    src/platform/shared/port_script_data_stubs.c
+    src/platform/shared/port_title_transitive_rom_data.c
+    src/platform/shared/port_bgm_data_stubs.c
+    src/platform/shared/port_ui_rom_data.c
+    src/platform/shared/port_sfx_data_stubs.c
+    src/platform/shared/port_sfx_named_data_stubs.c
+    src/platform/shared/port_sfx_hexlow_data_stubs.c
     src/platform/shared/port_roominit_graph_stubs.c
 )
 

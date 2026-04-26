@@ -212,4 +212,28 @@ void* gUnk_081092AC[16] = {
     (void*)sPortTextBorderZeroBuffer,
 };
 
+/* ------------------------------------------------------------------
+ * Remaining text constants still unresolved in `text.c`.
+ * Keep all host fallbacks inert/zero so text rendering becomes a
+ * no-op instead of dereferencing weak 256-byte placeholders.
+ */
+static uint8_t sPortTextMacroEmptyString[] = "";
+u8* gUnk_08109230[16] = {
+    sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString,
+    sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString,
+    sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString,
+    sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString, sPortTextMacroEmptyString,
+};
+
+u32 gUnk_08109244 = 0;
+u32 gUnk_0810926C[256];
+u16 gUnk_081092D4 = 0;
+
+typedef struct {
+    u8 filler0[12][16];
+} PortVStruct;
+
+PortVStruct gUnk_0810942E[16];
+u8 gUnk_081094CE[16 * 0xC0];
+
 #endif /* __PORT__ */
