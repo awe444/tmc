@@ -88,6 +88,13 @@ int Port_ShouldQuit(void);
 void Port_RequestQuit(void);
 
 /**
+ * Enable or disable host-side frame pacing sleeps. When disabled, each
+ * `Port_VBlankIntrWait()` call still advances one VBlank but does not
+ * wait for the ~59.7274 Hz boundary, allowing fast-forward test runs.
+ */
+void Port_SetUncappedFramePacing(int enabled);
+
+/**
  * Auto-quit after this many VBlanks (used for the CI smoke test:
  * --frames=N on the command line). 0 disables the budget.
  */
@@ -255,6 +262,9 @@ void Port_LogEvent(const char* category, const char* fmt, ...);
 
 /** Open the SDL window and renderer. Returns 0 on success. */
 int Port_VideoInit(int scale, int fullscreen);
+
+/** Enable/disable SDL renderer vsync for subsequent Port_VideoInit calls. */
+void Port_SetVideoVSync(int enabled);
 
 /** Tear down the SDL window. */
 void Port_VideoShutdown(void);

@@ -19,6 +19,7 @@ typedef struct {
     int scale;
     int fullscreen;
     int mute;
+    int uncapped_fps;
     int frames; /* >0: exit after N frames (CI smoke test) */
     int print_frame_hash;
     int assert_audio_active;
@@ -32,6 +33,7 @@ static void print_usage(const char* argv0) {
             "  --scale=N            Integer window scale (default: 4)\n"
             "  --fullscreen         Start in fullscreen-desktop mode\n"
             "  --mute               Disable audio output\n"
+            "  --uncapped-fps       Disable host frame pacing sleeps (run as fast as possible)\n"
             "  --save-dir=PATH      Directory containing tmc.sav (default: cwd)\n"
             "  --frames=N           Run for N frames then exit (for CI smoke tests)\n"
             "  --screenshot=PATH    After the final frame, write a PPM (P6) screenshot\n"
@@ -73,6 +75,7 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
     opts->scale = 4;
     opts->fullscreen = 0;
     opts->mute = 0;
+    opts->uncapped_fps = 0;
     opts->frames = 0;
     opts->print_frame_hash = 0;
     opts->assert_audio_active = 0;
@@ -91,6 +94,10 @@ static int parse_cli(int argc, char** argv, CliOptions* opts) {
         }
         if (strcmp(a, "--mute") == 0) {
             opts->mute = 1;
+            continue;
+        }
+        if (strcmp(a, "--uncapped-fps") == 0) {
+            opts->uncapped_fps = 1;
             continue;
         }
         if (strcmp(a, "--print-frame-hash") == 0) {
@@ -302,6 +309,7 @@ int main(int argc, char** argv) {
     Port_M4AAudioDiagReset();
 #endif
 
+    Port_SetVideoVSync(!opts.uncapped_fps);
     if (Port_VideoInit(opts.scale, opts.fullscreen) != 0) {
         SDL_Quit();
         return 1;
@@ -326,6 +334,7 @@ int main(int argc, char** argv) {
     }
 
     Port_SetFrameBudget(opts.frames);
+    Port_SetUncappedFramePacing(opts.uncapped_fps);
 
     /* Pre-initialise host globals (entity-list sentinels, etc.) that the
      * engine expects to be non-zero before any game code runs. */
