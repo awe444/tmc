@@ -614,6 +614,18 @@ void ExecuteScript(Entity* entity, ScriptExecutionContext* context) {
         ScriptCommand_0807F0C8,
     };
 
+#ifdef __PORT__
+    /* Room-init callback/data stubs can still leave some entity script-context
+     * links uninitialized on the host. Guard against obviously invalid
+     * pointers so we fail soft (script skipped) instead of crashing. */
+    if (context == NULL) {
+        return;
+    }
+    if (context != &gPlayerScriptExecutionContext &&
+        (context < &gScriptExecutionContextArray[0] || context >= &gScriptExecutionContextArray[0x20])) {
+        return;
+    }
+#endif
     if (!context->scriptInstructionPointer)
         return;
     if (context->wait) {

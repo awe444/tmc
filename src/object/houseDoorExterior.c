@@ -15,6 +15,9 @@
 #include "script.h"
 #include "sound.h"
 
+extern ScriptExecutionContext gScriptExecutionContextArray[0x20];
+extern ScriptExecutionContext gPlayerScriptExecutionContext;
+
 typedef struct {
     /*0x00*/ Entity base;
     /*0x68*/ u16 unk_68;
@@ -154,6 +157,15 @@ void HouseDoorExterior_Type3(HouseDoorExteriorEntity* this) {
 }
 
 static void sub_080868EC(Entity* entity, ScriptExecutionContext* context) {
+#ifdef __PORT__
+    if (context == NULL) {
+        return;
+    }
+    if (context != &gPlayerScriptExecutionContext &&
+        (context < &gScriptExecutionContextArray[0] || context >= &gScriptExecutionContextArray[0x20])) {
+        return;
+    }
+#endif
     u32 postScriptActions = context->postScriptActions;
     context->postScriptActions = 0;
     while (postScriptActions != 0) {

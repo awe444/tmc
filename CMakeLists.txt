@@ -83,12 +83,12 @@ option(TMC_LINK_GAME_SOURCES
 # "Game assets / `baserom.gba`" section).
 #
 # When set to a path to a 16,777,216-byte `baserom.gba`, the host build
-# runs `tools/port/gen_host_assets.py` at configure time to produce a
-# real `gfx_offsets.h` plus a `port_rom_assets.c` that defines
-# `gGlobalGfxAndPalettes[]`, `gGfxGroups[]`, and `gPaletteGroups[]`
-# from the player's own copy of the ROM. The generated source replaces
-# the all-zero `port_rom_data_stubs.c`, and the generated header is
-# placed earlier on the include search path so it wins over the stub.
+# runs `tools/port/gen_host_assets.py` at configure time to produce
+# `assets/gfx_offsets.h`, `assets/map_offsets.h`, and `port_rom_assets.c`
+# (`gGlobalGfxAndPalettes[]`, `gGfxGroups[]`, `gPaletteGroups[]`, …) from
+# the player's own copy of the ROM. The generated source replaces the
+# all-zero `port_rom_data_stubs.c`, and the generated headers are placed
+# earlier on the include search path so they win over the stubs.
 #
 # When unset (the default), the existing all-zero stubs are linked.
 # The boot path takes the `LoadGfxGroup` 0x0D short-circuit and the
@@ -231,6 +231,7 @@ set(TMC_PLATFORM_SHARED_SOURCES
     src/platform/shared/scripted_input.c
     src/platform/shared/port_log.c
     src/platform/shared/port_map_data_provider.c
+    src/platform/shared/port_roominit_graph_stubs.c
 )
 
 # ---------------------------------------------------------------------------
@@ -329,11 +330,11 @@ if(TMC_BASEROM)
     if(_tmc_gen_out)
         message(STATUS "  ${_tmc_gen_out}")
     endif()
-    # The generated header lives in `${_tmc_assets_inc}/gfx_offsets.h`
-    # but `#include "_port_offset_stubs.h"` from inside it needs to
-    # resolve. The configure-time-generated stub directory is already
-    # added to every include path further below, so just exporting the
-    # generated assets dir is enough here.
+    # Generated headers live under `${_tmc_assets_inc}/` (e.g.
+    # `gfx_offsets.h`, `map_offsets.h`) so `#include "assets/..."` resolves
+    # with `${_tmc_assets_out}` on the include path. `#include
+    # "_port_offset_stubs.h"` from `gfx_offsets.h` needs the configure-time
+    # stub directory already added below.
     list(APPEND TMC_GENERATED_ASSETS_INCLUDE_DIRS
         "${_tmc_assets_out}")
     list(APPEND TMC_PLATFORM_SHARED_SOURCES "${_tmc_gen_assets_c}")
@@ -1115,13 +1116,12 @@ set(TMC_GAME_LEAF_SOURCES
 add_library(tmc_game_sources STATIC ${TMC_GAME_LEAF_SOURCES})
 target_include_directories(tmc_game_sources PRIVATE
     # When `-DTMC_BASEROM=...` was passed, this is the directory holding
-    # the configure-time-generated `assets/gfx_offsets.h` plus the
-    # existing stub directory (so `_port_offset_stubs.h` resolves from
-    # inside that generated header). It's listed first so the real
-    # offsets win over the all-zero stub at
-    # `src/platform/shared/generated/assets/gfx_offsets.h`. Empty when
-    # `TMC_BASEROM` is unset, in which case the existing stub-only
-    # search path applies.
+    # the configure-time-generated `assets/gfx_offsets.h` and
+    # `assets/map_offsets.h` plus the existing stub directory (so
+    # `_port_offset_stubs.h` resolves from inside `gfx_offsets.h`). Listed
+    # first so real offsets win over the all-zero stubs under
+    # `src/platform/shared/generated/assets/`. Empty when `TMC_BASEROM` is
+    # unset, in which case the stub-only search path applies.
     ${TMC_GENERATED_ASSETS_INCLUDE_DIRS}
     include
     include/platform

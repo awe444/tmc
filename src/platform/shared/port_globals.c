@@ -40,6 +40,7 @@
 #include "save.h"
 #include "sound.h"
 #include "structures.h"
+#include "subtask.h"
 #include "ui.h"
 #include "vram.h"
 
@@ -52,6 +53,48 @@ Screen gScreen;
 RoomControls gRoomControls;
 struct_02000010 gUnk_02000010;
 u32 gRand;
+
+/* Subtask dispatch tables from data/const/subtask.s.
+ *
+ * Leaving these as unresolved zero stubs makes GameMain_Subtask call a NULL
+ * function pointer as soon as any room callback invokes `sub_080A71C4` /
+ * MenuFadeIn. */
+void Subtask_FadeIn(void);
+void Subtask_Init(void);
+void Subtask_Update(void);
+void Subtask_FadeOut(void);
+void Subtask_Die(void);
+void Subtask_PauseMenu(void);
+void Subtask_MapHint(void);
+void Subtask_KinstoneMenu(void);
+void Subtask_AuxCutscene(void);
+void Subtask_PortalCutscene(void);
+void Subtask_FigurineMenu(void);
+void Subtask_WorldEvent(void);
+void Subtask_FastTravel(void);
+void Subtask_LocalMapHint(void);
+
+void (*const gUnk_0812901C[])(void) = {
+    Subtask_FadeIn,
+    Subtask_Init,
+    Subtask_Update,
+    Subtask_FadeOut,
+    Subtask_Die,
+};
+
+void (*const gSubtasks[])(void) = {
+    Subtask_Exit,
+    Subtask_PauseMenu,
+    Subtask_Exit,
+    Subtask_MapHint,
+    Subtask_KinstoneMenu,
+    Subtask_AuxCutscene,
+    Subtask_PortalCutscene,
+    Subtask_FigurineMenu,
+    Subtask_WorldEvent,
+    Subtask_FastTravel,
+    Subtask_LocalMapHint,
+};
 
 /* Core gameplay/session globals.
  *
@@ -112,6 +155,26 @@ const SpritePtr gSpritePtrs[2048] = {
 TileEntity gSmallChests[8];
 SpecialTileEntry gTilesForSpecialTiles[MAX_SPECIAL_TILES];
 InteractableObject gInteractableObjects[0x20];
+
+typedef struct {
+    u16 tileType;
+    u16 kind;
+    u16 id;
+    u16 type;
+    u16 type2;
+    u16 unk_a;
+} PortSpecialTileSpawnData;
+
+/* `sub_0801AC98` scans these until tileType==0xffff. Keeping unresolved
+ * zero-filled placeholders causes an unbounded walk past the table. Use
+ * explicit terminators so the scan is a safe no-op until real data lands. */
+const PortSpecialTileSpawnData gUnk_080B44C0[] = {
+    { .tileType = 0xFFFF, .kind = 0, .id = 0, .type = 0, .type2 = 0, .unk_a = 0 },
+};
+
+const PortSpecialTileSpawnData gUnk_080B44C2[] = {
+    { .tileType = 0xFFFF, .kind = 0, .id = 0, .type = 0, .type2 = 0, .unk_a = 0 },
+};
 
 typedef struct {
     u16 index;

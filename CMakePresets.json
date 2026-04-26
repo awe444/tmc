@@ -29,10 +29,32 @@
                 "TMC_PORT_PLATFORM": "sdl",
                 "TMC_GAME_VERSION": "USA"
             }
+        },
+        {
+            "name": "sdl-debug-baserom",
+            "inherits": "sdl-debug",
+            "displayName": "SDL port (Debug + ROM assets)",
+            "description": "Debug build with TMC_BASEROM from the TMC_BASEROM environment variable (absolute path to a 16 MiB baserom.gba). See INSTALL_SDL.md.",
+            "binaryDir": "${sourceDir}/build/sdl-debug-baserom",
+            "cacheVariables": {
+                "TMC_BASEROM": "$env{TMC_BASEROM}"
+            }
+        },
+        {
+            "name": "sdl-release-baserom",
+            "inherits": "sdl-release",
+            "displayName": "SDL port (Release + ROM assets)",
+            "description": "Release build with TMC_BASEROM from the TMC_BASEROM environment variable (absolute path to a 16 MiB baserom.gba). See INSTALL_SDL.md.",
+            "binaryDir": "${sourceDir}/build/sdl-release-baserom",
+            "cacheVariables": {
+                "TMC_BASEROM": "$env{TMC_BASEROM}"
+            }
         }
     ],
     "buildPresets": [
         { "name": "sdl-debug",   "configurePreset": "sdl-debug" },
-        { "name": "sdl-release", "configurePreset": "sdl-release" }
+        { "name": "sdl-release", "configurePreset": "sdl-release" },
+        { "name": "sdl-debug-baserom",   "configurePreset": "sdl-debug-baserom" },
+        { "name": "sdl-release-baserom", "configurePreset": "sdl-release-baserom" }
     ]
 }

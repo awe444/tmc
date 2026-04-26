@@ -4257,10 +4257,16 @@ void sub_0807C8B0(u16* data, u32 width, u32 height) {
     u16* src_ptr;
     u16* dst_ptr_cpy;
     u16* src_ptr_cpy;
+#ifdef __PORT__
+    s32 innerIndex;
+    s32 index;
+    s32 diff;
+#else
     u32 innerIndex;
     u32 index;
-    u16* prev_line;
     u32 diff;
+#endif
+    u16* prev_line;
 
     src_ptr = data + width * height - 1;
     dst_ptr = data + (height - 1) * 0x40 + (width - 1);
