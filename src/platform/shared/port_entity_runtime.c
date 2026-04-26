@@ -94,6 +94,7 @@
 #include "map.h"
 #include "room.h"
 #include "script.h"
+#include "sound.h"
 #include "vram.h"
 
 extern u8 gMapSpecialTileToActTile[];
@@ -103,6 +104,11 @@ extern u8 gMapSpecialTileToActTile[];
 /* ------------------------------------------------------------------------ */
 
 extern void ram_DrawDirect(OAMCommand* cmd, uint32_t spriteIndex, uint32_t frameIndex);
+/* ROM queue backing for asm `EnqueueSFX` / `DrawEntity` glue.
+ * Linker script places these at fixed EWRAM addresses on GBA; on host,
+ * plain BSS symbols are sufficient. */
+u8 gUnk_02024048;
+u16 gUnk_02021F20[8];
 
 /* `gUpdateContext` is a 256-byte zero-init weak placeholder in
  * `port_unresolved_stubs.c`; `entity.c` reads/writes it through a
@@ -278,6 +284,17 @@ static int port_check_on_screen(const Entity* this) {
     return 1;
 }
 
+/* Per-frame SFX queue used by asm `EnqueueSFX` / `DrawEntity`.
+ * The ROM drains this queue from `DrawEntity` after enqueueing a visible
+ * entity, and clears it when draw is skipped. */
+static void port_drain_enqueued_sfx(void) {
+    u8 count = gUnk_02024048;
+    gUnk_02024048 = 0;
+    for (u8 i = 0; i < count; i++) {
+        SoundReq(gUnk_02021F20[i]);
+    }
+}
+
 /* Replaces `asm/src/code_08003FC4.s::DrawEntity`.
  *
  * Behavior summary (matching the ROM):
@@ -309,11 +326,13 @@ void DrawEntity(Entity* this) {
     const uint8_t ss_byte = *(const uint8_t*)&this->spriteSettings;
     const uint32_t draw = ss_byte & 3u;
     if (draw == 0u) {
+        gUnk_02024048 = 0;
         return;
     }
 
     if (draw != 3u) {
         if (!port_check_on_screen(this)) {
+            gUnk_02024048 = 0;
             return;
         }
     }
@@ -322,12 +341,29 @@ void DrawEntity(Entity* this) {
      * a frameIndex slot with non-rendered states, e.g. pauseMenu.c).
      * Bail before we touch gFrameObjLists. */
     if (this->frameIndex == 0xffu) {
+        gUnk_02024048 = 0;
         return;
     }
 
     OAMCommand cmd;
     port_compose_oam_cmd(this, &cmd);
     ram_DrawDirect(&cmd, (uint32_t)(uint16_t)this->spriteIndex, (uint32_t)this->frameIndex);
+    port_drain_enqueued_sfx();
+}
+
+void EnqueueSFX(u32 sound) {
+    u8 count = gUnk_02024048;
+    if (count >= 8u) {
+        return;
+    }
+    gUnk_02024048 = (u8)(count + 1u);
+    gUnk_02021F20[count] = (u16)sound;
+}
+
+void SoundReqClipped(Entity* this, u32 sound) {
+    if (port_check_on_screen(this)) {
+        SoundReq(sound);
+    }
 }
 
 /* ------------------------------------------------------------------------ */
