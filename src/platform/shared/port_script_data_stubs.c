@@ -1,0 +1,75 @@
+#ifdef __PORT__
+
+/*
+ * Strong host fallbacks for asm-only script blobs.
+ *
+ * These symbols are still produced by asm includes in `data/scripts.s`,
+ * which are not linked in the current SDL host build. Moving them out of
+ * `port_unresolved_stubs.c` reduces weak-placeholder surface area while
+ * keeping link behavior deterministic for the host path.
+ */
+#define PORT_STRONG_SCRIPT_DATA(name) unsigned char name[4096]
+
+PORT_STRONG_SCRIPT_DATA(script_08012C48);
+PORT_STRONG_SCRIPT_DATA(script_08015B14);
+PORT_STRONG_SCRIPT_DATA(script_BedAtSimons);
+PORT_STRONG_SCRIPT_DATA(script_BedInLinksRoom);
+PORT_STRONG_SCRIPT_DATA(script_BigGoronKinstone1);
+PORT_STRONG_SCRIPT_DATA(script_BigGoronKinstone2);
+PORT_STRONG_SCRIPT_DATA(script_BigGoronKinstone3);
+PORT_STRONG_SCRIPT_DATA(script_BusinessScrubIntro);
+PORT_STRONG_SCRIPT_DATA(script_CarlovKinstone);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneMiscObjectMinishCap);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneMiscObjectSwordInChest);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneMiscObjectTheLittleHat);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneOrchestratorIntro);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneOrchestratorIntro2);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneOrchestratorMinishVaati);
+PORT_STRONG_SCRIPT_DATA(script_CutsceneOrchestratorTakeoverCutscene);
+PORT_STRONG_SCRIPT_DATA(script_EzloTalkOcarina);
+PORT_STRONG_SCRIPT_DATA(script_GhostBrotherKinstone);
+PORT_STRONG_SCRIPT_DATA(script_GormanFirstAppearance);
+PORT_STRONG_SCRIPT_DATA(script_Goron1Kinstone2);
+PORT_STRONG_SCRIPT_DATA(script_Goron1Kinstone3);
+PORT_STRONG_SCRIPT_DATA(script_Goron1Kinstone4);
+PORT_STRONG_SCRIPT_DATA(script_Goron1Kinstone5);
+PORT_STRONG_SCRIPT_DATA(script_Goron1Kinstone6);
+PORT_STRONG_SCRIPT_DATA(script_Goron2Kinstone2);
+PORT_STRONG_SCRIPT_DATA(script_Goron2Kinstone3);
+PORT_STRONG_SCRIPT_DATA(script_Goron2Kinstone4);
+PORT_STRONG_SCRIPT_DATA(script_Goron2Kinstone5);
+PORT_STRONG_SCRIPT_DATA(script_Goron2Kinstone6);
+PORT_STRONG_SCRIPT_DATA(script_Goron3Kinstone3);
+PORT_STRONG_SCRIPT_DATA(script_Goron4Kinstone4);
+PORT_STRONG_SCRIPT_DATA(script_Goron5Kinstone5);
+PORT_STRONG_SCRIPT_DATA(script_Goron6Kindstone6);
+PORT_STRONG_SCRIPT_DATA(script_GoronKinstone);
+PORT_STRONG_SCRIPT_DATA(script_GoronMerchantArriving);
+PORT_STRONG_SCRIPT_DATA(script_GuardTakeover);
+PORT_STRONG_SCRIPT_DATA(script_HouseDoorIntro);
+PORT_STRONG_SCRIPT_DATA(script_IntroCameraTarget);
+PORT_STRONG_SCRIPT_DATA(script_KingDaltusTakeover);
+PORT_STRONG_SCRIPT_DATA(script_KinstoneSparkKinstoneSpark);
+PORT_STRONG_SCRIPT_DATA(script_KinstoneSparkKinstoneSparkFromBottom);
+PORT_STRONG_SCRIPT_DATA(script_KinstoneSparkKinstoneSparkGoron);
+PORT_STRONG_SCRIPT_DATA(script_KinstoneSparkKinstoneSparkGoronMerchang);
+PORT_STRONG_SCRIPT_DATA(script_MazaalMacroDefeated);
+PORT_STRONG_SCRIPT_DATA(script_MinishEzlo);
+PORT_STRONG_SCRIPT_DATA(script_MinisterPothoTakeover);
+PORT_STRONG_SCRIPT_DATA(script_MutohKinstone);
+PORT_STRONG_SCRIPT_DATA(script_MazaalBossObjectMazaal);
+PORT_STRONG_SCRIPT_DATA(script_PlayerGetElement);
+PORT_STRONG_SCRIPT_DATA(script_SmithIntro);
+PORT_STRONG_SCRIPT_DATA(script_StampKinstone);
+PORT_STRONG_SCRIPT_DATA(script_SyrupKinstone);
+PORT_STRONG_SCRIPT_DATA(script_Vaati);
+PORT_STRONG_SCRIPT_DATA(script_VaatiTakeover);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaIntro);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaLeaveLinksHouse);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaMagic);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaMoveToLinksHouse);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaStoneDHC);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaStoneInDHC);
+PORT_STRONG_SCRIPT_DATA(script_ZeldaStoneTakeover);
+
+#endif /* __PORT__ */
