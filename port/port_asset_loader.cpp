@@ -168,7 +168,12 @@ std::optional<std::filesystem::path> GetExecutableDir() {
     return std::nullopt;
 #else
     // Preserve the previous current-directory behavior on non-Windows/non-Linux platforms such as macOS and BSD.
-    return std::filesystem::current_path();
+    std::error_code error_code;
+    const std::filesystem::path currentPath = std::filesystem::current_path(error_code);
+    if (!error_code && !currentPath.empty()) {
+        return currentPath;
+    }
+    return std::nullopt;
 #endif
 }
 
