@@ -159,13 +159,15 @@ std::optional<std::filesystem::path> GetExecutableDir() {
     }
     buffer.resize(len);
     return std::filesystem::path(buffer).parent_path();
-#else
+#elif defined(__linux__)
     std::error_code ec;
     const std::filesystem::path exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
     if (!ec && !exePath.empty()) {
         return exePath.parent_path();
     }
     return std::nullopt;
+#else
+    return std::filesystem::current_path();
 #endif
 }
 
