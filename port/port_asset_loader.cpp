@@ -39,15 +39,13 @@ extern Frame* gSpriteAnimations_322[];
 #include <memory>
 #include <optional>
 #include <string>
+#include <system_error>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
-#else
-#include <limits.h>
-#include <unistd.h>
 #endif
 
 namespace {
@@ -162,13 +160,12 @@ std::optional<std::filesystem::path> GetExecutableDir() {
     buffer.resize(len);
     return std::filesystem::path(buffer).parent_path();
 #else
-    std::array<char, PATH_MAX> buffer = {};
-    const ssize_t len = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
-    if (len > 0) {
-        buffer[static_cast<size_t>(len)] = '\0';
-        return std::filesystem::path(buffer.data()).parent_path();
+    std::error_code ec;
+    const std::filesystem::path exePath = std::filesystem::read_symlink("/proc/self/exe", ec);
+    if (!ec && !exePath.empty()) {
+        return exePath.parent_path();
     }
-    return std::filesystem::current_path();
+    return std::nullopt;
 #endif
 }
 
