@@ -45,6 +45,9 @@ extern Frame* gSpriteAnimations_322[];
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <limits.h>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -142,6 +145,33 @@ std::string PathForLog(const std::filesystem::path& path) {
     return path.generic_string();
 }
 
+std::optional<std::filesystem::path> GetExecutableDir() {
+#ifdef _WIN32
+    std::wstring buffer(MAX_PATH, L'\0');
+    DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (len == 0) {
+        return std::nullopt;
+    }
+    while (len >= buffer.size() - 1) {
+        buffer.resize(buffer.size() * 2);
+        len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        if (len == 0) {
+            return std::nullopt;
+        }
+    }
+    buffer.resize(len);
+    return std::filesystem::path(buffer).parent_path();
+#else
+    std::array<char, PATH_MAX> buffer = {};
+    const ssize_t len = readlink("/proc/self/exe", buffer.data(), buffer.size() - 1);
+    if (len > 0) {
+        buffer[static_cast<size_t>(len)] = '\0';
+        return std::filesystem::path(buffer.data()).parent_path();
+    }
+    return std::filesystem::current_path();
+#endif
+}
+
 void AssetLogOnce(const std::string& key, const char* fmt, ...) {
     if (!gAssetLogOnceKeys.insert(key).second) {
         return;
@@ -156,26 +186,7 @@ void AssetLogOnce(const std::string& key, const char* fmt, ...) {
 }
 
 std::optional<std::filesystem::path> FindEditableAssetsRoot() {
-    const std::optional<std::filesystem::path> exeDir = []() -> std::optional<std::filesystem::path> {
-#ifdef _WIN32
-        std::wstring buffer(MAX_PATH, L'\0');
-        DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (len == 0) {
-            return std::nullopt;
-        }
-        while (len >= buffer.size() - 1) {
-            buffer.resize(buffer.size() * 2);
-            len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (len == 0) {
-                return std::nullopt;
-            }
-        }
-        buffer.resize(len);
-        return std::filesystem::path(buffer).parent_path();
-#else
-        return std::filesystem::current_path();
-#endif
-    }();
+    const std::optional<std::filesystem::path> exeDir = GetExecutableDir();
 
     if (!exeDir.has_value()) {
         return std::nullopt;
@@ -192,26 +203,7 @@ std::optional<std::filesystem::path> FindEditableAssetsRoot() {
 }
 
 std::optional<std::filesystem::path> FindRuntimeAssetsRoot() {
-    const std::optional<std::filesystem::path> exeDir = []() -> std::optional<std::filesystem::path> {
-#ifdef _WIN32
-        std::wstring buffer(MAX_PATH, L'\0');
-        DWORD len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-        if (len == 0) {
-            return std::nullopt;
-        }
-        while (len >= buffer.size() - 1) {
-            buffer.resize(buffer.size() * 2);
-            len = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-            if (len == 0) {
-                return std::nullopt;
-            }
-        }
-        buffer.resize(len);
-        return std::filesystem::path(buffer).parent_path();
-#else
-        return std::filesystem::current_path();
-#endif
-    }();
+    const std::optional<std::filesystem::path> exeDir = GetExecutableDir();
 
     if (!exeDir.has_value()) {
         return std::nullopt;
