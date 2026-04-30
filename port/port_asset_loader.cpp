@@ -161,19 +161,19 @@ std::optional<std::filesystem::path> GetExecutableDir() {
 #elif defined(__linux__)
     std::error_code err;
     const std::filesystem::path executablePath = std::filesystem::read_symlink("/proc/self/exe", err);
-    if (!err && !executablePath.empty()) {
-        return executablePath.parent_path();
+    if (err || executablePath.empty()) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return executablePath.parent_path();
 #else
     // Keep the current-directory approach for non-Windows/non-Linux platforms such as
     // macOS and BSD-based systems, using the non-throwing filesystem API.
     std::error_code err;
     const std::filesystem::path currentPath = std::filesystem::current_path(err);
-    if (!err && !currentPath.empty()) {
-        return currentPath;
+    if (err || currentPath.empty()) {
+        return std::nullopt;
     }
-    return std::nullopt;
+    return currentPath;
 #endif
 }
 
