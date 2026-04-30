@@ -39,7 +39,6 @@ extern Frame* gSpriteAnimations_322[];
 #include <memory>
 #include <optional>
 #include <string>
-#include <system_error>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
@@ -167,8 +166,8 @@ std::optional<std::filesystem::path> GetExecutableDir() {
     }
     return std::nullopt;
 #else
-    // Preserve the previous current-directory behavior on non-Windows/non-Linux platforms
-    // such as macOS and BSD-based systems.
+    // Keep the current-directory approach for non-Windows/non-Linux platforms such as
+    // macOS and BSD-based systems, using the non-throwing filesystem API.
     std::error_code err;
     const std::filesystem::path currentPath = std::filesystem::current_path(err);
     if (!err && !currentPath.empty()) {
