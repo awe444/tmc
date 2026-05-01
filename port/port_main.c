@@ -6,9 +6,17 @@
 #include "port_ppu.h"
 #include "port_rom.h"
 #include "port_types.h"
+#include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 #include "stdio.h"
 #include <SDL3/SDL.h>
+
+/* Runtime flag: when non-zero, per-frame `[FRAME]` diagnostic logging in
+ * src/game.c is emitted to stderr. Off by default; enable with the
+ * `--log-frames` command-line flag. Declared as `int` for portable
+ * extern access from translation units that don't include <stdbool.h>. */
+int gLogFrames = 0;
 
 /*
  * Region-specific asset offset header is included based on detected ROM.
@@ -132,9 +140,26 @@ static void Port_InitAudio(void) {
     gMain.muteAudio = 1;
 }
 
-int main() {
+int main(int argc, char** argv) {
 
     fprintf(stderr, "Initializing port layer...\n");
+
+    /* Parse command-line flags. */
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--log-frames") == 0) {
+            gLogFrames = 1;
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            fprintf(stderr,
+                    "Usage: %s [options]\n"
+                    "  --log-frames    Enable per-frame [FRAME] diagnostic logging to stderr\n"
+                    "  -h, --help      Show this help message\n",
+                    argv[0]);
+            return 0;
+        } else {
+            fprintf(stderr, "Unknown argument: %s (use --help for usage)\n", argv[i]);
+            return 1;
+        }
+    }
 
     // Initialize REG_KEYINPUT to all-keys-released (GBA: 1=not pressed)
     *(u16*)(gIoMem + REG_OFFSET_KEYINPUT) = 0x03FF;
