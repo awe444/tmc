@@ -5,11 +5,12 @@
 #include "port_gba_mem.h"
 #include "port_ppu.h"
 #include "port_rom.h"
+#include "port_runtime_config.h"
 #include "port_types.h"
 #include <stdbool.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
-#include "stdio.h"
 #include <SDL3/SDL.h>
 
 /* Runtime flag: when non-zero, per-frame `[FRAME]` diagnostic logging in
@@ -140,32 +141,48 @@ static void Port_InitAudio(void) {
     gMain.muteAudio = 1;
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char* argv[]) {
 
     fprintf(stderr, "Initializing port layer...\n");
-
-    /* Parse command-line flags. */
-    for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--log-frames") == 0) {
-            gLogFrames = 1;
-        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            fprintf(stderr,
-                    "Usage: %s [options]\n"
-                    "  --log-frames    Enable per-frame [FRAME] diagnostic logging to stderr\n"
-                    "  -h, --help      Show this help message\n",
-                    argv[0]);
-            return 0;
-        } else {
-            fprintf(stderr, "Unknown argument: %s (use --help for usage)\n", argv[i]);
-            return 1;
-        }
-    }
 
     // Initialize REG_KEYINPUT to all-keys-released (GBA: 1=not pressed)
     *(u16*)(gIoMem + REG_OFFSET_KEYINPUT) = 0x03FF;
 
     // Load ROM data (auto-detects USA/EU from game code)
     Port_LoadRom("baserom.gba");
+
+    Port_Config_Load("config.json");
+
+    u8 window_scale = Port_Config_WindowScale();
+    if (argc > 1) {
+        for (int i = 1; i < argc; i++) {
+            if (strncmp(argv[i], "--window_scale=", 15) == 0) {
+                const char* valueStr = argv[i] + 15;
+                int value = atoi(valueStr);
+                if (value >= 1 && value <= 10) {
+                    window_scale = (uint8_t)value;
+                } else {
+                    fprintf(stderr, "Invalid window scale '%s'. Must be an integer between 1 and 10.\n", valueStr);
+                }
+            }
+            else if (strcmp(argv[i], "--log-frames") == 0) {
+                gLogFrames = 1;
+            }
+            else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+                fprintf(stderr,
+                        "Usage: %s [options]\n"
+                        "  --window_scale=<value>  Set the window scale (1-10, default is 3)\n"
+                        "  --log-frames            Enable per-frame [FRAME] diagnostic logging to stderr\n"
+                        "  -h, --help              Show this help message\n"
+                        "  config.json             Set window_scale and bindings defaults\n",
+                        argv[0]);
+                return 0;
+            }
+            else {
+                fprintf(stderr, "Unknown argument: %s (use --help for usage)\n", argv[i]);
+            }
+        }
+    }
 
     // Verify ROM region matches compiled region
 #ifdef EU
@@ -189,8 +206,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // GBA resolution × 3
-    SDL_Window* window = SDL_CreateWindow("The Minish Cap", 240 * 3, 160 * 3, 0);
+    Port_Config_OpenGamepads();
+
+    SDL_Window* window = SDL_CreateWindow("The Minish Cap", 240 * window_scale, 160 * window_scale, 0);
     if (window == NULL) {
         fprintf(stderr, "SDL_CreateWindow Error: %s\n", SDL_GetError());
         SDL_Quit();
@@ -211,6 +229,7 @@ int main(int argc, char** argv) {
 
     Port_Audio_Shutdown();
     Port_PPU_Shutdown();
+    Port_Config_CloseGamepads();
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
