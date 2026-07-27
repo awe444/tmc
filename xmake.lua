@@ -374,9 +374,11 @@ target("tmc_pc")
         arch_supports_avx2 = (arch_l == "x64" or arch_l == "x86_64" or arch_l == "amd64")
     end
 
-    -- Apply the ViruaPPU patches before compilation. The submodule is
-    -- intentionally pinned at upstream; each patch is idempotent and
-    -- skipped when its marker symbol is already present in the target file.
+    -- Apply the ViruaPPU patches before compilation. The submodule now
+    -- tracks the awe444/VirtuaPPU fork, which already carries the
+    -- hdma-hook and mosaic changes; each patch is idempotent and skipped
+    -- when its marker symbol is already present in the target file, so
+    -- those two no-op and only internal-scale actually applies.
     -- If a patch was applied with an older revision, reset the submodule
     -- (`git -C libs/ViruaPPU checkout -- .`) so the patches reapply cleanly.
     before_build(function (target)
