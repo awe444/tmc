@@ -492,13 +492,20 @@ target("tmc_pc")
     add_includedirs("libs/agbplay_core")
     add_includedirs("tools/src/assets_extractor") -- AssetExtractorApi linked in-process
 
-    add_defines("launcher", "GUILITE_ON")
-    add_includedirs("libs/tmc-Modern-Launcher/include")
-    add_includedirs("libs/tmc-Modern-Launcher/3p")
-    add_rules("utils.bin2c", {extensions = {".png"}})
-    add_files("libs/tmc-Modern-Launcher/assets/github.png", {rule = "utils.bin2c", nozeroend = true})
-    add_files("libs/tmc-Modern-Launcher/src/launcher_github_icon.cpp")
-    add_files("libs/tmc-Modern-Launcher/src/tmc_launcher.cpp")
+    -- The tmc-Modern-Launcher submodule is not publicly reachable, so the
+    -- launcher UI and the in-game settings modal are not built. Every
+    -- consumer is guarded by `#ifdef launcher` and has a no-launcher
+    -- fallback (Port_RunBootstrapLauncher returns true,
+    -- Port_InGameSettingsModalIsOpen returns false), so leaving the define
+    -- unset drops the feature without breaking the build. To restore it,
+    -- re-add the submodule and uncomment the block below.
+    --   add_defines("launcher", "GUILITE_ON")
+    --   add_includedirs("libs/tmc-Modern-Launcher/include")
+    --   add_includedirs("libs/tmc-Modern-Launcher/3p")
+    --   add_rules("utils.bin2c", {extensions = {".png"}})
+    --   add_files("libs/tmc-Modern-Launcher/assets/github.png", {rule = "utils.bin2c", nozeroend = true})
+    --   add_files("libs/tmc-Modern-Launcher/src/launcher_github_icon.cpp")
+    --   add_files("libs/tmc-Modern-Launcher/src/tmc_launcher.cpp")
     add_files("port/port_launcher_bootstrap.cpp")
 
     add_files("port/port_main.c")
