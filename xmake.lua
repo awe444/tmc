@@ -358,13 +358,11 @@ target("tmc_pc")
         arch_supports_avx2 = (arch_l == "x64" or arch_l == "x86_64" or arch_l == "amd64")
     end
 
-    -- Apply the ViruaPPU patches before compilation. The submodule now
-    -- tracks the awe444/VirtuaPPU fork, which already carries the
-    -- hdma-hook and mosaic changes; each patch is idempotent and skipped
-    -- when its marker symbol is already present in the target file, so
-    -- those two no-op and only internal-scale actually applies.
-    -- If a patch was applied with an older revision, reset the submodule
-    -- (`git -C libs/ViruaPPU checkout -- .`) so the patches reapply cleanly.
+    -- The ViruaPPU patch pipeline is retired: the submodule tracks the
+    -- awe444/VirtuaPPU fork, which now carries all three port changes
+    -- (hdma-hook, mosaic, internal-scale) as real commits. Changes to
+    -- the PPU go in the fork and land here as a submodule bump.
+    -- See port/patches/README.md.
     before_build(function (target)
         -- Regenerate port/generated_sounds_embed.cpp from
         -- assets/sounds.json so the binary always carries an
@@ -396,43 +394,15 @@ target("tmc_pc")
             end
         end
 
-        local sub = path.join(os.projectdir(), "libs", "ViruaPPU")
-        local patches_dir = path.join(os.projectdir(), "port", "patches")
-        local patches = {
-            -- HDMA per-line callback hook in mode1.c and mode2.c render loops.
-            { patch = "viruappu-hdma-hook.patch",
-              marker_file = path.join(sub, "src", "mode2.c"),
-              marker = "virtuappu_mode1_pre_line_callback" },
-            { patch = "viruappu-mosaic.patch",
-              marker_file = path.join(sub, "include", "cpu", "mode1.h"),
-              marker = "MODE1_IO_MOSAIC" },
-            -- Sub-pixel OAM affine overlay used by the internal-render-scale
-            -- path in port_ppu.cpp.
-            { patch = "viruappu-internal-scale.patch",
-              marker_file = path.join(sub, "include", "cpu", "mode1.h"),
-              marker = "virtuappu_mode1_render_affine_obj_overlay" },
-        }
-        for _, p in ipairs(patches) do
-            local patch_file = path.join(patches_dir, p.patch)
-            if os.isfile(p.marker_file) and os.isfile(patch_file) then
-                local content = io.readfile(p.marker_file)
-                if not (content and content:find(p.marker, 1, true)) then
-                    -- -3 falls back to a 3-way merge when surrounding lines
-                    -- have drifted (some hunks already in upstream), so the
-                    -- step stays self-healing instead of silently no-oping.
-                    local rel = path.relative(patch_file, os.projectdir())
-                    local applied = try {
-                        function ()
-                            os.execv("git", {"-C", sub, "apply", "-3", patch_file})
-                            return true
-                        end
-                    }
-                    if applied then
-                        print("[viruappu] applied %s", rel)
-                    else
-                        print("[viruappu] WARN: %s did not apply (drift?); continuing without it", rel)
-                    end
-                end
+        -- Guard against a submodule checkout that predates the fork
+        -- commits the port depends on, which would otherwise fail deep in
+        -- the compile with a confusing missing-symbol error.
+        do
+            local hdr = path.join(os.projectdir(), "libs", "ViruaPPU", "include", "cpu", "mode1.h")
+            local content = os.isfile(hdr) and io.readfile(hdr) or nil
+            if content and not content:find("virtuappu_mode1_render_affine_obj_overlay", 1, true) then
+                raise("libs/ViruaPPU is older than this build requires.\n" ..
+                      "Run: git submodule update --init --recursive libs/ViruaPPU")
             end
         end
 

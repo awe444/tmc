@@ -402,12 +402,22 @@ degraded room class of §5.1(3).
 **Verdict:** highest value-to-cost ratio *if* Spike 2 confirms the premise. This
 is the option the plan is built to validate or kill first.
 
-### Option F — Fork VirtuaPPU instead of patching it *(half done)*
+### Option F — Fork VirtuaPPU instead of patching it *(done)*
 Not a viewport option, but a prerequisite decision. Options C, D, and E all
 require substantially more VirtuaPPU modification than context diffs can carry.
-The submodule swap to `awe444/VirtuaPPU` is done (§2.3). Retiring
-`port/patches/` in favour of direct commits to the fork remains open and should
-happen at the start of whichever option is chosen.
+The submodule swap to `awe444/VirtuaPPU` is done (§2.3), and as of 2026-07-27
+the patch pipeline is **retired**: `internal-scale` — the only patch still
+applying at build time — was committed to the fork (`276c73a`), the gitlink
+bumped, the `before_build` patch loop removed from `xmake.lua`, and the three
+applied patch files deleted (`port/patches/README.md` records where each
+change now lives). `viruappu-widescreen.patch` is retained as Spike 9 design
+reference only; it was never applied (§2.2).
+
+Verified behaviour-neutral: clean rebuild with no patch step, then a full
+canonical-route capture diffed against the Spike 0 references —
+**11/11 waypoints pixel-identical**. The submodule working tree now stays
+clean, so `git status` no longer reports phantom modifications and a real
+PPU change is visible as a reviewable gitlink bump.
 
 ---
 
@@ -936,7 +946,7 @@ where the dominant risk is a late discovery that the premise was wrong.
 | OAM Y widening destabilises sprite rendering | Broad visual regressions | Medium | Deferred to Milestone 2 so failures are attributable; sa2 reference available |
 | 16 px vertical slack too tight for the 32-row buffer | Tile tearing on fast vertical scroll | Medium | Measured in Spike 2B before any height work starts |
 | Perf regression from 50% more scanline work | Frame drops | Low–Medium | Spike 0 baseline; OpenMP path already exists |
-| Patch pipeline can't carry the change | Build breakage, merge pain | High | Submodule repointed to the fork (§2.3); retire `port/patches/` next |
+| ~~Patch pipeline can't carry the change~~ | ~~Build breakage, merge pain~~ | **Closed 2026-07-27** | Pipeline retired; all PPU changes are fork commits (§7 Option F) |
 | Cutscene/scripted framing breaks at 320×240 | Visible authored-content bugs | Medium | Spikes 7 and 11; `cutscene.c` already uses window regs for letterboxing |
 | Milestone 1 ships and Milestone 2 never does | Stuck at a 2:1 aspect ratio | Low–Medium | Milestone 1 is explicitly an internal checkpoint (§8.3); Option B remains the shippable fallback |
 
