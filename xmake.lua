@@ -374,9 +374,11 @@ target("tmc_pc")
         arch_supports_avx2 = (arch_l == "x64" or arch_l == "x86_64" or arch_l == "amd64")
     end
 
-    -- Apply the ViruaPPU patches before compilation. The submodule is
-    -- intentionally pinned at upstream; each patch is idempotent and
-    -- skipped when its marker symbol is already present in the target file.
+    -- Apply the ViruaPPU patches before compilation. The submodule now
+    -- tracks the awe444/VirtuaPPU fork, which already carries the
+    -- hdma-hook and mosaic changes; each patch is idempotent and skipped
+    -- when its marker symbol is already present in the target file, so
+    -- those two no-op and only internal-scale actually applies.
     -- If a patch was applied with an older revision, reset the submodule
     -- (`git -C libs/ViruaPPU checkout -- .`) so the patches reapply cleanly.
     before_build(function (target)
@@ -490,13 +492,20 @@ target("tmc_pc")
     add_includedirs("libs/agbplay_core")
     add_includedirs("tools/src/assets_extractor") -- AssetExtractorApi linked in-process
 
-    add_defines("launcher", "GUILITE_ON")
-    add_includedirs("libs/tmc-Modern-Launcher/include")
-    add_includedirs("libs/tmc-Modern-Launcher/3p")
-    add_rules("utils.bin2c", {extensions = {".png"}})
-    add_files("libs/tmc-Modern-Launcher/assets/github.png", {rule = "utils.bin2c", nozeroend = true})
-    add_files("libs/tmc-Modern-Launcher/src/launcher_github_icon.cpp")
-    add_files("libs/tmc-Modern-Launcher/src/tmc_launcher.cpp")
+    -- The tmc-Modern-Launcher submodule is not publicly reachable, so the
+    -- launcher UI and the in-game settings modal are not built. Every
+    -- consumer is guarded by `#ifdef launcher` and has a no-launcher
+    -- fallback (Port_RunBootstrapLauncher returns true,
+    -- Port_InGameSettingsModalIsOpen returns false), so leaving the define
+    -- unset drops the feature without breaking the build. To restore it,
+    -- re-add the submodule and uncomment the block below.
+    --   add_defines("launcher", "GUILITE_ON")
+    --   add_includedirs("libs/tmc-Modern-Launcher/include")
+    --   add_includedirs("libs/tmc-Modern-Launcher/3p")
+    --   add_rules("utils.bin2c", {extensions = {".png"}})
+    --   add_files("libs/tmc-Modern-Launcher/assets/github.png", {rule = "utils.bin2c", nozeroend = true})
+    --   add_files("libs/tmc-Modern-Launcher/src/launcher_github_icon.cpp")
+    --   add_files("libs/tmc-Modern-Launcher/src/tmc_launcher.cpp")
     add_files("port/port_launcher_bootstrap.cpp")
 
     add_files("port/port_main.c")
