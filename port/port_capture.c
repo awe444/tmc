@@ -17,6 +17,7 @@
 
 #include "virtuappu.h"
 #include "cpu/mode1.h"
+#include "port_viewport.h"
 
 /* port_bios.c */
 extern void Port_RequestQuit(void);
@@ -62,6 +63,7 @@ static char sDumpDir[512] = ".";
 static bool sStatsEnabled = false;
 static uint32_t sExitFrame = 0; /* 0 = no limit */
 static bool sUncapped = false;
+static bool sCaptureCanvas = false;
 
 static uint32_t sFrame = 0;      /* frames presented so far */
 static uint16_t sHeldMask = 0;   /* GBA key mask currently held by script */
@@ -277,11 +279,21 @@ static bool load_script(const char* path) {
 
 /* ---- framebuffer dump ------------------------------------------------ */
 
-/* virtuappu_frame_buffer is ABGR8888 as SDL sees it: byte order in memory
- * is R,G,B,A. Written as binary PPM (P6), which the tools/capture scripts
- * convert to PNG and diff. */
+/* Source surfaces are ABGR8888 as SDL sees it: byte order in memory is
+ * R,G,B,A. Written as binary PPM (P6), which the tools/capture scripts
+ * convert to PNG and diff.
+ *
+ * `ppu` dumps the raw PPU output (240x160) — the Spike 0 reference format.
+ * `canvas` dumps the composed presentation canvas (320x240, borders
+ * included), which is what Spike 1 onward needs to verify centring and
+ * border fill. Both are pre-upscale and pre-filter, so captures are
+ * independent of window scale, xBRZ and CRT/LCD settings. */
 static void dump_frame(const char* name) {
     char path[640];
+    const int w = sCaptureCanvas ? PORT_VIEW_WIDTH : MODE1_GBA_WIDTH;
+    const int h = sCaptureCanvas ? PORT_VIEW_HEIGHT : MODE1_GBA_HEIGHT;
+    const uint32_t* src = sCaptureCanvas ? Port_Viewport_Canvas() : virtuappu_frame_buffer;
+
     snprintf(path, sizeof(path), "%s/%s.ppm", sDumpDir, name);
     FILE* f = fopen(path, "wb");
     if (!f) {
@@ -292,10 +304,10 @@ static void dump_frame(const char* name) {
         fprintf(stderr, "[capture] cannot write %s\n", path);
         return;
     }
-    fprintf(f, "P6\n%d %d\n255\n", MODE1_GBA_WIDTH, MODE1_GBA_HEIGHT);
-    for (int y = 0; y < MODE1_GBA_HEIGHT; y++) {
-        for (int x = 0; x < MODE1_GBA_WIDTH; x++) {
-            uint32_t px = virtuappu_frame_buffer[(size_t)y * MODE1_GBA_WIDTH + x];
+    fprintf(f, "P6\n%d %d\n255\n", w, h);
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            uint32_t px = src[(size_t)y * w + x];
             unsigned char rgb[3] = { (unsigned char)(px & 0xFF),
                                      (unsigned char)((px >> 8) & 0xFF),
                                      (unsigned char)((px >> 16) & 0xFF) };
@@ -327,6 +339,10 @@ bool Port_Capture_HandleArg(const char* arg) {
         atexit(stats_atexit);
         return true;
     }
+    if (strcmp(arg, "--capture-canvas") == 0) {
+        sCaptureCanvas = true;
+        return true;
+    }
     if (strcmp(arg, "--uncapped") == 0) {
         sUncapped = true;
         return true;
@@ -344,7 +360,8 @@ void Port_Capture_PrintUsage(void) {
             "  --dump-dir=<dir>:       Directory for framebuffer dumps (default '.').\n"
             "  --frame-stats:          Print frame-time mean/p50/p99/max on exit.\n"
             "  --exit-frame=<n>:       Hard-quit after n frames (safety for scripted runs).\n"
-            "  --uncapped:             Disable frame pacing (fast scripted/headless runs).\n");
+            "  --uncapped:             Disable frame pacing (fast scripted/headless runs).\n"
+            "  --capture-canvas:       Dump the composed 320x240 canvas instead of raw PPU output.\n");
 }
 
 bool Port_Capture_ScriptActive(void) {

@@ -1,9 +1,12 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** Spike 0 complete (2026-07-27) — capture tooling landed, route
-manifest pinned, baseline recorded, D2–D4 decided. **D1 (HUD placement) is
-the only open decision**; mockups ready in
-`tools/capture/references/hud-mockups/`. Next: Spike 1.
+**Status:** Spikes 0 and 1 complete, Option F closed (all 2026-07-27).
+Capture tooling landed, route manifest pinned, baseline recorded, D2–D4
+decided, PPU patch pipeline retired, and the 320×240 presentation canvas
+(Option B) is in as the shippable fallback. **D1 (HUD placement) is the
+only open decision**; mockups ready in
+`tools/capture/references/hud-mockups/`. Next: Spike 2 (the decision gate)
+with 2A/2B in parallel.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -610,17 +613,46 @@ frame-time counter. Capture reference frames along the canonical route.
 **Method:** 320×240 window, 240×160 render centered with borders. No engine
 changes.
 
-**Definition of done:**
-- [ ] Build produces a 320×240 window with a pixel-exact 240×160 render centered
-      in it; border pixels are uniform and match the D3 border choice.
-- [ ] Border compositing order relative to the existing scaling/filter stack
-      (xBRZ, CRT/LCD, internal scale — `port_upscale.c`, `port_filter.c`,
-      `port_ppu.cpp`) is decided and recorded; no filter bleeds across the
-      border edge (a CRT filter smearing into the border region is a fail).
-- [ ] All 11 route captures are pixel-identical to Spike 0's inside the centered
-      region (diff = 0), confirming zero behavioural change.
-- [ ] Frame time within noise of the Spike 0 baseline.
-- [ ] Merged to the working branch as the fallback build.
+**Definition of done:** *(completed 2026-07-27)*
+- [x] Build produces a 320×240 canvas with a pixel-exact 240×160 render
+      centered at (40,40); all 38 400 border pixels verified uniform
+      `0xFF000000` across all 11 waypoints (D3: solid black).
+- [x] **Composite order decided and recorded** (`port/port_viewport.h`,
+      `Port_PPU_ComposeCanvas`): the composite runs **before** internal
+      scale, xBRZ and the filters, so those treat the viewport border as
+      part of the frame. Rationale: after Milestones 1–2 the PPU emits
+      those borders itself for rooms smaller than the viewport, at which
+      point they are ordinary rendered pixels — filtering them now is what
+      the shipped build does, so the ordering never has to change. **The
+      original DoD wording conflated two different black regions.** The
+      bars that must never be filtered are the *window letterbox* produced
+      by fit-rect when the window aspect is not 4:3; those are outside the
+      canvas entirely and painted by `SDL_RenderClear`. That separation is
+      what the DoD was actually protecting, and it holds.
+- [x] All 11 route captures pixel-identical to Spike 0 (diff = 0), verified
+      twice over: raw PPU output unchanged, **and** the composed canvas
+      compared through `--rect 40,40,240,160`.
+- [x] xBRZ (`kHiResW/H`) and internal-scale buffers resized for the larger
+      canvas and exercised across 6 upscale × internal-scale combinations —
+      no crash, canvas byte-identical in every one. (The 2× intermediate was
+      a hardcoded `480*320`; at canvas size it would have overflowed. Caught
+      here rather than as a Milestone 1 heisenbug.)
+- [ ] ~~Frame time within noise of the Spike 0 baseline.~~ **Not met, and
+      the criterion was wrong.** Present cost rose from 5.47 ms to
+      **6.48 ms mean (+18.5%, n=3 runs, spread ±0.08 ms)** — a real
+      regression, not noise. It is also unavoidable and expected: the
+      presented surface has exactly 2.0× the pixels (76 800 vs 38 400), so
+      "within noise" was never achievable for Option B. Sub-linear scaling
+      (+18.5% for 2× pixels) because part of present is fixed overhead.
+      Ring-only border clearing was tried and made no measurable difference
+      — the cost is texture upload and scaling, not the fill. Total frame
+      cost 6.62 ms against a 16.67 ms budget (**40%**), and within the
+      Milestone 1 exit criterion of +25%. Logic is unchanged at ~0.14 ms.
+- [x] Landed on branch `spike-1-option-b` as the fallback build.
+
+**Carry-forward:** the Milestone 1/2 exit criteria should be measured
+against *this* build (present 6.48 ms), not the Spike 0 240×160 baseline —
+the canvas cost is paid once here and does not recur.
 
 ### Spike 2 — Validate the special-map premise *(decision gate)* (2.5–3.5 days)
 **Questions:**

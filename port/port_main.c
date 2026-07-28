@@ -3,6 +3,7 @@
 #include "port_config.h"
 #include "port_asset_bootstrap.h"
 #include "port_capture.h"
+#include "port_viewport.h"
 #include "port_audio.h"
 #include "port_gba_mem.h"
 #include "port_ppu.h"
@@ -361,7 +362,7 @@ int main(int argc, char* argv[]) {
     SDL_Renderer* prerenderer = NULL;
     if (!SDL_CreateWindowAndRenderer(
             "The Minish Cap",
-            240 * window_scale, 160 * window_scale,
+            PORT_VIEW_WIDTH * window_scale, PORT_VIEW_HEIGHT * window_scale,
             SDL_WINDOW_RESIZABLE,
             &window, &prerenderer)) {
         fprintf(stderr, "SDL_CreateWindowAndRenderer Error: %s\n", SDL_GetError());
