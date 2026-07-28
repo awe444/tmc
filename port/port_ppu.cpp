@@ -5,6 +5,7 @@
 #include "port_runtime_config.h"
 #include "port_filter.h"
 #include "port_touch_controls.h"
+#include "port_viewport.h"
 
 #ifdef launcher
 #include "tmc_launcher.h"
@@ -33,8 +34,9 @@ enum class PresentMode {
     Count
 };
 
-static const int kHiResW = 960;
-static const int kHiResH = 640;
+/* xBRZ output dimensions: 4x the presentation canvas. */
+static const int kHiResW = PORT_VIEW_WIDTH * 4;
+static const int kHiResH = PORT_VIEW_HEIGHT * 4;
 
 static RenderBackend sBackend = RenderBackend::None;
 static SDL_Renderer* sRenderer = nullptr;
@@ -69,8 +71,8 @@ extern "C" void Port_SetBootstrapWindow(SDL_Window* window) {
 static SDL_Surface* sFrameSurface = nullptr;
 static PresentMode sPresentMode = PresentMode::NearestRaw;
 static PortFilterType sFilter = PORT_FILTER_NONE;
-static uint32_t* sUpscale2xBuf = nullptr;       /* 480x320 intermediate */
-static uint32_t* sUpscale4xBuf = nullptr;       /* 960x640 final        */
+static uint32_t* sUpscale2xBuf = nullptr;       /* canvas*2 intermediate */
+static uint32_t* sUpscale4xBuf = nullptr;       /* canvas*4 final        */
 
 static void Port_PPU_LoadConfig(void) {
     const char* method = Port_Config_UpscaleMethod();
@@ -109,10 +111,65 @@ extern "C" const char* Port_PPU_PresentationModeName(void) {
     return kNames[(int)sPresentMode];
 }
 
-// Largest GBA-aspect rect fitting inside (w, h), centered.
+/* The presentation canvas (see port_viewport.h). The PPU's 240x160 output
+ * is composited into its centre each frame; everything downstream works on
+ * this, so the whole present path is already viewport-sized ahead of the
+ * expansion work. */
+static uint32_t sCanvas[PORT_VIEW_WIDTH * PORT_VIEW_HEIGHT];
+
+extern "C" uint32_t* Port_Viewport_Canvas(void) {
+    return sCanvas;
+}
+
+/* Fill the border, then blit the PPU frame into the centre.
+ *
+ * Composite order note (research plan Spike 1 DoD): this runs *before*
+ * internal scale, xBRZ and the CRT/LCD filters, so those treat the border
+ * as part of the frame. That is deliberate. Once Milestones 1-2 land, the
+ * PPU emits borders itself for rooms smaller than the viewport, and they
+ * are ordinary rendered pixels — filtering them now is what the shipped
+ * build will do, so no ordering changes later. The black bars that must
+ * *never* be filtered are the window letterbox from fit-rect when the
+ * window aspect is not 4:3; those live outside the canvas entirely and
+ * are painted by SDL_RenderClear. */
+static void Port_PPU_ComposeCanvas(void) {
+    const int cw = PORT_VIEW_WIDTH;
+    const int fw = PORT_VIEW_CONTENT_WIDTH;
+    const int fh = PORT_VIEW_CONTENT_HEIGHT;
+    const int ox = PORT_VIEW_CONTENT_X;
+    const int oy = PORT_VIEW_CONTENT_Y;
+
+    /* Fill only the border ring — the centre is fully overwritten by the
+     * blit below, so clearing it too would double the write traffic. The
+     * ring is four rects: rows above and below the content, then the left
+     * and right margins of each content row. Skipped entirely once content
+     * fills the canvas (Milestone 2), which is why this is written against
+     * the PORT_VIEW_CONTENT_* constants rather than hardcoded 40s. */
+    {
+        const int ch = PORT_VIEW_HEIGHT;
+        for (int y = 0; y < oy; ++y) {
+            for (int x = 0; x < cw; ++x) sCanvas[y * cw + x] = PORT_VIEW_BORDER_COLOR;
+        }
+        for (int y = oy + fh; y < ch; ++y) {
+            for (int x = 0; x < cw; ++x) sCanvas[y * cw + x] = PORT_VIEW_BORDER_COLOR;
+        }
+        for (int y = oy; y < oy + fh; ++y) {
+            uint32_t* row = &sCanvas[y * cw];
+            for (int x = 0; x < ox; ++x) row[x] = PORT_VIEW_BORDER_COLOR;
+            for (int x = ox + fw; x < cw; ++x) row[x] = PORT_VIEW_BORDER_COLOR;
+        }
+    }
+    for (int y = 0; y < fh; ++y) {
+        std::memcpy(&sCanvas[(oy + y) * cw + ox],
+                    &virtuappu_frame_buffer[y * MODE1_GBA_WIDTH],
+                    (size_t)fw * sizeof(uint32_t));
+    }
+}
+
+// Largest canvas-aspect rect fitting inside (w, h), centered.
 static void Port_PPU_ComputeFitRect(int w, int h, int* outX, int* outY, int* outW, int* outH) {
-    const int FW = MODE1_GBA_WIDTH;
-    const int FH = MODE1_GBA_HEIGHT;
+    const int FW = PORT_VIEW_WIDTH;
+    const int FH = PORT_VIEW_HEIGHT;
     int rw;
     int rh;
     if (w * FH >= h * FW) {
@@ -168,8 +225,8 @@ static uint32_t* Port_PPU_BuildScaledFrame(int S, int* outW, int* outH) {
         if (outH) *outH = 0;
         return nullptr;
     }
-    const int FW = MODE1_GBA_WIDTH;
-    const int FH = MODE1_GBA_HEIGHT;
+    const int FW = PORT_VIEW_WIDTH;
+    const int FH = PORT_VIEW_HEIGHT;
     const int w = FW * S;
     const int h = FH * S;
     if (sScaledBuf == nullptr || sScaledBufScale != S) {
@@ -187,7 +244,7 @@ static uint32_t* Port_PPU_BuildScaledFrame(int S, int* outW, int* outH) {
      * order is src-major so the source line stays cache-resident while
      * we scatter S output rows. */
     for (int sy = 0; sy < FH; ++sy) {
-        const uint32_t* src = &virtuappu_frame_buffer[sy * FW];
+        const uint32_t* src = &sCanvas[sy * FW];
         for (int dy = 0; dy < S; ++dy) {
             uint32_t* dst = &sScaledBuf[(sy * S + dy) * w];
             for (int sx = 0; sx < FW; ++sx) {
@@ -217,7 +274,7 @@ static SDL_Texture* Port_PPU_EnsureScaledTexture(int S) {
     }
     sScaledTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ABGR8888,
                                        SDL_TEXTUREACCESS_STREAMING,
-                                       MODE1_GBA_WIDTH * S, MODE1_GBA_HEIGHT * S);
+                                       PORT_VIEW_WIDTH * S, PORT_VIEW_HEIGHT * S);
     if (sScaledTexture) {
         sScaledTextureScale = S;
     }
@@ -288,7 +345,7 @@ extern "C" void Port_PPU_Init(SDL_Window* window) {
         }
         sLowResTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ABGR8888,
                                            SDL_TEXTUREACCESS_STREAMING,
-                                           MODE1_GBA_WIDTH, MODE1_GBA_HEIGHT);
+                                           PORT_VIEW_WIDTH, PORT_VIEW_HEIGHT);
         sHiResTexture = SDL_CreateTexture(sRenderer, SDL_PIXELFORMAT_ABGR8888,
                                           SDL_TEXTUREACCESS_STREAMING, kHiResW, kHiResH);
         if (!sLowResTexture || !sHiResTexture) {
@@ -296,7 +353,8 @@ extern "C" void Port_PPU_Init(SDL_Window* window) {
             SDL_DestroyRenderer(sRenderer);
             sRenderer = nullptr;
         } else {
-            sUpscale2xBuf = (uint32_t*)std::malloc((size_t)480 * 320 * sizeof(uint32_t));
+            sUpscale2xBuf = (uint32_t*)std::malloc(
+                (size_t)(PORT_VIEW_WIDTH * 2) * (PORT_VIEW_HEIGHT * 2) * sizeof(uint32_t));
             sUpscale4xBuf = (uint32_t*)std::malloc((size_t)kHiResW * kHiResH * sizeof(uint32_t));
             sBackend = RenderBackend::Renderer;
         }
@@ -320,11 +378,11 @@ extern "C" void Port_PPU_Init(SDL_Window* window) {
 
     if (sBackend == RenderBackend::None) {
         sFrameSurface = SDL_CreateSurfaceFrom(
-            MODE1_GBA_WIDTH,
-            MODE1_GBA_HEIGHT,
+            PORT_VIEW_WIDTH,
+            PORT_VIEW_HEIGHT,
             SDL_PIXELFORMAT_ABGR8888,
-            virtuappu_frame_buffer,
-            MODE1_GBA_WIDTH * static_cast<int>(sizeof(uint32_t)));
+            sCanvas,
+            PORT_VIEW_WIDTH * static_cast<int>(sizeof(uint32_t)));
         if (!sFrameSurface) {
             printf("Port_PPU_Init: SDL_CreateSurfaceFrom failed: %s\n", SDL_GetError());
             return;
@@ -381,6 +439,7 @@ extern "C" void Port_PPU_PresentFrame(void) {
         port_hdma_has_active_channels() ? port_hdma_step_line : nullptr;
 
     virtuappu_render_frame();
+    Port_PPU_ComposeCanvas();
 
     if (sBackend == RenderBackend::Renderer) {
         int outW = 0;
@@ -403,8 +462,8 @@ extern "C" void Port_PPU_PresentFrame(void) {
                 /* xBRZ owns its own 4x upscaler — internal-render-scale
                  * is mutually exclusive with it. The xBRZ path always
                  * consumes the unscaled GBA-native framebuffer. */
-                Port_Upscale_xBRZ_4x(virtuappu_frame_buffer,
-                                     MODE1_GBA_WIDTH, MODE1_GBA_HEIGHT,
+                Port_Upscale_xBRZ_4x(sCanvas,
+                                     PORT_VIEW_WIDTH, PORT_VIEW_HEIGHT,
                                      sUpscale2xBuf, sUpscale4xBuf);
                 /* CRT/LCD filter at the upscaled resolution (4x). The
                  * pattern needs >= 3 px per phosphor cell to read
@@ -435,8 +494,8 @@ extern "C" void Port_PPU_PresentFrame(void) {
                     SDL_UpdateTexture(scaledTex, nullptr, scaled, sw * (int)sizeof(uint32_t));
                     tex = scaledTex;
                 } else {
-                    SDL_UpdateTexture(sLowResTexture, nullptr, virtuappu_frame_buffer,
-                                      MODE1_GBA_WIDTH * (int)sizeof(uint32_t));
+                    SDL_UpdateTexture(sLowResTexture, nullptr, sCanvas,
+                                      PORT_VIEW_WIDTH * (int)sizeof(uint32_t));
                     tex = sLowResTexture;
                 }
                 scale = (sPresentMode == PresentMode::LinearRaw)
@@ -502,7 +561,7 @@ extern "C" void Port_PPU_CycleWindowScale(int direction) {
     Port_Config_SetWindowScale(scale);
     SDL_Window* w = Port_PPU_ActiveWindow();
     if (w && !Port_PPU_IsFullscreen()) {
-        SDL_SetWindowSize(w, MODE1_GBA_WIDTH * scale, MODE1_GBA_HEIGHT * scale);
+        SDL_SetWindowSize(w, PORT_VIEW_WIDTH * scale, PORT_VIEW_HEIGHT * scale);
         SDL_SyncWindow(w);
     }
 }

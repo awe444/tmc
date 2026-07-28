@@ -30,6 +30,7 @@ python3 tools/capture/diff_captures.py \
 | `--frame-stats` | print logic/present mean/p50/p99/max on exit |
 | `--exit-frame=N` | hard-quit after N frames (safety net) |
 | `--uncapped` | disable frame pacing + vsync (fast headless runs) |
+| `--capture-canvas` | dump the composed 320×240 presentation canvas (borders included) instead of raw 240×160 PPU output |
 
 Combine with `SDL_VIDEODRIVER=dummy` for headless capture. Frames are dumped
 from `virtuappu_frame_buffer` (pre-upscale, pre-filter), so captures are
@@ -87,3 +88,17 @@ Reference captures: `references/spike0-240x160/` (`.ppm` = diff source,
 - `diff_captures.py` — per-waypoint pixel mismatch counts between two
   capture sets; `--rect X,Y,W,H` restricts comparison to a region
   (Spike 1's centered-region check)
+
+## Reference sets
+
+| Directory | Surface | Use |
+|---|---|---|
+| `references/spike0-240x160/` | raw PPU output | engine-behaviour baseline; diff any build against it directly |
+| `references/spike1-320x240/` | composed canvas (Option B) | presentation baseline; compare a canvas capture against it, or against spike0 via `--rect 40,40,240,160` |
+
+```bash
+# canvas capture, then check the centred region still matches the engine baseline
+tmc_pc --capture-canvas --script=tools/capture/route.script --dump-dir=/tmp/out
+python3 tools/capture/diff_captures.py \
+    tools/capture/references/spike0-240x160 /tmp/out --rect 40,40,240,160
+```
