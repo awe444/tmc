@@ -18,13 +18,6 @@
 #include <cstdlib>
 #include <cstring>
 
-/* Manual access to gMain (the engine's Main struct): including main.h
- * would pull in player.h, which uses `this` as a C parameter name and
- * doesn't compile as C++. Treat the symbol as opaque bytes and read the
- * task field at known offset 2 (interruptFlag, sleepStatus, task —
- * include/main.h). C linkage matches the engine's Main gMain. */
-extern "C" uint8_t gMain[]; // fix for MSVC (UWP PORT)
-
 enum class RenderBackend {
     None,
     Renderer,
@@ -116,10 +109,7 @@ extern "C" const char* Port_PPU_PresentationModeName(void) {
     return kNames[(int)sPresentMode];
 }
 
-// Largest GBA-aspect rect fitting inside (w, h), centered. Aspect uses
-// MODE1_GBA_WIDTH so the widescreen spike (override via -DMODE1_GBA_WIDTH)
-// keeps the rendered rect's proportions matching the framebuffer rather
-// than letterboxing the wider content.
+// Largest GBA-aspect rect fitting inside (w, h), centered.
 static void Port_PPU_ComputeFitRect(int w, int h, int* outX, int* outY, int* outW, int* outH) {
     const int FW = MODE1_GBA_WIDTH;
     const int FH = MODE1_GBA_HEIGHT;
@@ -391,36 +381,6 @@ extern "C" void Port_PPU_PresentFrame(void) {
         port_hdma_has_active_channels() ? port_hdma_step_line : nullptr;
 
     virtuappu_render_frame();
-
-    /* Widescreen-spike post-process: on screens where the engine doesn't
-     * load BG tile data past column 239 (title, file-select), the extra
-     * widescreen columns (240+) read stale VRAM and visually glitch
-     * (e.g. yellow band on title). Force-black them on those tasks; the
-     * gameplay task is left alone since it does scroll the BG buffer.
-     *
-     * gMain.task is byte 2 of the Main struct (vu8 interruptFlag at 0,
-     * sleepStatus at 1, task at 2 — see include/main.h). Read raw bytes
-     * to avoid pulling main.h into this C++ TU (the engine headers use
-     * `this` as a C parameter name and don't parse as C++). */
-    /* Widescreen Phase 1: ViruaPPU clips BG/OAM at col 240 unconditionally
-     * (engine's 32-tile BG buffer doesn't have reliable data past col 240
-     * on static screens, and parked off-screen sprites live at x >= 240).
-     * For any widescreen_width > 240, uniform-stretch the 240-px frame
-     * into the full window. Phase 2 (sa2-style BGCNT_TXT512x256 + 64-tile
-     * BG buffer) replaces this with real extended tile loading. */
-    if (MODE1_GBA_WIDTH > 240) {
-        uint32_t scratch[240];
-        for (int y = 0; y < MODE1_GBA_HEIGHT; ++y) {
-            uint32_t* row = &virtuappu_frame_buffer[y * MODE1_GBA_WIDTH];
-            std::memcpy(scratch, row, 240 * sizeof(uint32_t));
-            for (int dst_x = 0; dst_x < MODE1_GBA_WIDTH; ++dst_x) {
-                int src_x = (dst_x * 240) / MODE1_GBA_WIDTH;
-                if (src_x > 239) src_x = 239;
-                row[dst_x] = scratch[src_x];
-            }
-        }
-    }
-    (void)gMain;
 
     if (sBackend == RenderBackend::Renderer) {
         int outW = 0;

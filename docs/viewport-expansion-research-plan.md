@@ -1,10 +1,35 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** research plan, no implementation committed
+**Status:** Spike 0 complete (2026-07-27) — capture tooling landed, route
+manifest pinned, baseline recorded, D2–D4 decided. **D1 (HUD placement) is
+the only open decision**; mockups ready in
+`tools/capture/references/hud-mockups/`. Next: Spike 1.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
-**Scope:** USA assets only.
+**Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
+320×240 is **best-effort, not gating** — mods are authored against 240×160
+assumptions, and breakage they exhibit does not block any milestone.
+**Estimate unit:** all day figures are focused working days for a single
+engineer, implementation *and* verification included. The static-trace and
+mechanical-edit portions compress heavily under agent execution; the
+interactive portions (route walks, visual checks) do not — the verification
+tail is the floor regardless of who writes the code.
 **Goal:** render a 320×240 viewport. Rooms smaller than the viewport in either
 axis are centered with borders.
+
+---
+
+## 0. Decisions required before execution
+
+Four decisions that the spikes would otherwise make implicitly, mid-task, on
+implementation-cost grounds. They are pulled forward so they are made
+deliberately. None require code first.
+
+| # | Decision | Default if unmade | Made in | Status |
+|---|---|---|---|---|
+| **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Open — mockups ready** (`tools/capture/references/hud-mockups/`) |
+| **D2** | **Viewport size: build-time constant or runtime-configurable?** Gates Spike 3's architecture (fork API shape, buffer sizing) and the settings-menu surface. The port already exposes internal-scale at runtime (`port_runtime_config.h`). | Build-time for Milestone 1; revisit before ship | Spike 0 | **Decided 2026-07-27: build-time for M1** |
+| **D3** | **Border appearance** for centered rooms: solid black, or something else? 78% of rooms show borders (§6) — this is most of what players see. | Solid black | Spike 0 | **Decided 2026-07-27: solid black** |
+| **D4** | **Phase 1 scaffold: wire or delete?** (was open question 8). Constraint either way: `viruappu-widescreen.patch` survives as reference material — Spike 9's per-line IO snapshot design lives only in that unapplied patch. | Wire | Spike 0 | **Decided 2026-07-27: delete** — the inert `widescreen_width` option and the dead stretch branch are removed; width plumbing arrives properly in Milestone 1. The patch file stays as Spike 9 reference. |
 
 ---
 
@@ -119,14 +144,18 @@ Evidence gathered, with locations, so spikes can start from known ground.
 | Scripted camera | `src/scroll.c:792,796,800,827,831,835` | literal `120`. |
 | Script camera clamp | `src/script.c:1976-1977` | `origin_x + width - DISPLAY_WIDTH`. |
 | BG tile streaming | `src/screenTileMap.c` (343 lines) | `0x20` row strides, `& 0x1f` wrap masks, `0x1e` (30 columns), `0x16` (22 rows), DMA row shifts. Register-named decomp output. |
-| BG staging buffers | `include/vram.h:58-68` | `gBG0/1/2Buffer` = `0x400` u16 (32×32); `gBG3Buffer` = `0x800` (64×32). |
+| BG staging buffers | `include/vram.h:58-68` **and duplicated verbatim at** `include/structures.h:207-210` | `gBG0/1/2Buffer` = `0x400` u16 (32×32); `gBG3Buffer` = `0x800` (64×32). Both definition sites must change together. |
 | BG→VRAM upload | `src/interrupts.c:104-108` | VBlank DMA of `bg->subTileMap` into a screenbase; size from `gUnk_080B2CD8[dest >> 14]`, indexed by the BGCNT screen-size bits. |
 | HUD composition | `src/ui.c:233-559` | Direct writes into `gBG0Buffer` at hardcoded linear offsets (`0x258`, `0x278`, `0x219`, `0x239`, …) that assume a 32-wide stride. |
-| Window regs | `src/object/lightRay.c`, `lightDoor.c`, `cutscene.c`, `menu/figurineMenu.c`, `menu/kinstoneMenu.c`, `common.c`, `interrupts.c` | `WIN0H`/`WIN0V` pack two 8-bit edges into one `u16` (`0x80f0`, `(a << 8) \| b`). |
+| Window regs | `src/object/lightRay.c`, `lightDoor.c`, `cutscene.c`, `menu/figurineMenu.c`, `menu/kinstoneMenu.c`, `common.c`, `interrupts.c`; plus PPU-side clamps at `libs/ViruaPPU/src/mode1.c:563-570` | `WIN0H`/`WIN0V` pack two 8-bit edges into one `u16` (`0x80f0`, `(a << 8) \| b`). The PPU clamps window bottoms against `MODE1_GBA_HEIGHT` — an eighth edit site beyond the seven engine files. |
 | Memory map | `port/port_gba_mem.h:11-17,47-51` | `gVram[0x18000]` fixed; `gba_TryMemPtr` bounds VRAM at `0x06018000`. |
 
-Aggregate scale of the BG-buffer coupling: **101 `gBG[0-3]Buffer` references
-across 22 files, 42 of them stride-sensitive indexed accesses.**
+Aggregate scale of the BG-buffer coupling:
+`grep -rn "gBG[0-3]Buffer" --include=*.c --include=*.h src include` returns
+**118 references across 24 files** (121 / 25 files including `port/`); roughly
+40 are stride-sensitive indexed accesses. The stride-sensitive count is
+approximate until the Spike 6 inventory re-derives it — any number quoted from
+this table should carry its grep so it stays checkable.
 
 ---
 
@@ -137,8 +166,9 @@ not all apply to every option.
 
 1. **BG staging buffers are 32×32.** 320×240 needs 40×30 tiles visible, so ≥42×32
    with a scroll margin. Worse, under `PC_PORT` these are `#define`s aliasing
-   fixed offsets inside `gEwram[]` (`0x34CB0`, `0x21F30`, `0x344B0`, `0x1A40`),
-   so growing them collides with neighbouring decomp data at fixed addresses.
+   fixed offsets inside `gEwram[]` (`0x34CB0`, `0x21F30`, `0x344B0`, `0x1A40`) —
+   defined twice, in `vram.h:59-62` *and* `structures.h:207-210` — so growing
+   them collides with neighbouring decomp data at fixed addresses.
    *Mitigating find:* `include/vram.h:65-68` already carries a non-`PC_PORT`
    branch declaring them as plain `extern u16[]` arrays. The port could switch
    to real, larger arrays and sidestep the EWRAM overlay entirely — needs
@@ -154,7 +184,10 @@ not all apply to every option.
    not a cosmetic one, and it appears the moment height exceeds ~200.
 
 4. **Window registers are 8 bits per edge.** 320 does not fit in `WIN0H`. Used by
-   light rays, light doors, cutscene letterboxing, and two menus.
+   light rays, light doors, cutscene letterboxing, and two menus. The PPU also
+   clamps window bottoms against `MODE1_GBA_HEIGHT`
+   (`libs/ViruaPPU/src/mode1.c:563-570`) — an edit site beyond the seven engine
+   files.
 
 5. **Camera constants are scattered magic numbers** (§3). Mechanical but wide.
 
@@ -168,21 +201,25 @@ not all apply to every option.
 
 ## 5. The finding that reframes the problem
 
-`SetTileType` (`src/playerUtils.c:3436-3475`) writes every runtime tile mutation
+`SetTileType` (`src/playerUtils.c:3436-3475`) writes runtime tile mutations
 into `gMapDataBottomSpecial` / `gMapDataTopSpecial` and then raises
 `gUpdateVisibleTiles`, which causes `screenTileMap.c` to refresh the 32×32
 window *from those arrays*. The streaming functions take them as their
-`mapspecial` parameter.
+`mapspecial` parameter. (The write is gated — `playerUtils.c:3455` skips it
+when `gRoomControls.scroll_flags & 1` is set; see §5.1.)
 
 Those arrays are `u16[0x4000]` each (`include/tileMap.h:10-11`) — 16384 entries
 at a row stride of `0x80` (128), i.e. a **128×128 grid of 8×8 tiles = 1024×1024
-pixels**, which covers the largest room in the game (1024×1008, §6).
+pixels**, which covers the largest room in the game (1024×1008, §6). On the
+normal room-load path they are populated whole-room by
+`RenderMapLayerToSubTileMap` (`src/beanstalkSubtask.c:1126` — 64×64 16-px
+tiles at stride `0x80`).
 
-The consequence: **for world/gameplay layers, a complete and runtime-accurate
-tilemap for the entire room already exists in memory, independent of the 32×32
-hardware window.** A PPU that samples *that* does not need blockers 1, 2, or 7
-solved at all. No EWRAM layout surgery, no rewrite of `screenTileMap.c`, no
-VRAM growth.
+The consequence: **for world/gameplay layers, in the normal case, a complete
+and runtime-accurate tilemap for the entire room already exists in memory,
+independent of the 32×32 hardware window.** A PPU that samples *that* does not
+need blockers 1, 2, or 7 solved at all. No EWRAM layout surgery, no rewrite of
+`screenTileMap.c`, no VRAM growth.
 
 The natural boundary this creates:
 
@@ -195,7 +232,43 @@ That boundary lines up exactly with the requirement. HUD and menus authored for
 240×160 *should* be centered rather than stretched or extended, so leaving them
 on the 32×32 path is the correct behaviour, not a compromise.
 
-**This must be verified before it is relied on.** See Spike 2 (§9).
+### 5.1 Known exclusions — found in review, ahead of Spike 2
+
+The premise does **not** hold unconditionally. Three counter-signals are
+visible statically, and they shape both Spike 2 and the design:
+
+1. **The arrays are aggressively repurposed outside gameplay** — the
+   `tileMap.h:6-7` comment says so, and it is true:
+   - `fileselect.c:378` treats `gMapDataBottomSpecial` as a save-file struct
+     (`.saves[idx]`).
+   - `kinstoneMenu.c:385` re-declares it as `struct_02019EE0[16]`.
+   - `pauseMenu.c:1199,1278` uses it as the dungeon-map draw target.
+   - `gyorgFemale.c:95-96,224-247` `MemClear`s both arrays whole (`0x8000`
+     bytes each) and uses them as a scratch bitmap during the fight.
+
+   A PPU that samples them unconditionally renders garbage in file select,
+   kinstone fusion, the pause dungeon map, and the Gyorg fight.
+2. **`SetTileType`'s special-map write is gated** on
+   `(gRoomControls.scroll_flags & 1) == 0` (`playerUtils.c:3455`).
+3. **A room class exists where the map is neither full-room nor live.** On the
+   `clearBottomMap` / `AREA_PALACE_OF_WINDS_BOSS` path
+   (`playerUtils.c:4074-4087`) the special maps are built not by
+   `RenderMapLayerToSubTileMap` but by `sub_0807C5F4`'s staging shuffle — four
+   32×32 chunks at offsets `0/0x20/0x1000/0x1020`, i.e. **64×64 subtiles =
+   512×512 px**, not 1024×1024 — and the same branch sets `scroll_flags |= 1`,
+   which then disables the `SetTileType` write per (2).
+
+Consequently Option E cannot be a static per-layer flag. It needs a **runtime
+"is this BG currently a map-authoritative world layer" predicate**, evaluated
+per BG per frame off an explicit engine-side signal — never a heuristic. The
+natural signal exists: the engine rebinds `gScreen.bgN.subTileMap` per scene
+(`common.c:636-642`), and `scroll_flags` marks the degraded room class. The
+predicate is specified in Spike 2's static pre-check and implemented in
+Spike 3; scenes it excludes stay on the unchanged 32×32 path — which is
+exactly the §5 boundary behaviour anyway.
+
+**The premise must still be verified at runtime before it is relied on.** See
+Spike 2 (§10).
 
 ---
 
@@ -261,8 +334,10 @@ Make `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` build config; extend OAM to 12-byte
 entries with s16 x/y; widen window registers to 32-bit; grow BG buffers to
 64×32; rewrite `screenTileMap.c`; grow VRAM.
 
-This is the approach taken by `awe444/sa2`, and its implementation is worth
-reading closely:
+This is the approach taken by `awe444/sa2`
+(<https://github.com/awe444/sa2> — our fork of the SAT-R/sa2 Sonic Advance 2
+decompilation; all "sa2" references in this doc mean this fork), and its
+implementation is worth reading closely:
 
 - `include/gba/defines.h:41-76` — `DISPLAY_WIDTH 320 / DISPLAY_HEIGHT 240` for
   PC, with `WIDESCREEN_HACK` and `EXTENDED_OAM` auto-enabled at ≥256.
@@ -285,7 +360,7 @@ mechanical transform, and TMC's analogue is per-area tilemap streaming plus
 every BG-authored UI screen.
 
 **Unlocks:** maximum fidelity, everything native at 320×240.
-**Cost:** highest. All seven blockers, plus 42 stride-sensitive BG-buffer sites,
+**Cost:** highest. All seven blockers, plus ~40 stride-sensitive BG-buffer sites (§3),
 plus a per-screen tuning tail.
 **Verdict:** the reference implementation to learn from, but adopting it
 wholesale imports the parts TMC does not need.
@@ -299,17 +374,31 @@ existing 32×32 path and are composited centered.
 Since GBA legality is explicitly not required and VirtuaPPU is ours to modify,
 nothing forces the BG source to be a hardware-shaped screenblock.
 
+Two design elements this option requires that an implementer would otherwise
+have to invent mid-spike:
+
+- **The map-authoritative predicate (§5.1).** Which BG is "world" vs "UI" is
+  dynamic, not static — `common.c:636-642` rebinds `gScreen.bgN.subTileMap`
+  per scene, and menus repurpose both the buffers and the special maps. The
+  PPU switches source per BG per frame off that binding plus `scroll_flags`.
+  Spec: Spike 2. Implementation: Spike 3.
+- **Affine BG2 is out of scope for the new mode.** The mode-2 path
+  (`libs/ViruaPPU/src/mode2.c`) has its own `MODE1_GBA_WIDTH/HEIGHT` loops and
+  no full-room source to sample. Affine scenes render 240×160 and letterbox
+  through Milestone 1 at least (resolves open question 6 for now).
+
 **Unlocks:** a true 320×240 world view without touching blockers 1, 2, or 7.
 **Still requires:** OAM Y widening (3), window registers (4), camera constants
 (5), HDMA line count (6). Those are unavoidable in any option that genuinely
 expands the viewport, and sa2 has proven patterns for 3 and 4.
 **Cost:** moderate, and concentrated in code we own (VirtuaPPU + `port/`) rather
 than in 343 lines of register-named decomp.
-**Risk:** rests entirely on the §5 premise. If the special map turns out to be
-incomplete for some rooms, paged for large rooms, or bypassed by some layer,
-the option degrades sharply. `sub_0807C5F4` (`src/playerUtils.c:4264-4311`) does
-chunked expansion with `width > 0xff` / `height > 0xff` branches that need to be
-understood before this is trusted.
+**Risk:** rests on the §5 premise, whose known exceptions are catalogued in
+§5.1. The residual risk is that Spike 2 finds the exclusion set larger than the
+predicate can cleanly route — specifically, a *mid-gameplay world* layer that
+bypasses the map. `sub_0807C5F4` (`src/playerUtils.c:4264-4311`) is now
+understood: four 32×32-chunk copies covering 512×512 px, used only on the
+degraded room class of §5.1(3).
 **Verdict:** highest value-to-cost ratio *if* Spike 2 confirms the premise. This
 is the option the plan is built to validate or kill first.
 
@@ -420,8 +509,12 @@ Reasoning:
 - Sequence the expansion **width first, then height** (§8), so the map-sampling
   premise is proven before the two riskiest blockers are touched.
 
-**This recommendation is conditional on Spike 2.** If the special-map premise
-fails, the decision reverts to Option D and the effort roughly triples.
+**This recommendation is conditional on Spike 2.** Given §5.1, the expected
+verdict is not binary but "Option E with a recorded exclusion set routed
+through the predicate." The fallback to Option D triggers only if the
+exclusions turn out to include gameplay-critical *world* layers — the special
+map bypassed mid-gameplay, not merely repurposed in menus. In that case the
+effort roughly triples.
 
 ---
 
@@ -438,26 +531,70 @@ Hyrule Town → Hyrule Field → Minish Woods → Deepwood Shrine (1 dungeon) �
 pause menu → figurine menu → a text box → a light-ray room → a cutscene. It
 covers every subsystem the spikes touch and is short enough to run repeatedly.
 
+The route as listed is *named, not pinned*: "a text box", "a light-ray room",
+"a cutscene" are not re-runnable definitions. Spike 0 pins every waypoint as
+(area, room, entry coordinates, save state, capture frame) in a committed
+route manifest — every pixel-diff DoD below depends on capturing the *same
+frame* twice, and the port currently has **no screenshot, save-state,
+frame-step, or input-replay mechanism** to do that with. All verification
+effort below assumes the Spike 0 tooling exists; without it, a route walk is
+~20 minutes of manual play per run and "diff = 0" is not an executable
+criterion.
+
 ---
 
-### Spike 0 — Baseline and instrumentation (1 day)
+### Spike 0 — Baseline, tooling, and decisions (2–3 days)
 **Questions:** What is the true starting state, given §2.2? What is the frame
 budget? Does the patch pipeline behave against the new fork?
-**Method:** Wire the `widescreen_width` option to an actual
-`add_defines("MODE1_GBA_WIDTH=…")` and add the missing widescreen patch to the
-`xmake.lua` patches table — or delete both if they are not worth carrying.
-Add a frame-time counter. Capture reference frames along the canonical route.
 
-**Definition of done:**
-- [ ] `widescreen_width=320` demonstrably changes the built binary (verified by
-      a symbol/constant check, not by eyeballing the window).
-- [ ] Decision recorded in this doc: wire the Phase 1 scaffold, or delete it.
-- [ ] Reference PNG captures for all 11 route waypoints exist at 240×160,
-      committed or archived at a named path.
-- [ ] Mean and 99th-percentile frame time recorded at 240×160 on a named
-      reference machine.
-- [ ] `git submodule update --init` + a clean `xmake` build succeeds from a
-      fresh clone, with the patch step logging exactly which patches applied.
+This spike is larger than a plain baseline capture because it owns the
+verification infrastructure every later DoD depends on (see the route-manifest
+note above). Partial good news: the F8 debug menu already provides
+parameterised warps (`port_debug_menu.cpp:192-210`, `Port_DebugAction_Warp`)
+covering most route waypoints — the tooling starts from that, not from zero.
+
+**Method:** Resolve D2, D3, and D4 (§0). For D4: wire `widescreen_width` to an
+actual `add_defines("MODE1_GBA_WIDTH=…")` and add the widescreen patch to the
+`xmake.lua` patches table, or delete the scaffold — preserving the patch file
+as Spike 9 reference material either way. Build the capture tooling. Add a
+frame-time counter. Capture reference frames along the canonical route.
+
+**Definition of done:** *(completed 2026-07-27)*
+- [x] Scaffold **deleted** per D4: `widescreen_width` option removed from
+      `xmake.lua`, dead stretch branch and `gMain` peek removed from
+      `port_ppu.cpp`, stale fallback define removed from `port_main.c`.
+      `viruappu-widescreen.patch` retained as Spike 9 reference.
+- [x] D2, D3, D4 recorded as **decided** in the §0 table.
+- [x] **Route manifest committed:** `tools/capture/route.script` +
+      `tools/capture/README.md` pin all 11 waypoints (frame number, area /
+      room / coords for warped ones, save state = deterministic new game
+      from blank EEPROM). Two waypoints resolved concretely: "a light-ray
+      room" = Minish Woods west (`0x00` room 0, x 0x40 y 0x2A0); "a
+      cutscene" = Picori-legend page at frame 3300.
+- [x] **Deterministic capture works:** `--script` input replay +
+      `--dump-dir` PPM dumps (`port/port_capture.c`); the engine RNG is
+      constant-seeded (`gRand = 0x1234567`) so no seed pinning was needed;
+      title auto-START hack suppressed during scripted runs. Two full route
+      runs produced **byte-identical dumps at all 11 waypoints** (11/11
+      diff = 0).
+- [x] **Diff harness exists:** `tools/capture/diff_captures.py`
+      (per-waypoint mismatch counts, `--rect` for Spike 1's centered-region
+      check) + `tools/capture/ppm2png.py`.
+- [x] Reference captures committed at
+      `tools/capture/references/spike0-240x160/` (.ppm diff sources + .png).
+- [x] HUD mockups at `tools/capture/references/hud-mockups/`
+      (`hud_centered_320.png`, `hud_anchored_320.png`) — D1 input.
+- [x] Baseline frame times, canonical route (12.7k frames), headless dummy
+      video, uncapped, release build, **AMD Ryzen 7 5800H, Linux 6.17
+      x86_64**: logic mean 0.191 ms / p99 0.825 ms; present (software
+      render+upscale) mean 5.49 ms / p99 8.27 ms. Logic is ~1% of the
+      16.67 ms frame budget — the engine side has enormous headroom; the
+      present path is where any 320×240 perf cost will land.
+- [x] sa2 pinned: `awe444/sa2@34b01960bb73734ec077b007f5d57ee46fa4b7a0`
+      (`main` as of 2026-07-27), recorded in §13.
+- [x] Fresh-clone check: clone + `git submodule update --init` + `xmake`
+      build ok (28.9 s); patch log shows exactly one patch applied
+      (`viruappu-internal-scale`), `hdma-hook`/`mosaic` skipped via markers.
 
 ### Spike 1 — Land Option B, centered native (0.5 day)
 **Method:** 320×240 window, 240×160 render centered with borders. No engine
@@ -465,13 +602,17 @@ changes.
 
 **Definition of done:**
 - [ ] Build produces a 320×240 window with a pixel-exact 240×160 render centered
-      in it; border pixels are uniform and match the chosen border colour.
+      in it; border pixels are uniform and match the D3 border choice.
+- [ ] Border compositing order relative to the existing scaling/filter stack
+      (xBRZ, CRT/LCD, internal scale — `port_upscale.c`, `port_filter.c`,
+      `port_ppu.cpp`) is decided and recorded; no filter bleeds across the
+      border edge (a CRT filter smearing into the border region is a fail).
 - [ ] All 11 route captures are pixel-identical to Spike 0's inside the centered
       region (diff = 0), confirming zero behavioural change.
 - [ ] Frame time within noise of the Spike 0 baseline.
 - [ ] Merged to the working branch as the fallback build.
 
-### Spike 2 — Validate the special-map premise *(decision gate)* (2–3 days)
+### Spike 2 — Validate the special-map premise *(decision gate)* (2.5–3.5 days)
 **Questions:**
 - Is `gMapDataTopSpecial` / `gMapDataBottomSpecial` complete for the whole room,
   in every room, at all times?
@@ -483,12 +624,24 @@ changes.
 - Do runtime mutations (destructible tiles, bombable walls, doors, chests,
   `lightManager.c`) all route through `SetTileType`?
 
-**Method:** Instrument the port to dump the special map alongside the composed
-32×32 window each frame and diff the overlapping region. Any mismatch is a layer
-or mutation path that bypasses the map. Walk the canonical route plus targeted
-destructible / bombable-wall / door / chest interactions.
+**Method:** First, a **static pre-check (the first half-day):** enumerate the
+room set where the premise is already known not to hold — (a) rooms taking the
+`clearBottomMap` / `AREA_PALACE_OF_WINDS_BOSS` build path (§5.1(3)); (b) the
+aliased-use windows of §5.1(1). Output: a first-cut exclusion list, plus a
+written spec of the **map-authoritative predicate** — the exact engine-side
+signal (candidate: the `gScreen.bgN.subTileMap` binding, `common.c:636-642`,
+plus `gRoomControls.scroll_flags`) by which the PPU decides, per BG per frame,
+whether the special map is currently a world tilemap.
+
+Then instrument the port to dump the special map alongside the composed
+32×32 window each frame and diff the overlapping region (extending Spike 0's
+diff harness). Any mismatch is a layer or mutation path that bypasses the map.
+Walk the canonical route plus targeted destructible / bombable-wall / door /
+chest interactions.
 
 **Definition of done:**
+- [ ] The static pre-check's exclusion list and the map-authoritative
+      predicate spec are written down **before** the harness is built.
 - [ ] A reusable diff harness exists that reports, per frame, the count and
       coordinates of mismatched tiles between the special map and the composed
       32×32 window.
@@ -500,19 +653,31 @@ destructible / bombable-wall / door / chest interactions.
       confirmed to propagate into the special map within one frame.
 - [ ] `sub_0807C5F4`'s four chunk branches documented, with the maximum room
       geometry each covers, and confirmation of whether the map is ever paged.
-- [ ] **Explicit written verdict: proceed with Option E, or fall back to Option
-      D.** This is the gate — no downstream spike starts until it is recorded.
+- [ ] **Explicit written verdict: proceed with Option E — with the recorded
+      exclusion set and, per excluded class, the fallback behaviour the
+      predicate routes it to — or fall back to Option D.** This is the gate —
+      no downstream spike starts until it is recorded.
 
-### Spike 2A — Width-only feasibility probe (1 day, parallel with 2)
+### Spike 2A — Width-only feasibility probe + static inventories (1.5 days, parallel with 2)
 **Questions:** Does the §8 claim hold that width-only under Option E needs only
-window registers plus camera constants?
+window registers plus camera constants? Where is the per-entity OAM coordinate
+write site? What outside `scroll.c`/`script.c` consumes the camera position?
 **Method:** Static trace only — no implementation. Walk every constraint in §4
 against a 320×160 target and confirm or refute the §8.1 matrix row by row.
+Then two inventories moved here from later spikes because they are static
+work and their answers gate estimates:
 
 **Definition of done:**
 - [ ] Every cell in the §8.1 width column confirmed or corrected against source,
       each with a file:line citation.
 - [ ] Any constraint discovered that §8.1 missed is added to the matrix.
+- [ ] **The per-entity OAM coordinate write site (open question 2) is located
+      and documented** — including whether it lives in C or unported `asm/`.
+      Spike 7 and Spike 8 estimates are revisited against the answer; if it is
+      in `asm/`, their estimates are floors, re-estimated before starting.
+- [ ] **Inventory of every consumer of `gRoomControls.scroll_x`/`scroll_y`
+      outside `scroll.c`/`script.c`** (spawn, cull, trigger logic), so Spike 5
+      knows its blast radius before editing rather than after.
 - [ ] Width-only effort re-estimated in days, with the estimate's basis stated.
 
 ### Spike 2B — Height-only feasibility probe (1 day, parallel with 2)
@@ -544,12 +709,20 @@ would fall outside the representable range at height 240.
 scroll origin and width, and does it reproduce the existing render exactly at
 240 width?
 **Method:** Add the mode to the fork. Feed it scroll origin and viewport size
-from `port_ppu.cpp`. Keep UI layers on the 32×32 path.
+from `port_ppu.cpp`. Keep UI layers on the 32×32 path. The mode's API shape
+(compile-time vs runtime viewport) follows D2. Which BGs route through it is
+driven by the Spike 2 predicate — not a heuristic.
 
 **Definition of done:**
-- [ ] At width 240, the map-sampled output is **pixel-identical** to the current
-      screenblock path across all 11 route captures (diff = 0). This is the
-      correctness anchor — the new path must be a no-op before it is a feature.
+- [ ] At width 240, in every route waypoint Spike 2 classified
+      *map-authoritative*, the map-sampled output is **pixel-identical** to the
+      current screenblock path (diff = 0). This is the correctness anchor — the
+      new path must be a no-op before it is a feature. Waypoints in the
+      exclusion set (file select, pause map, kinstone fusion, …) are exempt
+      *because the predicate must route them to the unchanged 32×32 path* —
+      for those, the check is output identical to Spike 1's build.
+- [ ] The map-authoritative predicate is implemented exactly as specified in
+      Spike 2.
 - [ ] At width 320, world BG renders real tile data in columns 240–319 in a room
       known to be ≥320 wide, with no stale-VRAM artifacts.
 - [ ] UI layers still render through the 32×32 path, unchanged.
@@ -558,11 +731,13 @@ from `port_ppu.cpp`. Keep UI layers on the 32×32 path.
 ### Spike 4 — Window register widening (1 day)
 **Method:** Follow sa2's `winreg_t` / `WIN_RANGE` / `WIN_GET_*` pattern. Convert
 the seven consuming files (`lightRay.c`, `lightDoor.c`, `cutscene.c`,
-`figurineMenu.c`, `kinstoneMenu.c`, `common.c`, `interrupts.c`).
+`figurineMenu.c`, `kinstoneMenu.c`, `common.c`, `interrupts.c`), plus the
+PPU-side window clamps at `libs/ViruaPPU/src/mode1.c:563-570` (§4).
 
 **Definition of done:**
 - [ ] `winreg_t` widened; all seven files compile with no remaining 8-bit edge
-      packing (`(a << 8) | b`) for horizontal window bounds.
+      packing (`(a << 8) | b`) for horizontal window bounds; the PPU-side
+      clamps updated to the new extents.
 - [ ] Light ray, light door, cutscene letterbox, figurine menu, and kinstone
       menu each visually verified at 320 width, with before/after captures.
 - [ ] At 240 width, all five are pixel-identical to Spike 0 captures.
@@ -571,7 +746,9 @@ the seven consuming files (`lightRay.c`, `lightDoor.c`, `cutscene.c`,
 **Questions:** Do `scroll.c`'s magic constants generalise to half-viewport
 expressions? Does fixed-width clamping centre small rooms naturally, or is
 Option C's variable viewport needed?
-**Method:** Replace `0x78`/`0xf8`/`0xf0`/literal `120` with viewport-derived
+**Method:** Consult Spike 2A's `scroll_x`/`scroll_y` consumer inventory first,
+so the blast radius outside `scroll.c`/`script.c` is known before editing.
+Then replace `0x78`/`0xf8`/`0xf0`/literal `120` with viewport-derived
 expressions. Test across the §6 width clusters: 240, 272, 304, 336, 400+.
 
 **Definition of done:**
@@ -583,31 +760,35 @@ expressions. Test across the §6 width clusters: 240, 272, 304, 336, 400+.
       wider rooms scroll and clamp at both edges without overscroll.
 - [ ] Written verdict on fixed-viewport vs Option C's variable viewport.
 
-### Spike 6 — UI centering and composition (2 days)
-**Questions:** Centered or edge-anchored? Note edge anchoring reopens the 42
-stride-sensitive `gBG0Buffer` sites in `ui.c`, so centering is strongly
-preferred.
-**Method:** Composite the 32×32 UI path centered over the expanded world.
+### Spike 6 — UI composition (2 days if D1 = centered)
+**Prerequisite:** D1 (§0) is decided before this spike starts — a product
+choice made from the Spike 0 mockups, not a call to be made here on
+implementation-cost grounds. If D1 chose edge-anchored, this spike reopens the
+stride-sensitive `gBG0Buffer` sites (§3) and must be re-estimated (likely 4–6
+days) before starting.
+**Method:** Implement D1 by compositing the 32×32 UI path over the expanded
+world accordingly.
 
 **Definition of done:**
-- [ ] Design decision recorded: centered or anchored, with rationale.
+- [ ] D1 implemented exactly as recorded in §0.
 - [ ] HUD, text box, pause menu, figurine menu, title, and file select each
       visually verified at 320×160.
-- [ ] Zero changes required to the 42 stride-sensitive `gBG0Buffer` sites — if
-      any change *is* required, that is recorded as a scope increase and
-      re-estimated before proceeding.
+- [ ] (If D1 = centered) zero changes required to the stride-sensitive
+      `gBG0Buffer` sites — if any change *is* required, that is recorded as a
+      scope increase and re-estimated before proceeding.
 
 ### Spike 7 — Horizontal culling and off-screen behaviour (2–3 days)
 **Questions:** Do entities the engine assumed off-screen become visible? The
 existing patch notes parked sprites at OAM x ≥ 240 — is that real, and what is
-the actual parking convention? (The OAM composition path was not fully traced
-during this research; `gOAMControls.oam` is DMA'd at `interrupts.c:94`, but the
-per-entity coordinate write site remains unidentified and must be found here.)
+the actual parking convention? (The per-entity OAM coordinate write site is
+located in Spike 2A; if 2A found it in unported `asm/`, this spike's estimate
+is a floor — re-estimate before starting.)
 **Method:** Focus on the 174 rooms ≥320 wide, weighted to Hyrule Field, Hyrule
 Town, Minish Woods, Castor Wilds.
 
 **Definition of done:**
-- [ ] The per-entity OAM coordinate write site is identified and documented.
+- [ ] The per-entity OAM coordinate write site (located in Spike 2A) is
+      confirmed at runtime and documented.
 - [ ] The sprite parking convention is documented (what coordinate, set where).
 - [ ] At least 10 rooms ≥320 wide walked end to end; every instance of pop-in,
       parked-sprite leakage, or broken cutscene framing logged with room ID and
@@ -618,7 +799,10 @@ Town, Minish Woods, Castor Wilds.
 - [ ] 320×160 builds, runs, and completes the canonical route without crash.
 - [ ] All rooms narrower than 320 are centered with correct borders.
 - [ ] No visual regression versus Spike 0 captures in the central 240 columns.
-- [ ] Frame time within 25% of the Spike 0 baseline.
+- [ ] Frame time within 25% of the Spike 0 baseline. **If exceeded:** the
+      overrun is handled by a dedicated perf spike scheduled before ship — the
+      criterion is not silently renegotiated. Milestone 2 may start in
+      parallel with that perf spike only if the overrun is under 2×.
 - [ ] Go/no-go recorded for Milestone 2.
 
 ---
@@ -654,8 +838,10 @@ affine scenes (Vaati's tornado, rolling barrel, screen-shrink cinematic).
 - [ ] Each table classified: extend, resample, or leave.
 - [ ] Water FX, a `BLDY` fade, and all three named affine scenes verified at 240
       lines against 160-line captures.
-- [ ] `io_snapshots[MODE1_GBA_HEIGHT][MODE1_IO_MEM_SIZE]` resized and its memory
-      cost recorded.
+- [ ] A per-scanline IO snapshot sized for 240 lines is implemented and its
+      memory cost recorded. (The `io_snapshots[MODE1_GBA_HEIGHT][…]` sketch
+      exists only in the *unapplied* widescreen patch — reference material per
+      D4, not a symbol in any build.)
 
 ### Spike 10 — Camera and clamping, vertical (1–2 days)
 **Method:** As Spike 5, for `0x50`/`0xa8` and the height clamp. Test across §6
@@ -680,9 +866,14 @@ playthrough at 320×240.
 
 ---
 
-**Total estimate:** 20–27 days to a shippable 320×240, of which **Spikes 0–2B
-(5–6 days)** determine whether the recommended path survives and confirm the
-axis order. Milestone 1 alone is 11–15 days.
+**Total estimate:** 24–31 days of effort (unit: see header) to a shippable
+320×240. The gate phase — **Spikes 0–2B — is 7–9.5 days of effort, ~5–7 days
+of calendar with 2A/2B run parallel to Spike 2 as planned**, and determines
+whether the recommended path survives and confirms the axis order. Milestone 1
+alone is 12–16 days including its share of the gate phase. The increase over
+this plan's earlier 20–27 figure buys the capture/determinism tooling in
+Spike 0 and the inventory work moved into Spike 2A — not new implementation
+scope.
 
 The estimate is higher than a single-pass 320×240 attempt would appear to be on
 paper. That is deliberate: the axis split buys attributable failures and a
@@ -693,17 +884,24 @@ where the dominant risk is a late discovery that the premise was wrong.
 
 ## 11. Open questions
 
-1. Does `gMapData*Special` cover the full room in *all* cases, or does
-   `sub_0807C5F4`'s chunked expansion leave gaps for certain room geometries?
-   (Decision gate — Spike 2.)
+1. Does `gMapData*Special` cover the full room in *all* cases? **Partially
+   answered statically (§5.1): no** — the `clearBottomMap` /
+   `AREA_PALACE_OF_WINDS_BOSS` path builds only 512×512 px via `sub_0807C5F4`,
+   `SetTileType`'s write is gated on `scroll_flags & 1`, and four scenes alias
+   the arrays outright. Spike 2 confirms the complete exclusion set at
+   runtime. (Decision gate — Spike 2.)
 2. Where is the per-entity OAM coordinate write site? `gOAMControls.oam` is
    DMA'd to OAM at `interrupts.c:94`, but the code that converts entity world
    coordinates into OAM attrs was not located during this research — it may live
-   in `asm/`. Blocks a firm answer on the sprite parking convention. (Spike 7.)
-3. Are `gBG0/1/2/3Buffer` ever addressed by GBA address (`0x02…`) rather than
-   through the `gEwram` alias? `src/subtask.c:109` does
-   `MemCopy(gBG1Buffer, (void*)0x600e000, 0x800)` — a raw VRAM address — which
-   suggests at least some raw-address coupling exists.
+   in `asm/`. Blocks a firm answer on the sprite parking convention.
+   (**Moved to Spike 2A** — it is static-trace work; Spikes 7 and 8 consume
+   the answer.)
+3. Are `gBG0/1/2/3Buffer` ever addressed by GBA address (`0x0203…`) rather than
+   through the `gEwram` alias? Note `src/subtask.c:109`'s
+   `MemCopy(gBG1Buffer, (void*)0x600e000, 0x800)` is *not* evidence of this —
+   `gBG1Buffer` is the source and `0x600e000` a raw VRAM destination (already
+   handled by `gba_TryMemPtr`). The right check is a grep for `0x0203` literals
+   and raw arithmetic on `gEwram` offsets.
 4. Is `EXTENDED_OAM` in sa2 actually working, or is the TODO accurate? Affects
    whether Spike 8 is a port or an original implementation.
 5. What is `gUnk_080B2CD8` (`data/const/interrupts.s:42`) — confirmed as a
@@ -711,13 +909,17 @@ where the dominant risk is a late discovery that the premise was wrong.
    needs larger screenblocks.
 6. Does the mode-2 path (`libs/ViruaPPU/src/mode2.c`, used for GBA modes 1 and 2
    per `port_ppu.cpp:376-386`) need the same treatment as mode 1? Affine BG2
-   scenes route through it.
-7. Should the viewport be a build-time constant or runtime-configurable? The
-   port already has a runtime config system (`port_runtime_config.h`) and an
-   internal-scale setting; a runtime toggle would ease A/B testing but forbids
+   scenes route through it. **Resolved for Milestone 1** (§7, Option E): affine
+   scenes stay 240×160 and letterbox. Revisit before ship.
+7. Should the viewport be a build-time constant or runtime-configurable?
+   **Promoted to D2 (§0)** — decided in Spike 0, because it gates Spike 3's
+   architecture. A runtime toggle would ease A/B testing but forbids
    compile-time sizing of buffers.
 8. Should the inert Phase 1 scaffold (§2.2) be wired up or deleted? Carrying a
-   declared-but-dead build option is a trap for the next reader. (Spike 0.)
+   declared-but-dead build option is a trap for the next reader. **Promoted to
+   D4 (§0)** — decided in Spike 0, with the constraint that the widescreen
+   patch file survives as reference material either way (Spike 9 depends on
+   it).
 
 ---
 
@@ -725,7 +927,10 @@ where the dominant risk is a late discovery that the premise was wrong.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Special-map premise fails | Option E dead; effort ~3× | Medium | Spike 2 is the gate, runs 3rd |
+| Special-map premise fails beyond the known §5.1 exclusions | Option E dead; effort ~3× | Low–Medium (the static review already found the main exclusion classes) | Spike 2 is the gate, runs 3rd |
+| Special maps repurposed during non-gameplay scenes (§5.1) | PPU samples garbage in file select, pause map, kinstone fusion, Gyorg fight | Certain (known) | Map-authoritative predicate: spec'd in Spike 2, implemented in Spike 3; excluded scenes stay on the 32×32 path |
+| Pixel-diff DoDs run without deterministic capture | Verification silently degrades to eyeballing | High if Spike 0 tooling is skipped | Route manifest + warp/dump/diff tooling are named Spike 0 deliverables, not assumed substrate |
+| Per-entity OAM write site lives in unported `asm/` | Spike 7/8 estimates blow up | Medium | Located in Spike 2A, before either spike starts |
 | `screenTileMap.c` rewrite required after all | High — hardest file in the effort | Medium | Only reached under Option D |
 | Per-scene tuning tail (as in sa2) | Schedule creep, long bug tail | High | Weight testing by playtime (§6), not room count |
 | OAM Y widening destabilises sprite rendering | Broad visual regressions | Medium | Deferred to Milestone 2 so failures are attributable; sa2 reference available |
@@ -739,11 +944,23 @@ where the dominant risk is a late discovery that the premise was wrong.
 
 ## 13. Reference material
 
-- `awe444/sa2` — `include/gba/defines.h:41-150` (config, `WIDESCREEN_HACK`,
-  `EXTENDED_OAM`, `winreg_t`), `include/gba/types.h:95-300` (extended OAM),
-  `sa1/src/platform/pret_sdl/sdl2.c:1600-1660` (renderer), and the
+- `awe444/sa2` — <https://github.com/awe444/sa2>, our fork of `SAT-R/sa2`
+  (default branch `main`; not affiliated with upstream). Key material:
+  `include/gba/defines.h` (config, `WIDESCREEN_HACK`, `EXTENDED_OAM`,
+  `winreg_t` — as of 2026-07-27 at lines ~36-78), `include/gba/types.h`
+  (extended OAM `split` struct and `OAM_SET_GBA_ATTR*` shims at ~157-250; the
+  `// TODO: EXTENDED_OAM is not yet functional` comment at ~116 is confirmed
+  present), `sa1/src/platform/pret_sdl/sdl2.c` (renderer), and the
   `#if WIDESCREEN_HACK` sites across `src/game/*/stage/backgrounds/`.
+  **The fork is actively developed (3300+ commits), so line citations drift —
+  Spikes 4/8 should re-cite against the pinned commit.** Pinned by Spike 0:
+  **`34b01960bb73734ec077b007f5d57ee46fa4b7a0`** (`main`, 2026-07-27).
+  sa2 is a read-only design reference throughout: nothing in this plan
+  links, vendors, or submodules it.
 - `awe444/VirtuaPPU` — the PPU submodule as of §2.3, pinned at `e69f60b`.
 - This repo: `port/patches/viruappu-widescreen.patch` (Phase 1 rationale — note
   this file is never applied, see §2.2), `xmake.lua:29-43` (the inert option),
   `xmake.lua:379-432` (the marker-guarded patch pipeline).
+- This repo, verification tooling: `port/port_debug_menu.cpp:192-210` — the F8
+  debug menu's parameterised warp table (`Port_DebugAction_Warp`), the seed of
+  the Spike 0 route manifest.

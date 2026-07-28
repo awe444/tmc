@@ -26,22 +26,6 @@ option("pc_avx2")
     set_description("Enable AVX2 optimizations for tmc_pc when supported")
 option_end()
 
--- Widescreen: render the GBA frame at a non-native horizontal width by
--- overriding MODE1_GBA_WIDTH at compile time.
---   240: GBA-native (3:2). No widescreen, no pillarbox, no stretch.
---   >240: ViruaPPU pillarboxes BG/OAM at col 240 (the engine's 32-tile
---         BG buffer holds reliable tile data only in cols 0..29, plus
---         parked off-screen sprites at x>=240). port_ppu.cpp uniformly
---         stretches the 240-px frame to fill the wider window. Real
---         widescreen needs a 64-tile sa2-style BGCNT_TXT512x256 engine
---         extension — Phase 2.
--- Default 240 = clean, no artifacts.
-option("widescreen_width")
-    set_default(240)
-    set_showmenu(true)
-    set_description("MODE1_GBA_WIDTH (240=native, >240=stretched until Phase 2)")
-option_end()
-
 -- Build directories
 local build_dir = "build/$(plat)"
 local tools_bin = "tools/bin"
@@ -509,6 +493,7 @@ target("tmc_pc")
     add_files("port/port_launcher_bootstrap.cpp")
 
     add_files("port/port_main.c")
+    add_files("port/port_capture.c")
     add_files("port/port_audio.c")
     add_files("port/port_runtime_config.cpp")
     add_files("port/port_debug_menu.cpp")
