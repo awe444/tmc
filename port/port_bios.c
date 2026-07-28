@@ -2,6 +2,7 @@
 #include "main.h"
 #include "port_audio.h"
 #include "port_asset_loader.h"
+#include "port_capture.h"
 #include "port_gba_mem.h"
 #include "port_hdma.h"
 #include "port_ppu.h"
@@ -17,6 +18,11 @@
 #include <math.h>
 
 static bool gQuitRequested = false;
+
+/* port_capture.c: scripted runs request shutdown through this. */
+void Port_RequestQuit(void) {
+    gQuitRequested = true;
+}
 static bool sFastForward = false;
 static int sFrameNum = 0;
 
@@ -106,9 +112,12 @@ static void Port_UpdateInput(void) {
     Port_Config_ClearInputEdges();
 
     sFrameNum++;
-    if (gMain.task == 0 && sFrameNum > 300 && sFrameNum < 310) {
+    /* Title auto-skip: suppressed during scripted runs, which own all
+     * input for determinism (port_capture.c). */
+    if (!Port_Capture_ScriptActive() && gMain.task == 0 && sFrameNum > 300 && sFrameNum < 310) {
         *(vu16*)(gIoMem + REG_OFFSET_KEYINPUT) &= ~START_BUTTON;
     }
+    Port_Capture_OverrideInput((volatile uint16_t*)(gIoMem + REG_OFFSET_KEYINPUT));
 }
 
 static void Port_PumpEvents(void) {
@@ -201,8 +210,14 @@ static u64 lastFrameNs = 0;
 static u64 sFpsWindowStartNs = 0;
 static u32 sFpsFrameCount = 0;
 
+/* Set when VBlankIntrWait returns; the delta to the next entry is the
+ * engine's per-frame logic time (port_capture frame stats). */
+static u64 sPrevVBlankReturnNs = 0;
+
 void VBlankIntrWait(void) {
     u64 nowNs;
+    u64 entryNs = SDL_GetTicksNS();
+    u64 logicNs = (sPrevVBlankReturnNs != 0) ? (entryNs - sPrevVBlankReturnNs) : 0;
 
     /* Toggle VSync based on whether we're trying to run faster than the
      * display refresh: fast-forward, or a target FPS preset > 60. With
@@ -212,12 +227,13 @@ void VBlankIntrWait(void) {
      * display refresh holding us. */
     {
         u32 targetFps = Port_Config_TargetFps();
-        bool wantVsync = !sFastForward && targetFps != 0 && targetFps <= 60;
+        bool wantVsync = !sFastForward && !Port_Capture_Uncapped() && targetFps != 0 && targetFps <= 60;
         Port_PPU_SetVSync(wantVsync);
     }
 
     Port_PPU_PresentFrame();
     port_hdma_vblank_reset();
+    Port_Capture_OnVBlank(logicNs, SDL_GetTicksNS() - entryNs);
 
     /* Deadline-based pacing: each frame's target is the previous
      * frame's target + frameTimeNs (a fixed cadence on an ideal grid),
@@ -228,7 +244,7 @@ void VBlankIntrWait(void) {
      * cadence. If we fall more than one frame behind real time
      * (e.g. paused at a breakpoint, OS hitch), snap forward so we
      * don't burn CPU catching up. */
-    if (!sFastForward) {
+    if (!sFastForward && !Port_Capture_Uncapped()) {
         const u64 frameTimeNs = Port_Config_FrameTimeNs();
         if (frameTimeNs != 0) {
             u64 deadline = lastFrameNs + frameTimeNs;
@@ -280,6 +296,7 @@ void VBlankIntrWait(void) {
     Port_UpdateInput();
 
     VBlankIntr();
+    sPrevVBlankReturnNs = SDL_GetTicksNS();
 }
 
 /* ---- BIOS functions ---- */

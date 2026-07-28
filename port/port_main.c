@@ -1,11 +1,8 @@
 #include "gba/io_reg.h"
 #include "main.h"
 #include "port_config.h"
-/* Set by xmake (-DMODE1_GBA_WIDTH=N); falls back to GBA-native 240. */
-#ifndef MODE1_GBA_WIDTH
-#define MODE1_GBA_WIDTH 240
-#endif
 #include "port_asset_bootstrap.h"
+#include "port_capture.h"
 #include "port_audio.h"
 #include "port_gba_mem.h"
 #include "port_ppu.h"
@@ -307,11 +304,15 @@ int main(int argc, char* argv[]) {
             else if (strcmp(argv[i], "--no-audio") == 0) {
                 noAudio = true;
             }
+            else if (Port_Capture_HandleArg(argv[i])) {
+                /* capture/replay tooling arg, consumed */
+            }
             else if (strcmp(argv[i], "--help") == 0) {
                 fprintf(stderr, "Usage: %s [--window_scale=<value>] [--loose-assets] [--no-audio]\n", argv[0]);
                 fprintf(stderr, "  --window_scale=<value>: Set the window scale (1-10, default is 3)\n");
                 fprintf(stderr, "  --loose-assets:         Ignore assets/*.pak archives and read loose files instead.\n");
                 fprintf(stderr, "  --no-audio:             Skip audio init (workaround for agbplay crash)\n");
+                Port_Capture_PrintUsage();
                 fprintf(stderr, "  config.json: Set window_scale and bindings defaults\n");
                 return 0;
             }
