@@ -6,6 +6,7 @@
 #include "port_filter.h"
 #include "port_touch_controls.h"
 #include "port_viewport.h"
+#include "port_mapsource.h"
 
 #ifdef launcher
 #include "tmc_launcher.h"
@@ -437,6 +438,13 @@ extern "C" void Port_PPU_PresentFrame(void) {
      * when HDMA has already supplied per-line reference points. */
     virtuappu_mode1_pre_line_callback =
         port_hdma_has_active_channels() ? port_hdma_step_line : nullptr;
+
+    /* Option E: bind the engine's full-room special maps to the world BG
+     * layers when the map-authoritative predicate accepts them, so those
+     * layers are not capped by the 32x32 screenblock window. Layers it
+     * rejects keep the untouched hardware path. Re-evaluated per frame
+     * because the engine repurposes those arrays outside gameplay. */
+    Port_MapSource_Update();
 
     virtuappu_render_frame();
     Port_PPU_ComposeCanvas();

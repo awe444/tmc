@@ -1,6 +1,7 @@
 /* Spike 0 capture/replay tooling. See port_capture.h for the overview and
  * tools/capture/README.md for the script format. */
 #include "port_capture.h"
+#include "port_mapsource.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -343,6 +344,22 @@ bool Port_Capture_HandleArg(const char* arg) {
     }
     if (strcmp(arg, "--capture-canvas") == 0) {
         sCaptureCanvas = true;
+        return true;
+    }
+    if (strcmp(arg, "--no-map-sampling") == 0) {
+        Port_MapSource_SetEnabled(false);
+        fprintf(stderr, "[capture] map sampling disabled (screenblock path)\n");
+        return true;
+    }
+    if (strcmp(arg, "--mapsource-audit") == 0) {
+        extern void Port_MapSource_AuditEnable(void);
+        extern void Port_MapSource_AuditReport(void);
+        Port_MapSource_AuditEnable();
+        atexit(Port_MapSource_AuditReport);
+        return true;
+    }
+    if (strcmp(arg, "--mapsource-report") == 0) {
+        atexit(Port_MapSource_Report);
         return true;
     }
     if (strcmp(arg, "--mapcheck") == 0) {
