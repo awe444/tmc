@@ -4,12 +4,15 @@
 closed. **The gate is passed: Option E is confirmed** — 7.6M runtime tile
 comparisons across two instrumented runs, zero persistent mismatches, all
 exclusions caught by the predicate (Spike 2 DoD, §10). The 320×240 canvas
-(Option B) is in as the shippable fallback. Spike 2A is also complete
-(`docs/spike2a-width-probe.md`): the width column held, the OAM write
-site turned out to be port-owned C, and Milestone 1 re-estimated down to
-10–13 days. **D1 (HUD placement) is the only open decision**; mockups
-ready in `tools/capture/references/hud-mockups/`. Next: Spike 2B (the
-height-side measurements, confirming axis order), then Milestone 1.
+(Option B) is in as the shippable fallback. **The entire gate phase
+(Spikes 0–2B) is complete**: the width and height probes both held
+(`docs/spike2a-width-probe.md`, `docs/spike2b-height-probe.md`), the OAM
+write site is port-owned C, blocker severities are measured, and the
+**axis order is confirmed: width first**. Revised estimates: Milestone 1
+= 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
+open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
+Next: Milestone 1, starting with Spike 3 (map-sampling BG mode in the
+VirtuaPPU fork) — D1 must be decided before Spike 6.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -809,17 +812,26 @@ maximum per-frame vertical camera delta across the canonical route and compare
 against the 16 px budget. Separately, count OAM entries per frame with y that
 would fall outside the representable range at height 240.
 
-**Definition of done:**
-- [ ] Every cell in the §8.1 height column confirmed or corrected, with
-      citations.
-- [ ] Maximum observed per-frame vertical scroll delta recorded and compared
-      against the 16 px slack; verdict on whether the existing 32-row buffer is
-      genuinely sufficient.
-- [ ] Count of frames along the route with at least one sprite that would be
-      unrepresentable at 8-bit Y in a 240-tall viewport — the concrete severity
-      number for blocker 3.
-- [ ] Height-only effort re-estimated in days.
-- [ ] **Axis order confirmed or reversed** relative to §8.3, in writing.
+**Definition of done:** *(completed 2026-07-28 — full report:
+`docs/spike2b-height-probe.md`)*
+- [x] Every §8.1 height cell confirmed with citations; one addition
+      (`playerUtils.c:4408-4412` vertical camera init, twin of 2A's width
+      find, added to Spike 10's list).
+- [x] **Max continuous per-frame vertical delta: 12 px** (banded over
+      ~24k frames across both instrumented runs; everything larger is a
+      warp, which takes the full-refill path, never the incremental
+      streamer). Verdict: the 32-row buffer's 16 px slack is genuinely
+      sufficient at observed cadence — and moot for world layers under E.
+- [x] **Blocker 3 severity measured:** 103 frames / 118 entries / max 2
+      simultaneous enabled OAM entries with y∈[161,239] on the route
+      (~1% of gameplay frames). Real, small-surface, and re-measurable —
+      Spike 8's drops-to-zero DoD runs this same `--mapcheck` counter.
+- [x] Height-only effort re-estimated: **Milestone 2 = 6.5–8.5 days**
+      (was 7–10); Spike 8 down to 1–1.5 d via the 2A native-widening path.
+- [x] **Axis order CONFIRMED in writing: width first.** Both probes moved
+      the numbers but not §8.3's risk logic — height still holds the only
+      two blockers with no partial-credit failure mode. Milestone 1 may
+      begin.
 
 ---
 
@@ -1056,7 +1068,7 @@ where the dominant risk is a late discovery that the premise was wrong.
 | `screenTileMap.c` rewrite required after all | High — hardest file in the effort | Medium | Only reached under Option D |
 | Per-scene tuning tail (as in sa2) | Schedule creep, long bug tail | High | Weight testing by playtime (§6), not room count |
 | OAM Y widening destabilises sprite rendering | Broad visual regressions | Medium | Deferred to Milestone 2 so failures are attributable; sa2 reference available |
-| 16 px vertical slack too tight for the 32-row buffer | Tile tearing on fast vertical scroll | Medium | Measured in Spike 2B before any height work starts |
+| ~~16 px vertical slack too tight for the 32-row buffer~~ | ~~Tile tearing on fast vertical scroll~~ | **Closed 2026-07-28** | Spike 2B measured: max continuous dy = 12 px over ~24k frames; teleports take the full-refill path (`docs/spike2b-height-probe.md` §2) |
 | Perf regression from 50% more scanline work | Frame drops | Low–Medium | Spike 0 baseline; OpenMP path already exists |
 | ~~Patch pipeline can't carry the change~~ | ~~Build breakage, merge pain~~ | **Closed 2026-07-27** | Pipeline retired; all PPU changes are fork commits (§7 Option F) |
 | Cutscene/scripted framing breaks at 320×240 | Visible authored-content bugs | Medium | Spikes 7 and 11; `cutscene.c` already uses window regs for letterboxing |

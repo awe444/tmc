@@ -75,6 +75,67 @@ static uint32_t sPersistentReported = 0;
 
 static uint8_t sLastArea = 0xFF, sLastRoom = 0xFF;
 
+/* --- Spike 2B measurements -------------------------------------------- */
+/* Max per-frame camera delta on continuous segments (same room, no
+ * transition scroller active) — the vertical number is compared against
+ * the 16 px streaming slack a 240-tall window would leave. */
+static int sPrevScrollX = -1, sPrevScrollY = -1;
+static uint8_t sPrevDeltaArea = 0xFF, sPrevDeltaRoom = 0xFF;
+static int sMaxDx = 0, sMaxDy = 0;
+/* Delta bands: [0]=1-4 [1]=5-8 [2]=9-16 [3]=17-64 [4]=>64 (teleports). */
+static uint32_t sDyBand[5], sDxBand[5];
+static int sMaxDyContinuous = 0; /* max dy among deltas <= 64 */
+
+/* OAM entries whose attr0.y sits in [161,239] while enabled: at 160-line
+ * height these are sprites partially above the top edge (wrapped
+ * negatives); at 240-line height the same encoding renders on-screen at
+ * literal y — the concrete severity measure for blocker 3 (8-bit OAM Y). */
+static uint32_t sOamHighYFrames = 0;
+static uint32_t sOamHighYEntriesTotal = 0;
+static uint32_t sOamHighYEntriesMax = 0;
+
+static void spike2b_sample(void) {
+    /* camera deltas: only within one room and outside transition scrolls */
+    if (gMain.task == TASK_GAME && gRoomControls.scrollAction < 2 &&
+        gRoomControls.area == sPrevDeltaArea && gRoomControls.room == sPrevDeltaRoom &&
+        sPrevScrollX >= 0) {
+        int dx = gRoomControls.scroll_x - sPrevScrollX;
+        int dy = gRoomControls.scroll_y - sPrevScrollY;
+        if (dx < 0) dx = -dx;
+        if (dy < 0) dy = -dy;
+        if (dx > sMaxDx) sMaxDx = dx;
+        if (dy > sMaxDy) sMaxDy = dy;
+        if (dy <= 64 && dy > sMaxDyContinuous) sMaxDyContinuous = dy;
+        if (dy > 0) sDyBand[dy <= 4 ? 0 : dy <= 8 ? 1 : dy <= 16 ? 2 : dy <= 64 ? 3 : 4]++;
+        if (dx > 0) sDxBand[dx <= 4 ? 0 : dx <= 8 ? 1 : dx <= 16 ? 2 : dx <= 64 ? 3 : 4]++;
+    }
+    sPrevScrollX = gRoomControls.scroll_x;
+    sPrevScrollY = gRoomControls.scroll_y;
+    sPrevDeltaArea = gRoomControls.area;
+    sPrevDeltaRoom = gRoomControls.room;
+
+    /* OAM high-Y census over the engine-side table for this frame */
+    if (gMain.task == TASK_GAME) {
+        uint32_t n = 0;
+        for (int i = 0; i < 0x80; i++) {
+            uint16_t attr0;
+            memcpy(&attr0, &gOAMControls.oam[i], 2);
+            if ((attr0 & 0x0300) == 0x0200) {
+                continue; /* disabled (incl. the 0x2A0 parking pattern) */
+            }
+            uint32_t y = attr0 & 0xFF;
+            if (y > 160 && y < 240) {
+                n++;
+            }
+        }
+        if (n > 0) {
+            sOamHighYFrames++;
+            sOamHighYEntriesTotal += n;
+            if (n > sOamHighYEntriesMax) sOamHighYEntriesMax = n;
+        }
+    }
+}
+
 static void streak_note(uint32_t frame, int layer, int mx, int my,
                         uint16_t expect, uint16_t actual) {
     uint32_t key = ((uint32_t)layer << 28) | ((uint32_t)my << 14) | (uint32_t)mx;
@@ -228,6 +289,7 @@ void Port_MapCheck_OnFrame(uint32_t frame) {
         return;
     }
     sFramesSeen++;
+    spike2b_sample();
 
     if (gRoomControls.area != sLastArea || gRoomControls.room != sLastRoom) {
         sLastArea = gRoomControls.area;
@@ -333,6 +395,17 @@ void Port_MapCheck_Report(void) {
             "RestorePrevTileEntity=%u\n",
             gPort_TileMutationCount[0], gPort_TileMutationCount[1],
             gPort_TileMutationCount[2]);
+    fprintf(stderr,
+            "[mapcheck] spike2b: max |dscroll| x=%d y=%d; max continuous dy=%d; "
+            "dy bands 1-4/5-8/9-16/17-64/>64 = %u/%u/%u/%u/%u; "
+            "dx bands = %u/%u/%u/%u/%u\n",
+            sMaxDx, sMaxDy, sMaxDyContinuous,
+            sDyBand[0], sDyBand[1], sDyBand[2], sDyBand[3], sDyBand[4],
+            sDxBand[0], sDxBand[1], sDxBand[2], sDxBand[3], sDxBand[4]);
+    fprintf(stderr,
+            "[mapcheck] spike2b: OAM high-Y (enabled, y in 161..239): frames=%u "
+            "entries-total=%u max-simultaneous=%u\n",
+            sOamHighYFrames, sOamHighYEntriesTotal, sOamHighYEntriesMax);
     for (int i = 0; i < 6; i++) {
         if (sFramesSkipped[i]) {
             fprintf(stderr, "[mapcheck]   skipped (%s): %u frames\n",
