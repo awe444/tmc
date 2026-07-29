@@ -195,6 +195,29 @@ bool Port_MapSource_LayerAuthoritative(int layer) {
     return r == REASON_BOUND;
 }
 
+/* BG0 (HUD/UI). At a wider-than-hardware viewport a 32-tile screenblock
+ * wraps and draws the HUD twice, so gBG0Buffer is widened (viewport.h) and
+ * bound as a map source instead — no screenblock, no wrap, and no VRAM
+ * growth, which keeps blocker 7 out of this.
+ *
+ * At GBA-native width this does nothing at all and BG0 stays on the
+ * hardware path, so the 240 build is unaffected by construction rather
+ * than by testing. */
+static void mapsource_bind_ui(void) {
+#if UI_BG0_WIDTH_TILES > 32
+    VirtuaPPUMode1MapSource src;
+    /* The UI layer is screen-fixed; the engine scrolls it via BG0's own
+     * offsets, which the map source honours by shifting the origin. */
+    src.map = gBG0Buffer;
+    src.stride = UI_BG0_WIDTH_TILES;
+    src.width_tiles = UI_BG0_WIDTH_TILES;
+    src.height_tiles = UI_BG0_HEIGHT_TILES;
+    src.origin_x = (int)gScreen.bg0.xOffset;
+    src.origin_y = (int)gScreen.bg0.yOffset;
+    virtuappu_mode1_set_map_source(0, &src);
+#endif
+}
+
 void Port_MapSource_Update(void) {
     int layer;
     /* Clear every layer first: which BG a map binds to can change between
@@ -202,6 +225,7 @@ void Port_MapSource_Update(void) {
      * would keep sampling after the engine moved on. */
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
     virtuappu_mode1_clear_map_sources();
+    mapsource_bind_ui();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);
         int bg;

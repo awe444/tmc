@@ -198,8 +198,16 @@ void sub_0806E964(PhonographEntity* this, ScriptExecutionContext* context) {
 }
 #endif
 
+/* The destination was written as the raw GBA address 0x02034FCE, which is
+ * gBG0Buffer[0x18F] — the buffer's EWRAM alias base is 0x02034CB0 and
+ * (0x34FCE - 0x34CB0) / 2 == 0x18F. Every other Font table in the game
+ * names the buffer symbolically (e.g. cutscene.c's &gBG1Buffer[0x1cf]);
+ * this one did not, so it silently depended on gBG0Buffer *being* that
+ * EWRAM region. Spelling it symbolically is equivalent today and is what
+ * lets gBG0Buffer become a real, wider array (research plan §4 blocker 1,
+ * and the answer to open question 3: this was the raw-address coupling). */
 const static Font gUnk_081146B8 = {
-    (u16*)0x2034fce, (void*)0x0600d000, (void*)0x2000d00, 0, 0xf080, 0xd0, 1, 1, 1, 1, 0, 0, 0, 1, 0
+    &gBG0Buffer[0x18F], (void*)0x0600d000, (void*)0x2000d00, 0, 0xf080, 0xd0, 1, 1, 1, 1, 0, 0, 0, 1, 0
 };
 
 #ifdef EU

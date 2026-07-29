@@ -1,3 +1,4 @@
+#include "viewport.h"
 #include "gba/io_reg.h"
 #include "port_gba_mem.h"
 #include "port_audio.h"
@@ -242,3 +243,8 @@ void* port_resolve_addr(uintptr_t val)
     }
     return (void*)val;
 }
+
+/* gBG0Buffer (HUD/UI tilemap) is a real array rather than an alias into
+ * gEwram, so it can be wider than a 32-tile hardware screenblock when the
+ * viewport is. See include/viewport.h. */
+u16 gBG0Buffer[UI_BG0_ENTRIES];

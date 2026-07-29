@@ -192,9 +192,12 @@ void InitUI(bool32 keepHealthAndRupees) {
     DrawRupees();
     DrawChargeBar();
     DrawKeys();
-    gHUD.buttonX[0] = 0xd0;
-    gHUD.buttonX[1] = 0xb8;
-    gHUD.buttonX[2] = 0xd8;
+    /* Item/button icons are right-anchored HUD (D1), so they travel with
+     * the viewport's right edge. UI_RIGHT_ANCHOR_DX is 0 at GBA-native
+     * width, leaving the authored positions untouched. */
+    gHUD.buttonX[0] = 0xd0 + UI_RIGHT_ANCHOR_DX;
+    gHUD.buttonX[1] = 0xb8 + UI_RIGHT_ANCHOR_DX;
+    gHUD.buttonX[2] = 0xd8 + UI_RIGHT_ANCHOR_DX;
     gHUD.buttonY[0] = 0x1c;
     gHUD.buttonY[1] = 0x1c;
     gHUD.buttonY[2] = 0xe;
@@ -230,13 +233,13 @@ void DrawRupees(void) {
     if (gHUD.hideFlags & HUD_HIDE_RUPEES) {
         if (gHUD.unk_a != 0) {
             gHUD.unk_a = 0;
-            row1 = &gBG0Buffer[0x258];
+            row1 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 5, 18)];
             row1[0] = 0;
             row1[1] = 0;
             row1[2] = 0;
             row1[3] = 0;
             row1[4] = 0;
-            row2 = &gBG0Buffer[0x278];
+            row2 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 5, 19)];
             row2[0] = 0;
             row2[1] = 0;
             row2[2] = 0;
@@ -247,8 +250,8 @@ void DrawRupees(void) {
     } else {
         if (gHUD.unk_a == 0) {
             gHUD.unk_a = 2;
-            row1 = &gBG0Buffer[0x258];
-            row2 = &gBG0Buffer[0x278];
+            row1 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 5, 18)];
+            row2 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 5, 19)];
             row1[0] = temp2 = gWalletSizes[gSave.stats.walletType].iconStartTile;
             row1[1] = temp2 + 1;
             row2[0] = temp2 + 2;
@@ -345,7 +348,7 @@ void EraseHearts(void) {
         } else {
             index = 1;
         }
-        ptr = (u32*)&gBG0Buffer[0x20];
+        ptr = (u32*)&gBG0Buffer[UI_BG0_AT(0, 1)];
         do {
             ptr[0] = 0;
             ptr[1] = 0;
@@ -433,11 +436,11 @@ void DrawHearts(void) {
         }
 
         if (uVar1 - 10 > 0) {
-            ptr = &gBG0Buffer[0x40];
+            ptr = &gBG0Buffer[UI_BG0_AT(0, 2)];
             *ptr = 0xf010;
             DmaSet(3, gUnk_080C8F2C + (10 - uVar6), ptr + 1, (uVar1 - 10) | 0x80000000);
         }
-        ptr = &gBG0Buffer[0x20];
+        ptr = &gBG0Buffer[UI_BG0_AT(0, 1)];
         *ptr = 0xf010;
 
         DmaSet(3, gUnk_080C8F2C + (10 - tmp1), ptr + 1, maxHealth | 0x80000000);
@@ -459,9 +462,9 @@ void EraseChargeBar(void) {
     if (gHUD.unk_6 != 0) {
         gHUD.unk_6 = 0;
         if (gHUD.maxHealth > 10 * 4) {
-            ptr = (u32*)&gBG0Buffer[0x60];
+            ptr = (u32*)&gBG0Buffer[UI_BG0_AT(0, 3)];
         } else {
-            ptr = (u32*)&gBG0Buffer[0x40];
+            ptr = (u32*)&gBG0Buffer[UI_BG0_AT(0, 2)];
         }
         ptr[0] = 0;
         ptr[1] = 0;
@@ -490,9 +493,9 @@ void DrawChargeBar(void) {
         return;
     }
     if (gHUD.maxHealth > 10 * 4)
-        BufferPos = &gBG0Buffer[0x60];
+        BufferPos = &gBG0Buffer[UI_BG0_AT(0, 3)];
     else
-        BufferPos = &gBG0Buffer[0x40];
+        BufferPos = &gBG0Buffer[UI_BG0_AT(0, 2)];
 
     chargeTime = Div(gPlayerState.chargeState.chargeTimer + 19, 20);
     if (chargeTime > 40)
@@ -542,7 +545,7 @@ void DrawKeys(void) {
     if (!(((gHUD.hideFlags & HUD_HIDE_KEYS) == 0) && (AreaHasKeys()))) {
         if (gHUD.unk_10 != 0) {
             gHUD.unk_10 = 0;
-            row1 = &gBG0Buffer[0x219];
+            row1 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 4, 16)];
             row1[0] = 0;
             row1[1] = 0;
             row1[2] = 0;
@@ -555,8 +558,8 @@ void DrawKeys(void) {
         }
     } else {
         if (gHUD.unk_10 == 0) {
-            row1 = &gBG0Buffer[0x219];
-            row2 = &gBG0Buffer[0x239];
+            row1 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 4, 16)];
+            row2 = &gBG0Buffer[UI_BG0_AT(UI_BG0_RIGHT_COL - 4, 17)];
             temp = 0xf01c;
             row1[0] = temp;
             row1[1] = temp + 1;

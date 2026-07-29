@@ -14,6 +14,7 @@
  *   - sub_080B2874      (core sprite piece renderer — static)
  */
 
+#include "viewport.h"
 #include "color.h"
 #include "entity.h"
 #include "global.h"
@@ -354,9 +355,11 @@ static void RenderSpritePieces(const u8* data, /* pointer to frame data (count b
         }
         const u8* se = sizeTab + sizeIdx;
 
-        /* Clipping */
+        /* Clipping against the rendered viewport, not a fixed 240x160:
+         * a right-anchored HUD element at a wider viewport sits past 240
+         * and would otherwise be culled before it could be drawn. */
         y -= (s32)se[1]; /* subtract y anchor */
-        if (y >= 160) {
+        if (y >= VIEWPORT_HEIGHT) {
             continue;
         }
         if (y + (s32)se[3] <= 0) {
@@ -364,7 +367,7 @@ static void RenderSpritePieces(const u8* data, /* pointer to frame data (count b
         }
 
         x -= (s32)se[0]; /* subtract x anchor */
-        if (x >= 240) {
+        if (x >= VIEWPORT_WIDTH) {
             continue;
         }
         if (x + (s32)se[2] <= 0) {

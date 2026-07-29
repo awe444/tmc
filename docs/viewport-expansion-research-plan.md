@@ -18,8 +18,12 @@ to 32 bits with a committed edge of 320 proven at runtime; and the
 horizontal camera is viewport-derived, centring all 443 narrow rooms and
 clamping correctly across every width cluster. **Option C (variable
 per-room viewport) is formally dropped** — fixed viewport plus clamping
-covers it. Next: **Spike 6 (UI centering), which is blocked on D1** — the
-duplicated HUD now visible at 320 is exactly its subject.
+covers it. **D1 is decided (edge-anchored) and Spike 6's HUD half is
+done**: `gBG0Buffer` is a real viewport-sized array bound as a map source,
+so blocker 1 is dissolved for BG0 without touching blocker 7, and the
+duplicated HUD is gone (87 → 0 stray heart pixels). Remaining in Spike 6:
+centering the UI *screens* (title, file select, menus, text boxes), which
+still wrap at 256. Then Spike 7 (culling).
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -42,7 +46,7 @@ deliberately. None require code first.
 
 | # | Decision | Default if unmade | Made in | Status |
 |---|---|---|---|---|
-| **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Open — mockups ready** (`tools/capture/references/hud-mockups/`) |
+| **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Decided 2026-07-28: edge-anchored.** Hearts to the true top-left, items/rupees to the true right edge — native look at 320. Accepts reopening blocker 1 for BG0 (wider `gBG0Buffer`) and the ~40 stride-sensitive `ui.c` sites; Spike 6 re-estimated 2 d → 4–6 d. |
 | **D2** | **Viewport size: build-time constant or runtime-configurable?** Gates Spike 3's architecture (fork API shape, buffer sizing) and the settings-menu surface. The port already exposes internal-scale at runtime (`port_runtime_config.h`). | Build-time for Milestone 1; revisit before ship | Spike 0 | **Decided 2026-07-27: build-time for M1** |
 | **D3** | **Border appearance** for centered rooms: solid black, or something else? 78% of rooms show borders (§6) — this is most of what players see. | Solid black | Spike 0 | **Decided 2026-07-27: solid black** |
 | **D4** | **Phase 1 scaffold: wire or delete?** (was open question 8). Constraint either way: `viruappu-widescreen.patch` survives as reference material — Spike 9's per-line IO snapshot design lives only in that unapplied patch. | Wire | Spike 0 | **Decided 2026-07-27: delete** — the inert `widescreen_width` option and the dead stretch branch are removed; width plumbing arrives properly in Milestone 1. The patch file stays as Spike 9 reference. |
@@ -1063,13 +1067,58 @@ days) before starting.
 **Method:** Implement D1 by compositing the 32×32 UI path over the expanded
 world accordingly.
 
-**Definition of done:**
-- [ ] D1 implemented exactly as recorded in §0.
-- [ ] HUD, text box, pause menu, figurine menu, title, and file select each
-      visually verified at 320×160.
-- [ ] (If D1 = centered) zero changes required to the stride-sensitive
-      `gBG0Buffer` sites — if any change *is* required, that is recorded as a
-      scope increase and re-estimated before proceeding.
+**Definition of done:** *(core complete 2026-07-28; see remaining item)*
+- [x] **D1 implemented as decided: edge-anchored.** Hearts flush to the true
+      top-left, item/button icons and the rupee counter to the true right
+      edge. `UI_RIGHT_ANCHOR_DX` is 0 at GBA-native width, so anchored
+      elements keep their authored coordinates there.
+- [x] **The duplicated HUD is gone** — measured, not eyeballed: red heart
+      pixels at x ≥ 160 went **87 → 0** at 320.
+- [x] **Blocker 1 dissolved for BG0, without touching blocker 7.**
+      `gBG0Buffer` is now a real array sized from the viewport
+      (`UI_BG0_ENTRIES`) instead of a `#define` aliasing `gEwram[0x34CB0]`,
+      and at a wide viewport it is bound to the PPU as a **map source**
+      (the Spike 3 mechanism) rather than growing a hardware screenblock.
+      That matters: BG0 sits at screenbase 31, so a 64-tile-wide
+      screenblock would have run into the OBJ tile region at `0x10000` and
+      dragged VRAM growth (blocker 7) into Milestone 1. The map-source
+      route needs no VRAM at all. At 240 nothing binds and BG0 stays on the
+      hardware path, so the native build is unaffected *by construction*.
+- [x] **Open question 3 answered — and it was a real hazard.**
+      `phonograph.c:202` held a `Font` whose destination was the raw GBA
+      address `(u16*)0x2034fce`, which is exactly `&gBG0Buffer[0x18F]`
+      (alias base `0x02034CB0`, `(0x34FCE-0x34CB0)/2 = 0x18F`). Every other
+      `Font` table names the buffer symbolically; this one silently depended
+      on `gBG0Buffer` *being* that EWRAM region, so converting the buffer to
+      a real array would have left phonograph text writing into dead
+      memory. Now symbolic. **Spike 2A's correction was right that the
+      `subtask.c` evidence was a misread, and the grep it prescribed
+      (`0x0203` literals) is what found the genuine site.**
+- [x] **All 14 `ui.c` indexed sites are stride-derived** via
+      `UI_BG0_AT(col,row)`; the 7 distinct offsets decode to two clean
+      anchor groups (rows 1–3 col 0 = hearts, top-left; rows 16–19
+      cols 24–25 = counters, bottom-right). Verified arithmetically that
+      each anchored expression reproduces its original offset exactly at
+      240. The other 12 whole-buffer uses already went through
+      `sizeof(gBG0Buffer)` and adapt for free.
+      *Scope note:* the feared "~40 stride-sensitive sites" was **16
+      references / 7 offsets** in `ui.c` — the 40 figure counted all 24
+      files, most of which are separate UI screens that stay centered.
+- [x] **Sprite cull widened** (`port_draw.c`): `x >= 240` / `y >= 160` are
+      now viewport-derived. Required here, not deferrable — a
+      right-anchored icon at x≈288 was culled before it could draw, which
+      is why the icons vanished on the first attempt. Exactly the
+      two-literal change Spike 2A predicted.
+- [x] **At 240: route 11/11 pixel-identical and the map-source audit still
+      0 mismatches in 265 497 600 fetches**, across all of the above
+      (buffer relocation, phonograph fix, stride rewrite, cull widening).
+- [ ] **Remaining: UI *screens* at 320.** Title, file select, pause menu,
+      figurine menu and text boxes still render through the 32×32 path and
+      will wrap past 256 px, as the in-game HUD did before this spike. They
+      are settled as *centered* (§5), so they need the centering composite
+      rather than anchoring — a smaller job than the HUD was, but not done
+      here. **Blocks the Milestone 1 exit criteria**, which require those
+      screens verified.
 
 ### Spike 7 — Horizontal culling and off-screen behaviour (2–3 days)
 **Questions:** Do entities the engine assumed off-screen become visible? The

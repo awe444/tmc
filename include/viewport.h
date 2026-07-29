@@ -34,6 +34,41 @@
 #define VIEWPORT_REGION_WIDTH (VIEWPORT_WIDTH + VIEWPORT_REGION_MARGIN)
 #define VIEWPORT_REGION_HEIGHT (VIEWPORT_HEIGHT + VIEWPORT_REGION_MARGIN)
 
+/* BG0 carries the HUD and most UI screens. On hardware it is a 32x32-tile
+ * screenblock, which covers 256 px — enough for a 240-wide screen but not
+ * for a wider one, where it would wrap and draw the HUD twice.
+ *
+ * A wider viewport therefore needs a wider BG0 tilemap. Growing the
+ * hardware screenblock is not an option: BG0 sits at screenbase 31, so a
+ * 64-wide map would run into the OBJ tile region at 0x10000. Instead the
+ * buffer becomes a plain wider array and is handed to the PPU as a map
+ * source (the same mechanism the world layers use), which has no
+ * screenblock and no wrap. At GBA-native width nothing changes — the
+ * buffer keeps its 32-tile stride and BG0 stays on the hardware path.
+ *
+ * Index UI writes with UI_BG0_AT(col, row) rather than a baked linear
+ * offset, so the stride is in one place.
+ */
+#if VIEWPORT_WIDTH > 240
+#define UI_BG0_WIDTH_TILES 64
+#else
+#define UI_BG0_WIDTH_TILES 32
+#endif
+#define UI_BG0_HEIGHT_TILES 32
+#define UI_BG0_ENTRIES (UI_BG0_WIDTH_TILES * UI_BG0_HEIGHT_TILES)
+#define UI_BG0_AT(col, row) ((row) * UI_BG0_WIDTH_TILES + (col))
+
+/* Rightmost tile column of the viewport, for edge-anchored UI (D1). At
+ * GBA-native width this is column 29, so right-anchored elements keep
+ * their original positions. */
+#define UI_VIEW_TILE_COLS (VIEWPORT_WIDTH / 8)
+#define UI_BG0_RIGHT_COL (UI_VIEW_TILE_COLS - 1)
+
+/* Shift applied to right-anchored UI positions (D1: edge-anchored HUD).
+ * Zero at GBA-native width, so anchored elements keep their authored
+ * coordinates there. */
+#define UI_RIGHT_ANCHOR_DX (VIEWPORT_WIDTH - DISPLAY_WIDTH)
+
 /* Horizontal camera limits for a room at (origin_x, width).
  *
  * A room at least as wide as the viewport scrolls between showing its left
