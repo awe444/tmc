@@ -3,6 +3,7 @@
 
 #include "fade.h"
 #include "global.h"
+#include "viewport.h"
 
 typedef struct {
     /*0x00*/ u16 displayControl;
@@ -62,16 +63,11 @@ typedef u32 winreg_t;
 #define WIN_GET_HIGHER(v) ((u32)(v) >> 16)
 #define WIN_GET_LOWER(v) ((u32)(v) & 0xFFFF)
 
-/* Viewport extents, for window sites that mean "the whole screen" rather
- * than a literal 240/160. These are what actually exceed the 8-bit
- * register ceiling once the viewport widens; the build overrides them
- * alongside the PPU/canvas width. */
-#ifndef WIN_VIEWPORT_WIDTH
-#define WIN_VIEWPORT_WIDTH DISPLAY_WIDTH
-#endif
-#ifndef WIN_VIEWPORT_HEIGHT
-#define WIN_VIEWPORT_HEIGHT DISPLAY_HEIGHT
-#endif
+/* Window sites meaning "the whole screen" use the shared viewport
+ * extents; they are what exceeds the 8-bit register ceiling once the
+ * viewport widens. */
+#define WIN_VIEWPORT_WIDTH VIEWPORT_WIDTH
+#define WIN_VIEWPORT_HEIGHT VIEWPORT_HEIGHT
 
 /* Truncate back to the packed 8-bit hardware layout. Lossy above 255 by
  * definition; the PPU takes the untruncated bounds by another route. */

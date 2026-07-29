@@ -11,12 +11,15 @@ write site is port-owned C, blocker severities are measured, and the
 **axis order is confirmed: width first**. Revised estimates: Milestone 1
 = 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
 open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
-**Spikes 3 and 4 are complete**: the map-sampling BG mode is live and
+**Spikes 3, 4 and 5 are complete**: the map-sampling BG mode is live and
 bit-identical to the hardware path at 240 (0 mismatches in 265M tile
-fetches) while rendering real world data at 320, and window bounds are
-widened to 32 bits with a committed edge of 320 proven at runtime.
-Next: Spike 5 (horizontal camera) — **D1 must be decided before
-Spike 6.**
+fetches) while rendering real world data at 320; window bounds are widened
+to 32 bits with a committed edge of 320 proven at runtime; and the
+horizontal camera is viewport-derived, centring all 443 narrow rooms and
+clamping correctly across every width cluster. **Option C (variable
+per-room viewport) is formally dropped** — fixed viewport plus clamping
+covers it. Next: **Spike 6 (UI centering), which is blocked on D1** — the
+duplicated HUD now visible at 320 is exactly its subject.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -338,9 +341,12 @@ exists.
 **Cost:** all seven blockers still apply for the ≥320×240 rooms, but the
 *variable* viewport adds its own complexity (camera clamp, HUD placement, and
 window regs must all track a per-room size).
-**Verdict:** strong on requirements fit; the variable-size machinery is a real
-cost and may be more trouble than a fixed 320×240 viewport plus per-room
-clamping that naturally produces borders.
+**Verdict:** ~~strong on requirements fit; the variable-size machinery is a
+real cost and may be more trouble than a fixed 320×240 viewport plus
+per-room clamping that naturally produces borders.~~ **Dropped
+2026-07-28 (Spike 5).** Fixed viewport plus clamping produced correct
+centring for all 443 narrow rooms from two range macros, with no
+variable-size machinery. The suspicion recorded here was right.
 
 ### Option D — Full 320×240 engine viewport (sa2-style)
 Make `DISPLAY_WIDTH`/`DISPLAY_HEIGHT` build config; extend OAM to 12-byte
@@ -995,14 +1001,58 @@ so the blast radius outside `scroll.c`/`script.c` is known before editing.
 Then replace `0x78`/`0xf8`/`0xf0`/literal `120` with viewport-derived
 expressions. Test across the §6 width clusters: 240, 272, 304, 336, 400+.
 
-**Definition of done:**
-- [ ] Every horizontal camera constant in `scroll.c` and `script.c` replaced by
-      an expression derived from the viewport width; no bare `0x78`/`120`
-      remains in camera math.
-- [ ] Camera verified in one room from each width cluster (240, 272, 304, 336,
-      ≥400): rooms narrower than the viewport are centered with equal borders;
-      wider rooms scroll and clamp at both edges without overscroll.
-- [ ] Written verdict on fixed-viewport vs Option C's variable viewport.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **Every horizontal camera constant replaced** by a viewport-derived
+      expression; no bare `0x78`/`0xf0`/`0xf8`/`120` remains in horizontal
+      camera math. New `include/viewport.h` owns the derivations
+      (`VIEWPORT_HALF_WIDTH`, `VIEWPORT_REGION_WIDTH`, the camera range
+      macros) and Spike 4's `WIN_VIEWPORT_*` now alias it, so there is one
+      definition of "how wide is the viewport". Sites: `scroll.c`
+      (centre target, right clamp, 4 region tests, 6 scripted-camera
+      literals), `script.c:1976-1977`, `playerUtils.c:4396-4404`
+      room-entry init (both branches). Vertical constants (`0x50`, `0xa8`,
+      `DISPLAY_HEIGHT`) deliberately untouched — Spike 10.
+- [x] **The narrow-room case was a live bug, now handled.**
+      `origin_x + width - VIEWPORT_WIDTH` *underflows* for any room
+      narrower than the viewport, which at 320 would have sent the camera
+      far outside the room in **443 of 617 rooms**. `VIEWPORT_CAM_MIN_X` /
+      `VIEWPORT_CAM_MAX_X` collapse the range to a single centred position
+      for those rooms — a position left of the room origin, i.e. a
+      *negative* room-space camera offset, which the Spike 3 map source
+      now accepts and renders as backdrop beyond the room edges.
+      **240 is provably unaffected: 240 is also the narrowest room in the
+      game, so the narrow branch is unreachable at GBA-native width** and
+      the macros reduce to the original expressions exactly.
+- [x] **Camera verified across every §6 width cluster, at both widths**
+      (`TMC_CAMTRACE=1`), with an explicit in-range assertion — no
+      out-of-range hit at either width:
+
+      | room width | at 240 | at 320 |
+      |---|---|---|
+      | 240 | cam 0, range [0,0] | cam **−40**, centred |
+      | 272 | cam 16, range [0,32] | cam **−24**, centred |
+      | 304 | cam 32, range [0,64] | cam **−8**, centred |
+      | 336 | cam 48, range [0,96] | cam 8, range [0,16] |
+      | 1008 | cam 360, range [0,768] | cam 320, range [0,688] |
+
+- [x] Independent pixel confirmation of centring: for the 240-wide room
+      (the one case whose camera position is comparable across builds,
+      since wider rooms legitimately scroll differently) the 320 render's
+      world band is **99.6% identical to the 240 render offset by exactly
+      40 px** — the residual 0.4% being HUD.
+- [x] **Verdict: fixed viewport plus clamping. Option C is not needed.**
+      Centring for all 443 narrow rooms falls out of two range macros with
+      no per-room viewport machinery, no variable-size buffers, and no
+      change to HUD placement or window bounds. Option C's variable
+      viewport would buy nothing here and would make every downstream
+      consumer of viewport size dynamic. **Option C is formally dropped.**
+
+**Known limitation, owned by Spike 6:** border *symmetry* cannot be
+confirmed visually yet. The world layer centres correctly, but BG0 (HUD)
+and BG3 remain on the 32×32 screenblock path and wrap at 256 px, painting
+into the border region — visible as a duplicated HUD at 320. That is
+exactly the UI-compositing problem Spike 6 exists to solve, and it makes
+**D1 the immediate blocker.**
 
 ### Spike 6 — UI composition (2 days if D1 = centered)
 **Prerequisite:** D1 (§0) is decided before this spike starts — a product

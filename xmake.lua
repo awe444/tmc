@@ -453,7 +453,7 @@ target("tmc_pc")
     if os.getenv("TMC_VIEW_W") then
         add_defines("MODE1_GBA_WIDTH=" .. os.getenv("TMC_VIEW_W"),
                     "PORT_VIEW_CONTENT_WIDTH=" .. os.getenv("TMC_VIEW_W"),
-                    "WIN_VIEWPORT_WIDTH=" .. os.getenv("TMC_VIEW_W"))
+                    "VIEWPORT_WIDTH=" .. os.getenv("TMC_VIEW_W"))
     end
     add_includedirs("libs/VirtuaAPU/include")
     add_includedirs("libs/agbplay_core")

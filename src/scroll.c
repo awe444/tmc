@@ -100,12 +100,13 @@ void Scroll1(RoomControls* controls) {
     if (controls->camera_target != NULL) {
         // Scroll in x direction.
         unused = controls->scroll_x;
-        targetValue = controls->camera_target->x.HALF.HI - 0x78;
+        targetValue = controls->camera_target->x.HALF.HI - VIEWPORT_HALF_WIDTH;
         diff = controls->scroll_x - targetValue;
         if (diff != 0) {
             uVar5 = controls->scroll_x & 7;
             if (diff >= 1) {
-                if (controls->origin_x < controls->scroll_x) {
+                s32 minX = VIEWPORT_CAM_MIN_X(controls->origin_x, controls->width);
+                if (minX < controls->scroll_x) {
                     if (controls->scrollSpeed <= diff) {
                         diff = controls->scrollSpeed;
                         controls->scroll_flags |= 4;
@@ -114,12 +115,12 @@ void Scroll1(RoomControls* controls) {
                     if (uVar5 - diff < 1) {
                         gUpdateVisibleTiles = 1;
                     }
-                    if (controls->origin_x >= controls->scroll_x) {
-                        controls->scroll_x = controls->origin_x;
+                    if (minX >= controls->scroll_x) {
+                        controls->scroll_x = minX;
                     }
                 }
             } else {
-                uVar2 = controls->origin_x + controls->width - 0xf0;
+                uVar2 = VIEWPORT_CAM_MAX_X(controls->origin_x, controls->width);
                 if (controls->scroll_x < uVar2) {
                     if (-controls->scrollSpeed >= diff) {
                         diff = -controls->scrollSpeed;
@@ -513,7 +514,7 @@ u32 sub_080803D0(void) {
         while (delta_y <= xy49) {
 
             if (scroll_y + 0xa8 > pos_y + delta_y) {
-                if (scroll_x + 0xf8 > delta_x + pos_x) {
+                if (scroll_x + VIEWPORT_REGION_WIDTH > delta_x + pos_x) {
                     r7 |= 1;
                 }
                 if (scroll_x < pos_x - delta_x + 8) {
@@ -521,7 +522,7 @@ u32 sub_080803D0(void) {
                 }
             }
             if (scroll_y < pos_y - delta_y + 8) {
-                if (scroll_x + 0xf8 > delta_x + pos_x) {
+                if (scroll_x + VIEWPORT_REGION_WIDTH > delta_x + pos_x) {
                     r7 |= 4;
                 }
                 if (scroll_x < pos_x - delta_x + 8) {
@@ -546,7 +547,7 @@ u32 sub_080803D0(void) {
         xy49 = delta_y * delta_xx / delta_yy; // y * 9 / 4
         while (delta_x <= xy49) {
             if (scroll_y + 0xa8 > pos_y + delta_y) {
-                if (scroll_x + 0xf8 > pos_x + delta_x) {
+                if (scroll_x + VIEWPORT_REGION_WIDTH > pos_x + delta_x) {
                     r7 |= 0x10;
                 }
                 if (scroll_x < pos_x + 8 - delta_x) {
@@ -554,7 +555,7 @@ u32 sub_080803D0(void) {
                 }
             }
             if (scroll_y < pos_y - delta_y + 8) {
-                if (scroll_x + 0xf8 > pos_x + delta_x) {
+                if (scroll_x + VIEWPORT_REGION_WIDTH > pos_x + delta_x) {
                     r7 |= 0x40;
                 }
                 if (scroll_x < pos_x + 8 - delta_x) {
@@ -789,15 +790,15 @@ void sub_08080974(u32 arg0, u32 arg1) {
     RoomControls* roomControls = &gRoomControls;
 
     var0 = roomControls->origin_x;
-    if (arg0 <= var0 + 120) {
+    if (arg0 <= var0 + VIEWPORT_HALF_WIDTH) {
         roomControls->scroll_x = var0;
     } else {
         var0 += roomControls->width;
-        var1 = var0 - 120;
+        var1 = var0 - VIEWPORT_HALF_WIDTH;
         if (arg0 < var1) {
             var1 = arg0;
         }
-        roomControls->scroll_x = var1 - 120;
+        roomControls->scroll_x = var1 - VIEWPORT_HALF_WIDTH;
     }
 
     var0 = roomControls->origin_y;
@@ -824,15 +825,15 @@ void sub_080809D4(void) {
 
     x = roomControls->camera_target->x.HALF.HI;
     var0 = roomControls->origin_x;
-    if (x <= var0 + 120) {
+    if (x <= var0 + VIEWPORT_HALF_WIDTH) {
         roomControls->scroll_x = var0;
     } else {
         var0 += roomControls->width;
-        var1 = var0 - 120;
+        var1 = var0 - VIEWPORT_HALF_WIDTH;
         if (x < var1) {
             var1 = (u16)roomControls->camera_target->x.HALF.HI;
         }
-        roomControls->scroll_x = var1 - 120;
+        roomControls->scroll_x = var1 - VIEWPORT_HALF_WIDTH;
     }
 
     y = roomControls->camera_target->y.HALF.HI;

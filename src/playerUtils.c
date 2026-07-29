@@ -4394,13 +4394,13 @@ void InitializeCamera() {
         targetY = 0;
     }
 
-    if (targetX < 0x78) {
-        roomControls->scroll_x = 0;
+    if (targetX < VIEWPORT_HALF_WIDTH) {
+        roomControls->scroll_x = VIEWPORT_CAM_MIN_X(0, roomControls->width);
     } else {
-        if ((roomControls->width - 0x78) < targetX) {
-            roomControls->scroll_x = roomControls->width - 0x78 - 0x78;
+        if ((roomControls->width - VIEWPORT_HALF_WIDTH) < targetX) {
+            roomControls->scroll_x = VIEWPORT_CAM_MAX_X(0, roomControls->width);
         } else {
-            roomControls->scroll_x = targetX - 0x78;
+            roomControls->scroll_x = targetX - VIEWPORT_HALF_WIDTH;
         }
     }
     roomControls->scroll_x += roomControls->origin_x;

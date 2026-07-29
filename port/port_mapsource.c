@@ -15,6 +15,7 @@
 #include "vram.h"
 
 #include "cpu/mode1.h"
+#include "viewport.h"
 
 /* Which BG a map layer displays through is *per room*, not fixed: the
  * engine records it in MapLayer.bgSettings, which points at one of
@@ -175,8 +176,13 @@ static int mapsource_reason(int layer) {
         int cy = (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y;
         int tw = gRoomControls.width >> 3;
         int th = gRoomControls.height >> 3;
-        if (cx < 0 || cy < 0 || tw <= 0 || th <= 0 ||
-            tw > MAPSRC_MAX_TILES || th > MAPSRC_MAX_TILES) {
+        /* cx/cy may be negative: a room narrower (or shorter) than the
+         * viewport is centred, which puts screen column 0 outside the room.
+         * The PPU renders those columns as backdrop, so only the room
+         * extent needs to be sane. */
+        (void)cx;
+        (void)cy;
+        if (tw <= 0 || th <= 0 || tw > MAPSRC_MAX_TILES || th > MAPSRC_MAX_TILES) {
             return REASON_GEOMETRY;
         }
     }
@@ -194,6 +200,7 @@ void Port_MapSource_Update(void) {
     /* Clear every layer first: which BG a map binds to can change between
      * frames, so a stale binding on a BG this frame's layers no longer use
      * would keep sampling after the engine moved on. */
+    { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
     virtuappu_mode1_clear_map_sources();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);
@@ -246,6 +253,31 @@ void Port_MapSource_Update(void) {
             src.origin_y = (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y;
             virtuappu_mode1_set_map_source(bg, &src);
         }
+    }
+}
+
+/* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the
+ * horizontal clamp keeps the camera inside its room and that rooms
+ * narrower than the viewport sit centred. */
+void Port_MapSource_CamTrace(void) {
+    static u8 lastArea = 0xFF, lastRoom = 0xFF;
+    static int enabled = -1;
+    if (enabled < 0) enabled = (getenv("TMC_CAMTRACE") != NULL);
+    if (!enabled) return;
+    if (gRoomControls.area == lastArea && gRoomControls.room == lastRoom) return;
+    if (gMain.task != TASK_GAME || gRoomControls.width == 0) return;
+    lastArea = gRoomControls.area; lastRoom = gRoomControls.room;
+    {
+        int cx = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
+        int mn = VIEWPORT_CAM_MIN_X(0, gRoomControls.width);
+        int mx = VIEWPORT_CAM_MAX_X(0, gRoomControls.width);
+        int narrow = ((int)gRoomControls.width <= VIEWPORT_WIDTH);
+        fprintf(stderr,
+                "[camtrace] area=0x%02X room=0x%02X w=%u viewport=%d cam=%d range=[%d,%d] %s%s\n",
+                gRoomControls.area, gRoomControls.room, gRoomControls.width,
+                VIEWPORT_WIDTH, cx, mn, mx,
+                narrow ? "NARROW(centred)" : "scrollable",
+                (cx < mn || cx > mx) ? "  ** OUT OF RANGE **" : "");
     }
 }
 
