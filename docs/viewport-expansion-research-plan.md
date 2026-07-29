@@ -1,12 +1,13 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** Spikes 0 and 1 complete, Option F closed (all 2026-07-27).
-Capture tooling landed, route manifest pinned, baseline recorded, D2–D4
-decided, PPU patch pipeline retired, and the 320×240 presentation canvas
+**Status:** Spikes 0, 1 and **2 (the decision gate)** complete, Option F
+closed. **The gate is passed: Option E is confirmed** — 7.6M runtime tile
+comparisons across two instrumented runs, zero persistent mismatches, all
+exclusions caught by the predicate (Spike 2 DoD, §10). The 320×240 canvas
 (Option B) is in as the shippable fallback. **D1 (HUD placement) is the
 only open decision**; mockups ready in
-`tools/capture/references/hud-mockups/`. Next: Spike 2 (the decision gate)
-with 2A/2B in parallel.
+`tools/capture/references/hud-mockups/`. Next: Spikes 2A/2B (static
+probes confirming the axis order), then Milestone 1.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -681,24 +682,86 @@ diff harness). Any mismatch is a layer or mutation path that bypasses the map.
 Walk the canonical route plus targeted destructible / bombable-wall / door /
 chest interactions.
 
-**Definition of done:**
-- [ ] The static pre-check's exclusion list and the map-authoritative
-      predicate spec are written down **before** the harness is built.
-- [ ] A reusable diff harness exists that reports, per frame, the count and
-      coordinates of mismatched tiles between the special map and the composed
-      32×32 window.
-- [ ] Harness run over the full canonical route with a recorded mismatch count
-      per waypoint.
-- [ ] Each of the five named managers/layers classified in writing as
-      *derives-from-map* or *bypasses-map*.
-- [ ] Destructible tile, bombable wall, door, and small chest each triggered and
-      confirmed to propagate into the special map within one frame.
-- [ ] `sub_0807C5F4`'s four chunk branches documented, with the maximum room
-      geometry each covers, and confirmation of whether the map is ever paged.
-- [ ] **Explicit written verdict: proceed with Option E — with the recorded
-      exclusion set and, per excluded class, the fallback behaviour the
-      predicate routes it to — or fall back to Option D.** This is the gate —
-      no downstream spike starts until it is recorded.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **Static pre-check done first.** Four exclusion classes, all
+      predicate-detectable:
+      1. *Degraded rooms* (`scroll_flags` bit 0): set in exactly one place
+         (`LoadRoomGfx`, `playerUtils.c:4086`) for rooms whose decompressed
+         map begins with sentinel `0xffff` (a per-room **asset** property,
+         not an area list) plus `AREA_PALACE_OF_WINDS_BOSS`; cleared on
+         every room load (`:4029`). Special maps built 512×512 via
+         `sub_0807C5F4`; the three mutators skip their special-map writes.
+      2. *Menu/subtask scratch*: fileselect (save-struct alias),
+         kinstoneMenu (`struct[16]`), pauseMenu/pauseMenuScreen6/
+         `DrawDungeonFeatures` (dungeon-map bitmap), fileScreenObjects —
+         all under `GAMEMAIN_SUBTASK` or non-GAME tasks.
+      3. *Boss scratch*: gyorgFemale/gyorgMale wipe both arrays whole and
+         use them as collision bitmaps.
+      4. *Screenblock-shaped direct binding*: bigGoron, minishRafters-,
+         horizontal-/verticalMinishPath- background managers point
+         `gScreen.bgN.subTileMap` **into** the arrays at chunk offsets —
+         screenblock-layout data, not the 0x80-stride map.
+      **Predicate** (reference implementation:
+      `port_mapcheck.c:mapcheck_layer_authoritative`): a layer is
+      map-authoritative iff `task==TASK_GAME` ∧ `substate==GAMEMAIN_UPDATE`
+      ∧ `!(scroll_flags & 1)` ∧ `scrollAction < 2` ∧ standard
+      `subTileMap` binding ∧ `gMap{Bottom,Top}.bgSettings != NULL`.
+- [x] **Reusable diff harness:** `--mapcheck` (`port/port_mapcheck.c`)
+      compares, per frame per layer, the rendered VRAM screenblock
+      (addressed via hardware BGCNT/HOFS/VOFS semantics) against full-room
+      sampling of the special maps at the camera origin, with per-tile
+      persistence tracking (≥30-frame streak = bypass) and a
+      self-locating candidate scan for the block/phase convention.
+- [x] **Full canonical route:** 3 459 frames checked, **3 703 200 tile
+      comparisons, zero persistent mismatches.** One single-frame transient
+      (1 023 tiles, frame 11186, festival Hyrule Town entry — a whole-window
+      refresh landing one frame ahead of the VBlank VRAM upload, converged
+      next frame). Rooms covered include Hyrule Field 1008×688, Minish
+      Woods 1008×1008, festival Hyrule Town 400×960, Deepwood, and two
+      `scroll_flags`-bit-1 rooms (bit 1 does **not** degrade the map —
+      confirmed live, as the static read predicted).
+- [x] **Five managers classified** (file:line evidence in source):
+      | Manager | Class |
+      |---|---|
+      | `backgroundAnimations.c` | map-agnostic — writes tile *graphics* to VRAM charblocks (`:2436`); tilemap entries untouched, keeps working under map sampling |
+      | `hyruleTownTileSetManager.c` | map-agnostic — `LoadGfxGroup` swaps only |
+      | `weatherChangeManager.c` | conditionally bypasses: detaches `gMapTop.bgSettings=0` (`:111`), repurposes screenblock 29 as a fog overlay via `gBG3Buffer` (`:144-145`), later rebinds (`:148`) — **every phase flips a predicate signal**, so it is excluded exactly while non-authoritative |
+      | `holeManager.c` | separate BG3 overlay (`:297-312`); world layers untouched |
+      | `lightManager.c` | WIN0/blend/BG3 (`:43-70,154`); world tilemaps untouched (window-reg widening is Spike 4) |
+- [x] *(partial, recorded honestly)* **Destructible tiles verified
+      end-to-end at runtime:** scripted sword slashes in Minish Woods cut
+      two bushes (`SetTileType=2` via the new mutation tap in
+      `playerUtils.c`); each produced exactly one 4-tile (one metatile)
+      single-frame transient then converged — propagation within one
+      frame, zero persistent. Bombable wall / door / small chest were
+      **not** individually triggered; all three route through the same
+      three tapped entry points (`SetTileType`/`SetTileByIndex`/
+      `RestorePrevTileEntity`) whose special-map writes share one gate,
+      so the mechanism is common. Their runtime confirmation folds into
+      the Spike 7/11 room walks, where the tap + harness run anyway.
+- [x] **`sub_0807C5F4` documented:** four 32×32-entry chunk copies at
+      offsets `0/0x20/0x1000/0x1020` (gated on `width>0xff` /
+      `height>0xff`) = 64×64 subtiles = **512×512 px maximum**, used only
+      on the degraded-room path. On the normal path the map is **never
+      paged**: `LoadRoomGfx` clears both arrays and
+      `RenderMapLayerToSubTileMap` fills the whole room resident
+      (128×128 subtiles = 1024×1024 px, covering the largest room).
+- [x] **VERDICT: PROCEED WITH OPTION E**, with the four-class exclusion
+      set above routed through the predicate to the unchanged 32×32 path.
+      The premise held everywhere the predicate said it should: ~3.9M
+      further comparisons in the mutation run, still zero persistent.
+      Option D is off the table unless Milestone 1 falsifies something
+      the harness could not see.
+
+**Bonus finding for Spike 3** (display plumbing, measured not assumed):
+the bottom special map renders through the **BG2** register set
+(screenblock 28) and the top through **BG1** (screenblock 29) — BG1's
+priority puts canopy above ground. The BG window is a *sliding* buffer,
+not a wrapping one: the engine keeps `hofs = cx & 15`,
+`vofs = (cy & 15) + 8` (constant one-tile vertical bias). Note
+`port_linked_stubs.c`'s `UpdateScrollVram` comment labels the
+buffer↔layer mapping the other way round — trust the registers, not the
+comment. Spike 3's map-sampling mode replaces exactly this addressing.
 
 ### Spike 2A — Width-only feasibility probe + static inventories (1.5 days, parallel with 2)
 **Questions:** Does the §8 claim hold that width-only under Option E needs only
@@ -969,7 +1032,7 @@ where the dominant risk is a late discovery that the premise was wrong.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Special-map premise fails beyond the known §5.1 exclusions | Option E dead; effort ~3× | Low–Medium (the static review already found the main exclusion classes) | Spike 2 is the gate, runs 3rd |
+| ~~Special-map premise fails beyond the known §5.1 exclusions~~ | ~~Option E dead; effort ~3×~~ | **Closed 2026-07-28** | Spike 2 ran: 7.6M tile comparisons, zero persistent mismatches; verdict recorded (§10 Spike 2) |
 | Special maps repurposed during non-gameplay scenes (§5.1) | PPU samples garbage in file select, pause map, kinstone fusion, Gyorg fight | Certain (known) | Map-authoritative predicate: spec'd in Spike 2, implemented in Spike 3; excluded scenes stay on the 32×32 path |
 | Pixel-diff DoDs run without deterministic capture | Verification silently degrades to eyeballing | High if Spike 0 tooling is skipped | Route manifest + warp/dump/diff tooling are named Spike 0 deliverables, not assumed substrate |
 | Per-entity OAM write site lives in unported `asm/` | Spike 7/8 estimates blow up | Medium | Located in Spike 2A, before either spike starts |

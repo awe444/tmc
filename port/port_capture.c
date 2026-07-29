@@ -28,6 +28,8 @@ extern int Port_DebugAction_Warp(unsigned char area, unsigned char room,
 extern void Port_DebugAction_GiveAllItems(void);
 extern void Port_DebugAction_MaxHearts(void);
 extern void Port_DebugAction_HealFull(void);
+/* engine (src/itemUtils.c): equip an item to the A (0) or B (1) slot. */
+extern void ForceEquipItem(unsigned int itemId, unsigned int equipSlot);
 /* engine (src/subtask.c): opens a menu subtask the same way the game
  * does — used to reach pause/figurine menus without walking there. */
 extern void MenuFadeIn(unsigned int state, unsigned int param);
@@ -343,6 +345,13 @@ bool Port_Capture_HandleArg(const char* arg) {
         sCaptureCanvas = true;
         return true;
     }
+    if (strcmp(arg, "--mapcheck") == 0) {
+        extern void Port_MapCheck_Enable(void);
+        extern void Port_MapCheck_Report(void);
+        Port_MapCheck_Enable();
+        atexit(Port_MapCheck_Report);
+        return true;
+    }
     if (strcmp(arg, "--uncapped") == 0) {
         sUncapped = true;
         return true;
@@ -361,7 +370,8 @@ void Port_Capture_PrintUsage(void) {
             "  --frame-stats:          Print frame-time mean/p50/p99/max on exit.\n"
             "  --exit-frame=<n>:       Hard-quit after n frames (safety for scripted runs).\n"
             "  --uncapped:             Disable frame pacing (fast scripted/headless runs).\n"
-            "  --capture-canvas:       Dump the composed 320x240 canvas instead of raw PPU output.\n");
+            "  --capture-canvas:       Dump the composed 320x240 canvas instead of raw PPU output.\n"
+            "  --mapcheck:             Spike 2 harness: diff rendered BG tiles vs the special maps.\n");
 }
 
 bool Port_Capture_ScriptActive(void) {
@@ -387,6 +397,11 @@ void Port_Capture_OnVBlank(uint64_t logicNs, uint64_t presentNs) {
     }
 
     sFrame++;
+
+    {
+        extern void Port_MapCheck_OnFrame(uint32_t frame);
+        Port_MapCheck_OnFrame(sFrame);
+    }
 
     if (sWarpPending) {
         if (Port_DebugAction_Warp(sPendingWarp.area, sPendingWarp.room,
@@ -429,6 +444,10 @@ void Port_Capture_OnVBlank(uint64_t logicNs, uint64_t presentNs) {
                     Port_DebugAction_MaxHearts();
                 } else if (strcmp(c->name, "healfull") == 0) {
                     Port_DebugAction_HealFull();
+                } else if (strcmp(c->name, "equipsword") == 0) {
+                    ForceEquipItem(1 /* ITEM_SMITH_SWORD */, 0 /* EQUIP_SLOT_A */);
+                } else if (strcmp(c->name, "equipbombs") == 0) {
+                    ForceEquipItem(7 /* ITEM_BOMBS */, 1 /* EQUIP_SLOT_B */);
                 } else {
                     fprintf(stderr, "[capture] unknown action '%s'\n", c->name);
                 }
