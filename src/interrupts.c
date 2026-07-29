@@ -110,7 +110,6 @@ void sub_08016CA8(BgSettings* bg) {
 }
 
 void DispCtrlSet(void) {
-    u16* tmp2;
     BgControls* controls;
     BgTransformationSettings* bgTfSettings;
     u16 tmp = gScreen.lcd.displayControl & gScreen.lcd.displayControlMask;
@@ -152,18 +151,27 @@ void DispCtrlSet(void) {
     REG_BG3Y_L = bgTfSettings->yPointLeastSig;
     REG_BG3Y_H = bgTfSettings->yPointMostSig;
 
-    tmp2 = &controls->window0HorizontalDimensions;
-    REG_WIN0H = tmp2[0];
-    // REG_WIN0H = *tmp2;
-    REG_WIN1H = tmp2[1];
-    REG_WIN0V = tmp2[2];
-    REG_WIN1V = tmp2[3];
-    REG_WININ = tmp2[4];
-    REG_WINOUT = tmp2[5];
-    REG_MOSAIC = tmp2[6];
-    REG_BLDCNT = tmp2[7];
-    REG_BLDALPHA = tmp2[8];
-    REG_BLDY = tmp2[9];
+    /* Window bounds are winreg_t (32-bit) so edges past 255 are
+     * representable, which the packed 8-bit hardware registers cannot do.
+     * Write the truncated 8-bit form to the registers as hardware would —
+     * the per-scanline window DMA still consumes that — and hand the full
+     * bounds to the PPU separately (Port_Screen_CommitWindows). */
+    REG_WIN0H = WINREG_TO_GBA(controls->window0HorizontalDimensions);
+    REG_WIN1H = WINREG_TO_GBA(controls->window1HorizontalDimensions);
+    REG_WIN0V = WINREG_TO_GBA(controls->window0VerticalDimensions);
+    REG_WIN1V = WINREG_TO_GBA(controls->window1VerticalDimensions);
+    REG_WININ = controls->windowInsideControl;
+    REG_WINOUT = controls->windowOutsideControl;
+    REG_MOSAIC = controls->mosaicSize;
+    REG_BLDCNT = controls->layerFXControl;
+    REG_BLDALPHA = controls->alphaBlend;
+    REG_BLDY = controls->layerBrightness;
+#ifdef PC_PORT
+    Port_Screen_CommitWindows(controls->window0HorizontalDimensions,
+                              controls->window0VerticalDimensions,
+                              controls->window1HorizontalDimensions,
+                              controls->window1VerticalDimensions);
+#endif
 }
 
 // Load any resources that were requested with LoadResourceAsync

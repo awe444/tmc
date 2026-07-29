@@ -453,7 +453,7 @@ void sub_0805A94C(TempleOfDropletsManager* this) {
         tmp2 = 0;
     if (tmp2 > DISPLAY_WIDTH)
         tmp2 = DISPLAY_WIDTH;
-    gScreen.controls.window1HorizontalDimensions = (tmp1 << 8 | tmp2);
+    gScreen.controls.window1HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
     tmp1 = -gScreen.bg3.yOffset;
     tmp2 = tmp1 + 0x100;
     if (tmp1 < 0)
@@ -464,7 +464,7 @@ void sub_0805A94C(TempleOfDropletsManager* this) {
         tmp2 = 0;
     if (tmp2 > DISPLAY_HEIGHT)
         tmp2 = DISPLAY_HEIGHT;
-    gScreen.controls.window1VerticalDimensions = (tmp1 << 8 | tmp2);
+    gScreen.controls.window1VerticalDimensions = WIN_RANGE(tmp1, tmp2);
 }
 
 void sub_0805A9CC(TempleOfDropletsManager* this) {
@@ -481,12 +481,12 @@ void sub_0805A9CC(TempleOfDropletsManager* this) {
         tmp2 = 0;
     if (tmp2 > DISPLAY_WIDTH)
         tmp2 = DISPLAY_WIDTH;
-    gScreen.controls.window1HorizontalDimensions = tmp1 << 8 | tmp2;
+    gScreen.controls.window1HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
     tmp1 = gRoomControls.scroll_y - this->unk_26 + this->unk_36;
     gScreen.bg3.yOffset = tmp1 & 0x3F;
     tmp3 = (&gBG3Buffer[((tmp1 / 0x40) << 8)]);
     gScreen.bg3.subTileMap = (u32*)tmp3;
-    gScreen.controls.window1VerticalDimensions = DISPLAY_HEIGHT;
+    gScreen.controls.window1VerticalDimensions = WIN_RANGE(0, WIN_VIEWPORT_HEIGHT);
     if (this->unk_28 == tmp3)
         return;
     this->unk_28 = tmp3;
@@ -535,6 +535,6 @@ void sub_0805AAF0(u32 unk0) {
         WININ_WIN0_BG_ALL | WININ_WIN0_OBJ | WININ_WIN1_BG_ALL | WININ_WIN1_OBJ | WININ_WIN0_CLR | WININ_WIN1_CLR;
     gScreen.controls.windowOutsideControl =
         WINOUT_WIN01_BG0 | WINOUT_WIN01_BG1 | WINOUT_WIN01_BG2 | WINOUT_WIN01_OBJ | WINOUT_WIN01_CLR;
-    gScreen.controls.window1HorizontalDimensions = DISPLAY_WIDTH;
-    gScreen.controls.window1VerticalDimensions = DISPLAY_HEIGHT;
+    gScreen.controls.window1HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
+    gScreen.controls.window1VerticalDimensions = WIN_RANGE(0, WIN_VIEWPORT_HEIGHT);
 }

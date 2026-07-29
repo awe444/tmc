@@ -238,8 +238,8 @@ void sub_08053758(void) {
     gScreen.controls.alphaBlend = 0x1000;
     gScreen.controls.windowInsideControl = 0x1f;
     gScreen.controls.windowOutsideControl = 0x3f;
-    gScreen.controls.window0HorizontalDimensions = 0xf0;
-    gScreen.controls.window0VerticalDimensions = 0x60;
+    gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
+    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 0x60);
     gScreen.bg1.control = 0x1c4e;
     gScreen.bg2.control = 0x1dc1;
     SoundReq(BGM_STORY);
@@ -264,8 +264,8 @@ void sub_08053800(void) {
         ShowTextBox(TEXT_INDEX(TEXT_PICORI, 1) + index, ptr->font);
         gScreen.bg1.updated = 1;
         gScreen.controls.alphaBlend = 0x10;
-        gScreen.controls.window0HorizontalDimensions = ptr->width;
-        gScreen.controls.window0VerticalDimensions = ptr->height;
+        gScreen.controls.window0HorizontalDimensions = WIN_RANGE(ptr->width >> 8, ptr->width & 0xff);
+        gScreen.controls.window0VerticalDimensions = WIN_RANGE(ptr->height >> 8, ptr->height & 0xff);
         SetFade(FADE_INSTANT, ptr->fadeSpeed);
     }
 }

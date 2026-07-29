@@ -288,8 +288,8 @@ void KinstoneMenu_Type3_Overlay1(void) {
         gMenu.overlayType = 2;
         gMenu.transitionTimer = 20;
         gScreen.lcd.displayControl |= 0x2000;
-        gScreen.controls.window0HorizontalDimensions = 0x6887;
-        gScreen.controls.window0VerticalDimensions = 0x405f;
+        gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0x68, 0x87);
+        gScreen.controls.window0VerticalDimensions = WIN_RANGE(0x40, 0x5f);
         gScreen.controls.windowInsideControl = 0x3f;
         gScreen.controls.windowOutsideControl = 0x1f;
         gScreen.controls.layerFXControl = 0x3f90;

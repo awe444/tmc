@@ -947,8 +947,8 @@ void sub_0801E120(void) {
     gScreen.lcd.displayControl |= 0x2000;
     gScreen.controls.windowInsideControl = 0x3F37;
     gScreen.controls.windowOutsideControl = 0x3F;
-    gScreen.controls.window0HorizontalDimensions = 0;
-    gScreen.controls.window0VerticalDimensions = 160;
+    gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, 0);
+    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 160);
 }
 
 void sub_0801E154(u32 a1) {
@@ -967,8 +967,8 @@ void sub_0801E1B8(u32 a1, u32 a2) {
     gScreen.lcd.displayControl |= 0x2000;
     gScreen.controls.windowInsideControl = a1;
     gScreen.controls.windowOutsideControl = a2;
-    gScreen.controls.window0HorizontalDimensions = 0;
-    gScreen.controls.window0VerticalDimensions = 160;
+    gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, 0);
+    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 160);
 }
 
 void sub_0801E1EC(u32 a1, u32 a2, u32 a3) {

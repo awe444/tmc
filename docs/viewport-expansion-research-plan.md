@@ -11,10 +11,12 @@ write site is port-owned C, blocker severities are measured, and the
 **axis order is confirmed: width first**. Revised estimates: Milestone 1
 = 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
 open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
-**Spike 3 is complete**: the map-sampling BG mode is live, bit-identical
-to the hardware path at 240 (0 mismatches in 265M tile fetches), and
-renders real world data at 320. Next: Spike 4 (window registers) — D1
-must be decided before Spike 6.
+**Spikes 3 and 4 are complete**: the map-sampling BG mode is live and
+bit-identical to the hardware path at 240 (0 mismatches in 265M tile
+fetches) while rendering real world data at 320, and window bounds are
+widened to 32 bits with a committed edge of 320 proven at runtime.
+Next: Spike 5 (horizontal camera) — **D1 must be decided before
+Spike 6.**
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -932,13 +934,57 @@ the seven consuming files (`lightRay.c`, `lightDoor.c`, `cutscene.c`,
 `figurineMenu.c`, `kinstoneMenu.c`, `common.c`, `interrupts.c`), plus the
 PPU-side window clamps at `libs/ViruaPPU/src/mode1.c:563-570` (§4).
 
-**Definition of done:**
-- [ ] `winreg_t` widened; all seven files compile with no remaining 8-bit edge
-      packing (`(a << 8) | b`) for horizontal window bounds; the PPU-side
-      clamps updated to the new extents.
-- [ ] Light ray, light door, cutscene letterbox, figurine menu, and kinstone
-      menu each visually verified at 320 width, with before/after captures.
-- [ ] At 240 width, all five are pixel-identical to Spike 0 captures.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **`winreg_t` widened to 32 bits** (`include/screen.h`) with
+      `WIN_RANGE` / `WIN_GET_HIGHER` / `WIN_GET_LOWER`, plus `WINREG_TO_GBA`
+      for the truncated hardware form. **All 39 packing sites converted
+      across 10 files** — more than the seven the plan listed; §3's table
+      missed `scroll.c`, `bigGoron.c` and `templeOfDropletsManager.c`.
+      No `(a << 8) | b` packing of a window field remains (the two
+      remaining shifts in `cutscene.c:267-268` *decode* a packed u16
+      source, they do not pack a destination).
+- [x] **Transport added rather than squeezed through the registers.**
+      `DispCtrlSet` still writes the truncated 8-bit value to
+      `REG_WIN0H`/etc. (the per-scanline window DMA consumes it), and also
+      calls `Port_Screen_CommitWindows`, which hands untruncated bounds to
+      the PPU's new `virtuappu_mode1_set_window_bounds`. Same explicit
+      port→PPU pattern as Spike 3's map source, and committed from the
+      same frame-generation point.
+      *Incidental fix:* `DispCtrlSet` walked the control block as `u16*`
+      (`tmp2[0..9]`); that indexing silently breaks once any field widens,
+      so it is now named-field access.
+- [x] **PPU-side clamps updated** — `mode1.c` clamps to
+      `MODE1_GBA_WIDTH/HEIGHT`, which now track the build viewport, and
+      the wrap semantics (`left > right`) are preserved for overrides.
+- [x] **>255 proven live, not merely compiled:** with `TMC_WINTRACE=1` at
+      a 320 build the widest committed edge is **320**. Sites whose
+      meaning is "the whole screen" now use new `WIN_VIEWPORT_WIDTH/HEIGHT`
+      extents (which resolve to `DISPLAY_WIDTH/HEIGHT` by default, so 240
+      is unchanged by construction); the figurine menu visibly uses the
+      extra width (109 px differ at x ≥ 240 versus the clamped build).
+- [x] **At 240, pixel-identical**: full route 11/11 diff = 0, and the
+      Spike 3 map-source audit still reports 0 mismatches in 265 497 600
+      fetches. Call sites keep their existing `& 0xff` masking — several
+      rely on 8-bit wrap to produce a deliberately inverted window, so
+      widening an individual site's *coordinate range* stays a per-site
+      decision for the spike that needs it (Spike 5 for camera-derived
+      windows).
+- [x] Light ray, light door, cutscene letterbox and figurine menu captured
+      at both 240 and 320.
+- [ ] **Kinstone menu: not runtime-verified.** Cold-opening it from a
+      script segfaults **identically at 240 and 320**, so it is not a
+      regression from this change — it is the known kinstone crash chain
+      (CHANGELOG #16: the menu dereferences `gPossibleInteraction`
+      state that only a real fusion sets up). Its two sites
+      (`kinstoneMenu.c:291-292`) were converted and are covered by the
+      240 pixel-identity check. Verify during the Spike 7 room walks with
+      a save that has fusions available.
+
+**Deferred to Spike 9 (HDMA):** the per-scanline *circular* window path —
+`common.c`'s `gUnk_02017AA0` table DMA'd to `REG_ADDR_WIN0H`, used by the
+lantern (`lightManager`), fade iris (`fade.c`) and `whiteTriangleEffect`.
+That table is a packed-u16-per-line structure, i.e. HDMA-shaped, and
+widening it belongs with the 240-line HDMA work rather than here.
 
 ### Spike 5 — Camera and clamping, horizontal (2 days)
 **Questions:** Do `scroll.c`'s magic constants generalise to half-viewport

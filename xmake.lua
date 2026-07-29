@@ -452,7 +452,8 @@ target("tmc_pc")
     -- or the next build silently stays wide.
     if os.getenv("TMC_VIEW_W") then
         add_defines("MODE1_GBA_WIDTH=" .. os.getenv("TMC_VIEW_W"),
-                    "PORT_VIEW_CONTENT_WIDTH=" .. os.getenv("TMC_VIEW_W"))
+                    "PORT_VIEW_CONTENT_WIDTH=" .. os.getenv("TMC_VIEW_W"),
+                    "WIN_VIEWPORT_WIDTH=" .. os.getenv("TMC_VIEW_W"))
     end
     add_includedirs("libs/VirtuaAPU/include")
     add_includedirs("libs/agbplay_core")
@@ -478,6 +479,7 @@ target("tmc_pc")
     add_files("port/port_capture.c")
     add_files("port/port_mapcheck.c")
     add_files("port/port_mapsource.c")
+    add_files("port/port_screen.c")
     add_files("port/port_audio.c")
     add_files("port/port_runtime_config.cpp")
     add_files("port/port_debug_menu.cpp")

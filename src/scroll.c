@@ -293,8 +293,8 @@ void Scroll5Sub0(RoomControls* controls) {
     gScreen.lcd.displayControl |= DISPCNT_WIN1_ON;
     gScreen.controls.windowInsideControl = (u8)gScreen.controls.windowInsideControl | 0x1700;
     gScreen.controls.windowOutsideControl = (gScreen.controls.windowOutsideControl & 0xff00) | 7;
-    gScreen.controls.window1HorizontalDimensions = 0xf0;
-    gScreen.controls.window1VerticalDimensions = 0xf0;
+    gScreen.controls.window1HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
+    gScreen.controls.window1VerticalDimensions = WIN_RANGE(0, 0xf0);
     ResetActiveItems();
     ResetPlayerAnimationAndAction();
     if (gDiggingCaveEntranceTransition.isDiggingCave) {
@@ -343,8 +343,8 @@ void Scroll5Sub2(RoomControls* controls) {
         if (top > DISPLAY_HEIGHT) {
             top = DISPLAY_HEIGHT;
         }
-        gScreen.controls.window1HorizontalDimensions = ((left & 0xff) << 8) | (right & 0xff);
-        gScreen.controls.window1VerticalDimensions = ((bottom & 0xff) << 8) | (top & 0xff);
+        gScreen.controls.window1HorizontalDimensions = WIN_RANGE(left & 0xff, right & 0xff);
+        gScreen.controls.window1VerticalDimensions = WIN_RANGE(bottom & 0xff, top & 0xff);
     }
     if (controls->unk_18 == 0) {
         controls->scrollSubAction = 3;
@@ -410,8 +410,8 @@ void Scroll5Sub5(RoomControls* controls) {
         if (top > DISPLAY_HEIGHT) {
             top = DISPLAY_HEIGHT;
         }
-        gScreen.controls.window1HorizontalDimensions = ((left & 0xff) << 8) | (right & 0xff);
-        gScreen.controls.window1VerticalDimensions = ((bottom & 0xff) << 8) | (top & 0xff);
+        gScreen.controls.window1HorizontalDimensions = WIN_RANGE(left & 0xff, right & 0xff);
+        gScreen.controls.window1VerticalDimensions = WIN_RANGE(bottom & 0xff, top & 0xff);
     }
     if (controls->unk_1c == 0) {
         controls->scrollAction = 0;

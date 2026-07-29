@@ -52,8 +52,8 @@ void LightRay_Type0(LightRayEntity* this) {
             }
             gPlayerEntity.base.animationState = tmp;
             gScreen.lcd.displayControl = (gScreen.lcd.displayControl & 0xbfff) | 0x2800;
-            gScreen.controls.window0HorizontalDimensions = 0;
-            gScreen.controls.window0VerticalDimensions = 0xa0;
+            gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, 0);
+            gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 0xa0);
             break;
         case 1:
             if (super->timer != 0) {
@@ -105,7 +105,7 @@ void sub_0809B97C(LightRayEntity* this, u32 param_2) {
     if (DISPLAY_WIDTH < tmp2) {
         tmp2 = DISPLAY_WIDTH;
     }
-    gScreen.controls.window0HorizontalDimensions = (tmp1 << 8) | tmp2;
+    gScreen.controls.window0HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
 }
 
 void LightRay_Type1(LightRayEntity* this) {
@@ -126,8 +126,8 @@ void LightRay_Type1(LightRayEntity* this) {
             }
             gPlayerEntity.base.animationState = tmp;
             gScreen.lcd.displayControl = (gScreen.lcd.displayControl & 0xbfff) | 0x2000;
-            gScreen.controls.window0HorizontalDimensions = DISPLAY_WIDTH;
-            gScreen.controls.window0VerticalDimensions = DISPLAY_HEIGHT;
+            gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
+            gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, WIN_VIEWPORT_HEIGHT);
             break;
         case 1:
             if (super->timer != 0) {
@@ -176,8 +176,8 @@ void LightRay_Type2(LightRayEntity* this) {
                 tmp = 6;
             }
             gPlayerEntity.base.animationState = tmp;
-            gScreen.controls.window0HorizontalDimensions = 0x60;
-            gScreen.controls.window0VerticalDimensions = 0xa0;
+            gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, 0x60);
+            gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 0xa0);
             break;
         case 1:
             if (sub_0809BE78(this)) {
@@ -246,8 +246,8 @@ void LightRay_Type3(LightRayEntity* this) {
                 tmp = 6;
             }
             gPlayerEntity.base.animationState = tmp;
-            gScreen.controls.window0HorizontalDimensions = 0x80f0;
-            gScreen.controls.window0VerticalDimensions = 0xa0;
+            gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0x80, WIN_VIEWPORT_WIDTH);
+            gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 0xa0);
             super->subAction = 0x80;
             break;
         case 1:
@@ -265,7 +265,7 @@ void LightRay_Type3(LightRayEntity* this) {
                         }
                         if ((gRoomTransition.frameCount & 1U) == 0) {
                             super->subAction--;
-                            gScreen.controls.window0HorizontalDimensions = super->subAction << 8 | 0xf0;
+                            gScreen.controls.window0HorizontalDimensions = WIN_RANGE(super->subAction, WIN_VIEWPORT_WIDTH);
                         }
                     } else {
                         super->action = 2;

@@ -120,8 +120,8 @@ void FigurineMenu_080A4608(void) {
     SetColor(0x15c, gPaletteBuffer[211]);
     MemClear(&gBG0Buffer, sizeof(gBG0Buffer));
     MemClear(&gBG3Buffer, sizeof(gBG3Buffer));
-    gScreen.controls.window0HorizontalDimensions = DISPLAY_WIDTH;
-    gScreen.controls.window0VerticalDimensions = 0x7898;
+    gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
+    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0x78, 0x98);
     gScreen.controls.windowInsideControl = 0x1f;
     gScreen.controls.windowOutsideControl = 0x1d;
     gScreen.bg1.updated = 1;

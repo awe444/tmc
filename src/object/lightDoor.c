@@ -74,11 +74,11 @@ void LightDoor_Action2(LightDoorEntity* this) {
         tmp2 = super->x.HALF.HI;
         tmp = gRoomControls.scroll_x;
         tmp2 = tmp2 - tmp;
-        gScreen.controls.window0HorizontalDimensions = (((tmp2 - 0x18) & 0xff) << 8) | ((tmp2 + 0x18) & 0xff);
+        gScreen.controls.window0HorizontalDimensions = WIN_RANGE((tmp2 - 0x18) & 0xff, (tmp2 + 0x18) & 0xff);
         tmp2 = super->y.HALF.HI;
         tmp = gRoomControls.scroll_y;
         tmp2 = tmp2 - tmp;
-        gScreen.controls.window0VerticalDimensions = (((tmp2 - 0x18) & 0xff) << 8) | ((tmp2 + 0x18) & 0xff);
+        gScreen.controls.window0VerticalDimensions = WIN_RANGE((tmp2 - 0x18) & 0xff, (tmp2 + 0x18) & 0xff);
     }
 }
 
