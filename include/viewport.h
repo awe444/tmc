@@ -64,6 +64,13 @@
 #define UI_VIEW_TILE_COLS (VIEWPORT_WIDTH / 8)
 #define UI_BG0_RIGHT_COL (UI_VIEW_TILE_COLS - 1)
 
+/* Centering shift for UI surfaces authored against a 240-wide screen.
+ * D1 settles the *screens* (title, file select, menus) and the text box as
+ * centered, unlike the in-game HUD which is edge-anchored — so these two
+ * shifts coexist and must not be confused. Zero at GBA-native width. */
+#define UI_CENTER_DX ((VIEWPORT_WIDTH - DISPLAY_WIDTH) / 2)
+#define UI_CENTER_TILE_DX (UI_CENTER_DX / 8)
+
 /* Shift applied to right-anchored UI positions (D1: edge-anchored HUD).
  * Zero at GBA-native width, so anchored elements keep their authored
  * coordinates there. */

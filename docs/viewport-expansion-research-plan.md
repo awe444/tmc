@@ -1112,13 +1112,60 @@ world accordingly.
 - [x] **At 240: route 11/11 pixel-identical and the map-source audit still
       0 mismatches in 265 497 600 fetches**, across all of the above
       (buffer relocation, phonograph fix, stride rewrite, cull widening).
-- [ ] **Remaining: UI *screens* at 320.** Title, file select, pause menu,
-      figurine menu and text boxes still render through the 32×32 path and
-      will wrap past 256 px, as the in-game HUD did before this spike. They
-      are settled as *centered* (§5), so they need the centering composite
-      rather than anchoring — a smaller job than the HUD was, but not done
-      here. **Blocks the Milestone 1 exit criteria**, which require those
-      screens verified.
+- [x] **Text box centered** (`message.c`): `MESSAGE_WIDTH` was its own
+      hardcoded `0x20` BG0 stride. It is now `UI_BG0_WIDTH_TILES`, and the
+      window index applies `UI_CENTER_TILE_DX`, so the box centres itself
+      per-window rather than shifting BG0 as a whole — necessary because
+      the box shares BG0 with the *anchored* HUD during gameplay.
+      Measured **94.7% identical to the 240 reference at a 40 px shift**
+      (residual is the surrounding world/HUD, which legitimately differ).
+- [ ] **NOT DONE: the UI screens (title, file select, pause, figurine).**
+      Measured against the 240 reference at a 40 px shift they come out at
+      **5.0% / 5.7% / 47.2% / 64.7%** — i.e. broken, not merely offset.
+
+> ### Finding: widening BG0's stride is not a localized change
+>
+> Attempting to centre the UI screens exposed the real cost of D1, and it
+> is larger than this spike's own scope note claimed.
+>
+> `UI_BG0_WIDTH_TILES` changes gBG0Buffer's **row stride** from 32 to 64.
+> Every writer must agree on that stride. `ui.c` (14 sites) and
+> `message.c` were converted; **8 further indexed sites still bake a
+> stride-32 layout** — `subtask.c:54,95`, `demo.c:191-192`,
+> `fileselect.c:225,747,751,852`, `phonograph.c:210` — and, more
+> awkwardly, the shared `Font` text renderer advances rows by its own
+> stride assumption, so any screen drawing text through a `Font` table
+> inherits the old layout regardless of its `dest`.
+>
+> Rebinding those layers as map sources (the approach that worked for the
+> HUD) does **not** help here: title and file select load their content
+> straight into VRAM screenblocks, so the staging buffer a map source
+> would read is stale or empty. That is why title/file-select score ~5%
+> rather than ~50%.
+>
+> **My earlier "16 references / 7 offsets, far more tractable than ~40"
+> was wrong.** It counted literal indexed accesses in one file and missed
+> both the other writers and the shared renderer. The plan's original
+> ~40-site warning was the better estimate.
+>
+> **Cost to finish as specified:** propagate the stride through the 8
+> remaining sites *and* give the `Font` renderer a stride parameter,
+> then re-verify every UI screen at both widths. Estimate **2–3 further
+> days**, which puts Spike 6 at the top of its 4–6 day D1 range.
+>
+> **Cheaper alternative worth considering (a D1 variant):** the only thing
+> forcing the stride change is the *rupee/shell counter*, a BG0 tile
+> element anchored past x=256. Hearts are already at column 0 (flush left
+> with no shift), and the item/button icons are OAM sprites already
+> anchored via `gHUD.buttonX` + the widened cull. Leaving just the counter
+> in the 240-wide band would keep gBG0Buffer at stride 32, need **no**
+> further writer changes, and let the UI screens centre with a simple
+> per-layer clip — recovering most of the anchored look for roughly zero
+> additional cost.
+
+**Also deferred:** BG3 overlays during gameplay (hole, light, weather) are
+screen-fixed and still wrap past 256 px at a wide viewport. Not part of
+the D1 question; belongs with Spike 7's visual sweep.
 
 ### Spike 7 — Horizontal culling and off-screen behaviour (2–3 days)
 **Questions:** Do entities the engine assumed off-screen become visible? The

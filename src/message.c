@@ -11,8 +11,15 @@
 #define MESSAGE_ADVANCE_KEYS (A_BUTTON | B_BUTTON | DPAD_ANY | R_BUTTON)
 #define MESSAGE_PRESS_ANY_ADVANCE_KEYS ((gInput.newKeys & MESSAGE_ADVANCE_KEYS) != 0)
 
-#define MESSAGE_WIDTH 0x20
-#define MESSAGE_POSITION_INDEX(window) ((window).yPos * MESSAGE_WIDTH + (window).xPos)
+/* Row stride of the BG0 tilemap the text box draws into, and the index of
+ * a window's top-left tile. The text box is centered (D1) while the HUD on
+ * the same layer is edge-anchored, so the shift is applied here per-window
+ * rather than by moving BG0 as a whole. Both reduce to the original
+ * `yPos * 0x20 + xPos` at GBA-native width. */
+#include "viewport.h"
+
+#define MESSAGE_WIDTH UI_BG0_WIDTH_TILES
+#define MESSAGE_POSITION_INDEX(window) UI_BG0_AT((window).xPos + UI_CENTER_TILE_DX, (window).yPos)
 
 #define MESSAGE_PALETTE 0xF
 

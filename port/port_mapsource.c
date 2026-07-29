@@ -203,18 +203,64 @@ bool Port_MapSource_LayerAuthoritative(int layer) {
  * At GBA-native width this does nothing at all and BG0 stays on the
  * hardware path, so the 240 build is unaffected by construction rather
  * than by testing. */
-static void mapsource_bind_ui(void) {
-#if UI_BG0_WIDTH_TILES > 32
+#if UI_CENTER_DX > 0
+/* A screenblock-shaped UI layer, rebound as a map source so it neither
+ * wraps at 256 px nor needs a wider screenblock. `content_tiles` is how
+ * wide the *authored* content is (32 for anything drawn for a GBA screen);
+ * anything past it renders as backdrop, which is what produces the border.
+ * `centre` shifts the layer so 240-wide content sits centred. */
+static void mapsource_bind_ui_layer(int bg, const u16* buf, int stride, int content_tiles,
+                                    int xofs, int yofs, bool centre) {
     VirtuaPPUMode1MapSource src;
-    /* The UI layer is screen-fixed; the engine scrolls it via BG0's own
-     * offsets, which the map source honours by shifting the origin. */
-    src.map = gBG0Buffer;
-    src.stride = UI_BG0_WIDTH_TILES;
-    src.width_tiles = UI_BG0_WIDTH_TILES;
+    src.map = buf;
+    src.stride = stride;
+    src.width_tiles = content_tiles;
     src.height_tiles = UI_BG0_HEIGHT_TILES;
-    src.origin_x = (int)gScreen.bg0.xOffset;
-    src.origin_y = (int)gScreen.bg0.yOffset;
-    virtuappu_mode1_set_map_source(0, &src);
+    src.origin_x = xofs - (centre ? UI_CENTER_DX : 0);
+    src.origin_y = yofs;
+    virtuappu_mode1_set_map_source(bg, &src);
+}
+
+/* Hardware screen-size bit 0 selects a 64-tile-wide map. */
+static int mapsource_control_stride(u16 control) {
+    return (((control >> 14) & 1) != 0) ? 64 : 32;
+}
+#endif
+
+static void mapsource_bind_ui(void) {
+#if UI_CENTER_DX > 0
+    /* Two different UI regimes share these layers, and D1 treats them
+     * differently:
+     *
+     *  - During gameplay, BG0 carries the edge-anchored HUD, which is
+     *    authored out to the viewport edges (UI_RIGHT_ANCHOR_DX) and must
+     *    NOT be shifted. The text box also lives on BG0 here and centres
+     *    itself per-window instead (message.c).
+     *  - Outside gameplay — title, file select, and every menu subtask —
+     *    BG0/BG1/BG3 carry full-screen content authored for 240 px, which
+     *    is centred as a whole.
+     */
+    bool gameplay = (gMain.task == TASK_GAME && gMain.substate == GAMEMAIN_UPDATE);
+
+    if (gameplay) {
+        mapsource_bind_ui_layer(0, gBG0Buffer, UI_BG0_WIDTH_TILES, UI_BG0_WIDTH_TILES,
+                                (int)gScreen.bg0.xOffset, (int)gScreen.bg0.yOffset, false);
+        return;
+    }
+
+    mapsource_bind_ui_layer(0, gBG0Buffer, UI_BG0_WIDTH_TILES, 32,
+                            (int)gScreen.bg0.xOffset, (int)gScreen.bg0.yOffset, true);
+    /* BG1/BG3 only when they are showing their standard staging buffer;
+     * anything else (a manager pointing them at repurposed data) keeps the
+     * hardware path, same rule as the world layers. */
+    if (gScreen.bg1.subTileMap == &gBG1Buffer) {
+        mapsource_bind_ui_layer(1, gBG1Buffer, mapsource_control_stride(gScreen.bg1.control), 32,
+                                (int)gScreen.bg1.xOffset, (int)gScreen.bg1.yOffset, true);
+    }
+    if (gScreen.bg3.subTileMap == &gBG3Buffer) {
+        mapsource_bind_ui_layer(3, gBG3Buffer, mapsource_control_stride(gScreen.bg3.control), 32,
+                                (int)gScreen.bg3.xOffset, (int)gScreen.bg3.yOffset, true);
+    }
 #endif
 }
 
