@@ -11,8 +11,10 @@ write site is port-owned C, blocker severities are measured, and the
 **axis order is confirmed: width first**. Revised estimates: Milestone 1
 = 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
 open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
-Next: Milestone 1, starting with Spike 3 (map-sampling BG mode in the
-VirtuaPPU fork) — D1 must be decided before Spike 6.
+**Spike 3 is complete**: the map-sampling BG mode is live, bit-identical
+to the hardware path at 240 (0 mismatches in 265M tile fetches), and
+renders real world data at 320. Next: Spike 4 (window registers) — D1
+must be decided before Spike 6.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -717,14 +719,48 @@ chest interactions.
       sampling of the special maps at the camera origin, with per-tile
       persistence tracking (≥30-frame streak = bypass) and a
       self-locating candidate scan for the block/phase convention.
-- [x] **Full canonical route:** 3 459 frames checked, **3 703 200 tile
-      comparisons, zero persistent mismatches.** One single-frame transient
-      (1 023 tiles, frame 11186, festival Hyrule Town entry — a whole-window
-      refresh landing one frame ahead of the VBlank VRAM upload, converged
-      next frame). Rooms covered include Hyrule Field 1008×688, Minish
-      Woods 1008×1008, festival Hyrule Town 400×960, Deepwood, and two
-      `scroll_flags`-bit-1 rooms (bit 1 does **not** degrade the map —
-      confirmed live, as the static read predicted).
+- [x] **Full canonical route** *(result superseded — see the correction
+      box below; the premise holds, but this harness measured it badly)*:
+      3 459 frames checked, 3 703 200 tile comparisons, zero persistent
+      mismatches, one single-frame transient. Rooms covered include Hyrule
+      Field 1008×688, Minish Woods 1008×1008, festival Hyrule Town 400×960,
+      Deepwood, and two `scroll_flags`-bit-1 rooms (bit 1 does **not**
+      degrade the map — confirmed live, as the static read predicted).
+
+> ### ⚠ Correction (2026-07-28, during Spike 3)
+>
+> **This harness was measuring against a skewed reference and its numbers
+> should not be quoted.** Two defects, found when Spike 3's equivalence
+> anchor failed on one waypoint:
+>
+> 1. **Frame skew (the real defect).** The harness indexed the special map
+>    with *live* `gRoomControls`, but compared against VRAM screenblocks
+>    and BG registers that `VBlankIntr` commits *after* rendering — one
+>    frame older. On every frame the camera crossed a tile boundary the
+>    whole window disagreed for reasons that had nothing to do with the
+>    premise.
+> 2. **A gate that hid the evidence.** It skipped frames where
+>    `vofs != (cy&15)+8`, counting 746 "phase-skips" that I wrote off as
+>    transition frames. Those were precisely the frames the skew affected,
+>    so the gate suppressed the symptom that would have exposed defect 1.
+>
+> Re-running with the gate removed and renderer-exact addressing raised
+> mismatches from 1 023 to **60 395 (1.45%)** — still zero *persistent*,
+> and clustered every ~8 frames of camera movement, which identified the
+> skew. **Aligning the binding to the commit point then drove it to zero.**
+>
+> **Corrected measurement** (Spike 3's in-renderer audit, which compares
+> every tile the renderer actually fetches, through the real render path
+> rather than a parallel model): **265 497 600 fetches, 0 mismatches** on
+> the canonical route; 260 889 600 fetches, 512 mismatches on the mutation
+> walk — all 512 being tile mutations where the special map is legitimately
+> one frame *fresher* than the screenblock.
+>
+> The §5 premise is therefore **confirmed more strongly than this spike
+> originally claimed**, and every discrepancy is explained as harness or
+> timing artefact rather than an engine bypass. The lesson is recorded
+> rather than quietly fixed: a verification harness that models the thing
+> it verifies can agree with itself and prove nothing.
 - [x] **Five managers classified** (file:line evidence in source):
       | Manager | Class |
       |---|---|
@@ -846,20 +882,49 @@ from `port_ppu.cpp`. Keep UI layers on the 32×32 path. The mode's API shape
 (compile-time vs runtime viewport) follows D2. Which BGs route through it is
 driven by the Spike 2 predicate — not a heuristic.
 
-**Definition of done:**
-- [ ] At width 240, in every route waypoint Spike 2 classified
-      *map-authoritative*, the map-sampled output is **pixel-identical** to the
-      current screenblock path (diff = 0). This is the correctness anchor — the
-      new path must be a no-op before it is a feature. Waypoints in the
-      exclusion set (file select, pause map, kinstone fusion, …) are exempt
-      *because the predicate must route them to the unchanged 32×32 path* —
-      for those, the check is output identical to Spike 1's build.
-- [ ] The map-authoritative predicate is implemented exactly as specified in
-      Spike 2.
-- [ ] At width 320, world BG renders real tile data in columns 240–319 in a room
-      known to be ≥320 wide, with no stale-VRAM artifacts.
-- [ ] UI layers still render through the 32×32 path, unchanged.
-- [ ] Implemented as commits on the `awe444/VirtuaPPU` fork, not as a patch file.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **Correctness anchor met — and it earned its keep.** At width 240 the
+      map-sampled output is pixel-identical to the screenblock path across
+      **all 11** route waypoints (diff = 0), and the in-renderer audit
+      reports **0 mismatches in 265 497 600 tile fetches**. The anchor
+      initially *failed* on one waypoint (festival Hyrule Town, 12 205 px);
+      chasing that failure exposed the frame-skew defect that also
+      invalidated Spike 2's original numbers (see the correction box under
+      Spike 2). Exclusion-set waypoints pass because the predicate routes
+      them to the unchanged path, as designed.
+- [x] **Predicate implemented as specified** (`port/port_mapsource.c`),
+      with one correction: the layer→BG mapping is **per-room** and must be
+      derived from `MapLayer.bgSettings`, not hardcoded. Verified by the
+      write chain (`UpdateScrollVram` → `gBGxBuffer` →
+      `interrupts.c:210-212` DMA) and by a swap experiment that drove
+      mismatches to 100%.
+- [x] **Binding happens at the engine's commit point**, immediately after
+      `VBlankIntr` in `port_bios.c` — not from the render call. `VBlankIntr`
+      is where the BG buffers are DMA'd to VRAM and the scroll registers
+      written, so binding anywhere else samples a camera one frame newer
+      than the state being rendered against. This is the single most
+      important implementation detail in the spike, and the thing the
+      original Spike 2 harness got wrong in mirror image.
+- [x] **At width 320, real tile data in columns 240–319**: Minish Woods
+      (1008 px wide) rendered at 320 with 22 distinct colours of genuine
+      map content in the new columns and no stale-VRAM artifacts — while
+      columns 0–239 stayed **100% identical** to the 240-wide reference.
+      Built via a temporary `TMC_VIEW_W` hook in `xmake.lua`; **a real
+      build option is Milestone 1 work** (the define must reach the
+      ViruaPPU sources as well as `port/`). Known-broken at 320 and owned
+      by later spikes: window regs (4), camera clamp (5), HUD centering
+      (6 — visible as a duplicated HUD), sprite culling (7).
+- [x] UI layers render through the untouched 32×32 path
+      (`--mapsource-report` shows only `task!=GAME` / `substate!=UPDATE`
+      rejections outside gameplay).
+- [x] Landed as fork commits (`awe444/VirtuaPPU`), not a patch file.
+
+**Tooling note:** `--mapsource-audit` cross-checks every map-sampled fetch
+against the screenblock entry the hardware path would read. It supersedes
+`--mapcheck`'s tile diff, because it measures *through the real render
+path* instead of reimplementing the addressing beside it — which is
+exactly how the original harness fooled itself. Use it as the regression
+gate for Spikes 4–7.
 
 ### Spike 4 — Window register widening (1 day)
 **Method:** Follow sa2's `winreg_t` / `WIN_RANGE` / `WIN_GET_*` pattern. Convert

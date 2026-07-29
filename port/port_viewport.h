@@ -34,8 +34,12 @@ extern "C" {
 
 /* Size of the region the PPU currently renders into the canvas. Grows to
  * PORT_VIEW_WIDTH in Milestone 1, PORT_VIEW_HEIGHT in Milestone 2. */
+#ifndef PORT_VIEW_CONTENT_WIDTH
 #define PORT_VIEW_CONTENT_WIDTH  240
+#endif
+#ifndef PORT_VIEW_CONTENT_HEIGHT
 #define PORT_VIEW_CONTENT_HEIGHT 160
+#endif
 
 /* Where that region lands: centred, so rooms smaller than the viewport
  * get equal borders on both sides (research plan §6 — 78% of rooms are

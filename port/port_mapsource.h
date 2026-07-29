@@ -31,6 +31,10 @@ void Port_MapSource_Update(void);
 /* The predicate. layer: 0 = bottom, 1 = top. */
 bool Port_MapSource_LayerAuthoritative(int layer);
 
+/* BG index (0-3) the given map layer currently displays through, or -1.
+ * Derived from MapLayer.bgSettings — it is per-room, not fixed. */
+int Port_MapSource_LayerBgIndex(int layer);
+
 /* Reason code for the most recent rejection of `layer` (diagnostics; see
  * Port_MapSource_ReasonName). Valid after Port_MapSource_LayerAuthoritative
  * or Port_MapSource_Update. */

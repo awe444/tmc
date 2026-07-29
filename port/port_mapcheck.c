@@ -29,11 +29,16 @@
 #include "vram.h"
 
 #include "port_gba_mem.h"
+#include "port_mapsource.h"
+#include "cpu/mode1.h"
 
 /* game.h's GAMEMAIN_* enum lives next to heavy includes; the two values
  * the predicate needs are stable engine constants. */
 #define MAPCHECK_GAMEMAIN_UPDATE 2  /* GAMEMAIN_UPDATE  (include/game.h) */
 
+#define REG_OFF_BG0CNT 0x08
+#define REG_OFF_BG0HOFS 0x10
+#define REG_OFF_BG0VOFS 0x12
 #define REG_OFF_BG1CNT 0x0A
 #define REG_OFF_BG2CNT 0x0C
 #define REG_OFF_BG1HOFS 0x14
@@ -51,6 +56,9 @@ static uint32_t sFramesMismatched = 0;
 static uint64_t sTilesCompared = 0;
 static uint64_t sTilesMismatched = 0;
 static uint32_t sPhaseMismatchFrames = 0;
+static uint64_t sMismMapEmpty = 0;   /* special map 0, screenblock set */
+static uint64_t sMismHwEmpty = 0;    /* special map set, screenblock 0 */
+static uint64_t sMismBothSet = 0;    /* both set, different */
 
 static const char* const kSkipReason[6] = {
     "task!=GAME", "substate!=UPDATE", "scroll_flags&1",
@@ -217,61 +225,66 @@ static uint16_t io_read16(int off) {
     return (uint16_t)(gIoMem[off] | (gIoMem[off + 1] << 8));
 }
 
-/* Compare one layer; returns mismatches counted (also updates totals). */
+/* Compare one layer; returns mismatches counted (also updates totals).
+ *
+ * Addressing is derived the way the renderer derives it, from the live BG
+ * registers — NOT from a model of what the engine "should" have put in
+ * them. An earlier version assumed hofs == cx & 15 and vofs == (cy&15)+8
+ * and skipped frames that disagreed; since disagreement is exactly the
+ * interesting case, that gate silently excluded the frames most likely to
+ * show a bypass. It is gone.
+ *
+ * Which BG a map layer displays through is per-room, so it comes from
+ * MapLayer.bgSettings via Port_MapSource_LayerBgIndex rather than being
+ * hardcoded. */
 static uint32_t mapcheck_compare_layer(uint32_t frame, int layer) {
-    /* Measured display binding (self-located via the DIAG candidate scan,
-     * 600/600 tile agreement): gMapDataBottomSpecial renders through the
-     * BG2 register set, gMapDataTopSpecial through BG1 — BG1's higher
-     * priority puts the canopy/top layer above the ground layer. NOTE:
-     * this is the opposite of what port_linked_stubs.c's UpdateScrollVram
-     * comment claims; trust the registers, not the comment. */
     const u16* special = (layer == 0) ? gMapDataBottomSpecial : gMapDataTopSpecial;
-    uint16_t cnt = io_read16(layer == 0 ? REG_OFF_BG2CNT : REG_OFF_BG1CNT);
-    uint16_t hofs = io_read16(layer == 0 ? REG_OFF_BG2HOFS : REG_OFF_BG1HOFS) & 0x1FF;
-    uint16_t vofs = io_read16(layer == 0 ? REG_OFF_BG2VOFS : REG_OFF_BG1VOFS) & 0x1FF;
+    int bg = Port_MapSource_LayerBgIndex(layer);
+    if (bg < 0) {
+        return 0;
+    }
+    uint16_t cnt = io_read16(REG_OFF_BG0CNT + bg * 2);
+    uint16_t hofs = io_read16(REG_OFF_BG0HOFS + bg * 4) & 0x1FF;
+    uint16_t vofs = io_read16(REG_OFF_BG0VOFS + bg * 4) & 0x1FF;
     const uint16_t* block = (const uint16_t*)(gVram + (((cnt >> 8) & 0x1F) * 0x800u));
+    uint16_t size_flag = (uint16_t)((cnt >> 14) & 3);
+    int map_w = (size_flag & 1) ? 64 : 32;
+    int map_h = (size_flag & 2) ? 64 : 32;
 
     int cx = (int)(gRoomControls.scroll_x - gRoomControls.origin_x);
     int cy = (int)(gRoomControls.scroll_y - gRoomControls.origin_y);
+    int roomTilesW = gRoomControls.width >> 3;
+    int roomTilesH = gRoomControls.height >> 3;
     if (cx < 0 || cy < 0) {
         return 0;
     }
 
-    /* The BG window is a *sliding* buffer, not a wrapping one: the
-     * incremental streamers memmove content and the engine keeps
-     * hofs = cx & 15 and vofs = (cy & 15) + 8 (a constant one-tile
-     * vertical bias). Screen tile (sx,sy) is therefore at buffer cell
-     * ((vofs>>3)+sy, (hofs>>3)+sx) with no wrap. Gate on the fine-scroll
-     * bits agreeing so transition frames don't produce garbage counts. */
-    if (((hofs ^ (uint32_t)cx) & 7) != 0 || ((vofs ^ (uint32_t)cy) & 7) != 0) {
-        sPhaseMismatchFrames++;
-        return 0;
-    }
-
-    int roomTilesW = gRoomControls.width >> 3;
-    int roomTilesH = gRoomControls.height >> 3;
-    int tx0 = cx >> 3;
-    int ty0 = cy >> 3;
-
+    /* Walk every tile the renderer touches, including the partial tiles at
+     * the right/bottom edges that a 30x20 loop misses. */
     uint32_t mism = 0;
-    for (int sy = 0; sy < 20; sy++) {
-        int my = ty0 + sy;
-        if (my >= roomTilesH || my >= 128) {
-            break;
-        }
-        int vrow = ((vofs >> 3) + sy) & 0x1F;
-        for (int sx = 0; sx < 30; sx++) {
-            int mx = tx0 + sx;
-            if (mx >= roomTilesW || mx >= 128) {
-                break;
+    for (int line = 0; line < MODE1_GBA_HEIGHT; line += 8) {
+        for (int x = 0; x < MODE1_GBA_WIDTH; x += 8) {
+            int my = (cy + line) >> 3;
+            int mx = (cx + x) >> 3;
+            if (my >= roomTilesH || mx >= roomTilesW || my >= 128 || mx >= 128) {
+                continue;
             }
-            int vcol = ((hofs >> 3) + sx) & 0x1F;
+            int r = ((line + vofs) % (map_h * 8)) / 8;
+            int c = ((x + hofs) % (map_w * 8)) / 8;
+            int bi = (c / 32) + (r / 32) * (map_w / 32);
             uint16_t expect = special[my * 0x80 + mx];
-            uint16_t actual = block[vrow * 32 + vcol];
+            uint16_t actual = block[bi * 1024 + (r % 32) * 32 + (c % 32)];
             sTilesCompared++;
             if (expect != actual) {
                 mism++;
                 sTilesMismatched++;
+                if (expect == 0 && actual != 0) {
+                    sMismMapEmpty++;
+                } else if (expect != 0 && actual == 0) {
+                    sMismHwEmpty++;
+                } else {
+                    sMismBothSet++;
+                }
                 streak_note(frame, layer, mx, my, expect, actual);
             }
         }
@@ -390,6 +403,11 @@ void Port_MapCheck_Report(void) {
             sFramesSeen, sFramesChecked, sFramesMismatched,
             (unsigned long long)sTilesCompared, (unsigned long long)sTilesMismatched,
             sPersistentReported, sPhaseMismatchFrames);
+    fprintf(stderr,
+            "[mapcheck] mismatch classes: map-empty/hw-set=%llu map-set/hw-empty=%llu "
+            "both-set-differ=%llu\n",
+            (unsigned long long)sMismMapEmpty, (unsigned long long)sMismHwEmpty,
+            (unsigned long long)sMismBothSet);
     fprintf(stderr,
             "[mapcheck] tile mutations: SetTileType=%u SetTileByIndex=%u "
             "RestorePrevTileEntity=%u\n",

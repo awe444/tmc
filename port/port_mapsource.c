@@ -273,3 +273,8 @@ void Port_MapSource_AuditReport(void) {
     fprintf(stderr, "[mapsrc-audit] fetches=%lu mismatched=%lu\n",
             mode1_map_source_audit_total, mode1_map_source_audit_bad);
 }
+
+int Port_MapSource_LayerBgIndex(int layer) {
+    const BgSettings* s = ((layer & 1) == 0) ? gMapBottom.bgSettings : gMapTop.bgSettings;
+    return (s == NULL) ? -1 : mapsource_bg_index(s);
+}

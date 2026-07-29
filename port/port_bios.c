@@ -3,6 +3,7 @@
 #include "port_audio.h"
 #include "port_asset_loader.h"
 #include "port_capture.h"
+#include "port_mapsource.h"
 #include "port_gba_mem.h"
 #include "port_hdma.h"
 #include "port_ppu.h"
@@ -296,6 +297,19 @@ void VBlankIntrWait(void) {
     Port_UpdateInput();
 
     VBlankIntr();
+
+    /* Option E: bind the engine's full-room special maps to the world BG
+     * layers (port_mapsource.c). This must run *here*, immediately after
+     * VBlankIntr commits the engine's BG state — the DMA of gBGxBuffer
+     * into VRAM and the scroll-register writes both happen inside
+     * VBlankIntr, while rendering happens at the top of the next
+     * VBlankIntrWait. Binding from Port_PPU_PresentFrame instead would
+     * sample gRoomControls a frame newer than the screenblock and
+     * registers being rendered against, which shows up as the whole
+     * window disagreeing on every frame the camera crosses a tile
+     * boundary. */
+    Port_MapSource_Update();
+
     sPrevVBlankReturnNs = SDL_GetTicksNS();
 }
 
