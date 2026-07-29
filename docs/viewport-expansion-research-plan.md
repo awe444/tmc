@@ -4,10 +4,12 @@
 closed. **The gate is passed: Option E is confirmed** — 7.6M runtime tile
 comparisons across two instrumented runs, zero persistent mismatches, all
 exclusions caught by the predicate (Spike 2 DoD, §10). The 320×240 canvas
-(Option B) is in as the shippable fallback. **D1 (HUD placement) is the
-only open decision**; mockups ready in
-`tools/capture/references/hud-mockups/`. Next: Spikes 2A/2B (static
-probes confirming the axis order), then Milestone 1.
+(Option B) is in as the shippable fallback. Spike 2A is also complete
+(`docs/spike2a-width-probe.md`): the width column held, the OAM write
+site turned out to be port-owned C, and Milestone 1 re-estimated down to
+10–13 days. **D1 (HUD placement) is the only open decision**; mockups
+ready in `tools/capture/references/hud-mockups/`. Next: Spike 2B (the
+height-side measurements, confirming axis order), then Milestone 1.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -772,14 +774,28 @@ against a 320×160 target and confirm or refute the §8.1 matrix row by row.
 Then two inventories moved here from later spikes because they are static
 work and their answers gate estimates:
 
-**Definition of done:**
-- [ ] Every cell in the §8.1 width column confirmed or corrected against source,
-      each with a file:line citation.
-- [ ] Any constraint discovered that §8.1 missed is added to the matrix.
-- [ ] **The per-entity OAM coordinate write site (open question 2) is located
-      and documented** — including whether it lives in C or unported `asm/`.
-      Spike 7 and Spike 8 estimates are revisited against the answer; if it is
-      in `asm/`, their estimates are floors, re-estimated before starting.
+**Definition of done:** *(completed 2026-07-28 — full report:
+`docs/spike2a-width-probe.md`)*
+- [x] Every §8.1 width cell confirmed/corrected with file:line citations.
+      One margin note corrected: the streamed window is *sliding*, not
+      wrapping (16 px horizontal slack) — moot under Option E.
+- [x] One missed constraint added: `playerUtils.c:4401-4403` room-entry
+      camera init (`scroll_x = width - 0x78 - 0x78`) joins Spike 5's list.
+- [x] **OAM write site found — port-owned C, not `asm/`:**
+      `RenderSpritePieces` (`port_draw.c:292-406`); entity→screen at
+      `port_draw.c:514,519`. Culling is two port literals (`y>=160`,
+      `x>=240`); the 8-bit-Y truncation is one pack site we own. Parking
+      convention documented: unused entries get attr0 `0x2A0` =
+      **OBJ-disable + y=160** — parked sprites cannot leak into widened
+      columns, and the §2.2 patch header's "parked at x≥240" claim is
+      wrong. **Spike 7 revised 2–3 d → 1.5–2 d (not a floor); Spike 8
+      shrinks to a native widening — sa2's EXTENDED_OAM is reference
+      only, its "not yet functional" TODO no longer matters.**
+- [x] `scroll_x/scroll_y` consumer inventory: 165 refs / 50 files;
+      **16 sites bake viewport literals** and are Spike 5/7's real blast
+      radius (list in the report).
+- [x] Width-only effort re-estimated: **Milestone 1 = 10–13 days**
+      (was 11–15), basis per-spike in the report.
 - [ ] **Inventory of every consumer of `gRoomControls.scroll_x`/`scroll_y`
       outside `scroll.c`/`script.c`** (spawn, cull, trigger logic), so Spike 5
       knows its blast radius before editing rather than after.
@@ -1033,6 +1049,7 @@ where the dominant risk is a late discovery that the premise was wrong.
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
 | ~~Special-map premise fails beyond the known §5.1 exclusions~~ | ~~Option E dead; effort ~3×~~ | **Closed 2026-07-28** | Spike 2 ran: 7.6M tile comparisons, zero persistent mismatches; verdict recorded (§10 Spike 2) |
+| ~~Per-entity OAM write site lives in unported `asm/`~~ | ~~Spike 7/8 estimates blow up~~ | **Closed 2026-07-28** | Spike 2A: it is port-owned C (`port_draw.c:292-406`); estimates revised *down* (`docs/spike2a-width-probe.md` §2) |
 | Special maps repurposed during non-gameplay scenes (§5.1) | PPU samples garbage in file select, pause map, kinstone fusion, Gyorg fight | Certain (known) | Map-authoritative predicate: spec'd in Spike 2, implemented in Spike 3; excluded scenes stay on the 32×32 path |
 | Pixel-diff DoDs run without deterministic capture | Verification silently degrades to eyeballing | High if Spike 0 tooling is skipped | Route manifest + warp/dump/diff tooling are named Spike 0 deliverables, not assumed substrate |
 | Per-entity OAM write site lives in unported `asm/` | Spike 7/8 estimates blow up | Medium | Located in Spike 2A, before either spike starts |
