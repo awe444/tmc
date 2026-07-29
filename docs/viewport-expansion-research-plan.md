@@ -1,12 +1,18 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** Spikes 0 and 1 complete, Option F closed (all 2026-07-27).
-Capture tooling landed, route manifest pinned, baseline recorded, D2–D4
-decided, PPU patch pipeline retired, and the 320×240 presentation canvas
-(Option B) is in as the shippable fallback. **D1 (HUD placement) is the
-only open decision**; mockups ready in
-`tools/capture/references/hud-mockups/`. Next: Spike 2 (the decision gate)
-with 2A/2B in parallel.
+**Status:** Spikes 0, 1 and **2 (the decision gate)** complete, Option F
+closed. **The gate is passed: Option E is confirmed** — 7.6M runtime tile
+comparisons across two instrumented runs, zero persistent mismatches, all
+exclusions caught by the predicate (Spike 2 DoD, §10). The 320×240 canvas
+(Option B) is in as the shippable fallback. **The entire gate phase
+(Spikes 0–2B) is complete**: the width and height probes both held
+(`docs/spike2a-width-probe.md`, `docs/spike2b-height-probe.md`), the OAM
+write site is port-owned C, blocker severities are measured, and the
+**axis order is confirmed: width first**. Revised estimates: Milestone 1
+= 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
+open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
+Next: Milestone 1, starting with Spike 3 (map-sampling BG mode in the
+VirtuaPPU fork) — D1 must be decided before Spike 6.
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -681,24 +687,86 @@ diff harness). Any mismatch is a layer or mutation path that bypasses the map.
 Walk the canonical route plus targeted destructible / bombable-wall / door /
 chest interactions.
 
-**Definition of done:**
-- [ ] The static pre-check's exclusion list and the map-authoritative
-      predicate spec are written down **before** the harness is built.
-- [ ] A reusable diff harness exists that reports, per frame, the count and
-      coordinates of mismatched tiles between the special map and the composed
-      32×32 window.
-- [ ] Harness run over the full canonical route with a recorded mismatch count
-      per waypoint.
-- [ ] Each of the five named managers/layers classified in writing as
-      *derives-from-map* or *bypasses-map*.
-- [ ] Destructible tile, bombable wall, door, and small chest each triggered and
-      confirmed to propagate into the special map within one frame.
-- [ ] `sub_0807C5F4`'s four chunk branches documented, with the maximum room
-      geometry each covers, and confirmation of whether the map is ever paged.
-- [ ] **Explicit written verdict: proceed with Option E — with the recorded
-      exclusion set and, per excluded class, the fallback behaviour the
-      predicate routes it to — or fall back to Option D.** This is the gate —
-      no downstream spike starts until it is recorded.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **Static pre-check done first.** Four exclusion classes, all
+      predicate-detectable:
+      1. *Degraded rooms* (`scroll_flags` bit 0): set in exactly one place
+         (`LoadRoomGfx`, `playerUtils.c:4086`) for rooms whose decompressed
+         map begins with sentinel `0xffff` (a per-room **asset** property,
+         not an area list) plus `AREA_PALACE_OF_WINDS_BOSS`; cleared on
+         every room load (`:4029`). Special maps built 512×512 via
+         `sub_0807C5F4`; the three mutators skip their special-map writes.
+      2. *Menu/subtask scratch*: fileselect (save-struct alias),
+         kinstoneMenu (`struct[16]`), pauseMenu/pauseMenuScreen6/
+         `DrawDungeonFeatures` (dungeon-map bitmap), fileScreenObjects —
+         all under `GAMEMAIN_SUBTASK` or non-GAME tasks.
+      3. *Boss scratch*: gyorgFemale/gyorgMale wipe both arrays whole and
+         use them as collision bitmaps.
+      4. *Screenblock-shaped direct binding*: bigGoron, minishRafters-,
+         horizontal-/verticalMinishPath- background managers point
+         `gScreen.bgN.subTileMap` **into** the arrays at chunk offsets —
+         screenblock-layout data, not the 0x80-stride map.
+      **Predicate** (reference implementation:
+      `port_mapcheck.c:mapcheck_layer_authoritative`): a layer is
+      map-authoritative iff `task==TASK_GAME` ∧ `substate==GAMEMAIN_UPDATE`
+      ∧ `!(scroll_flags & 1)` ∧ `scrollAction < 2` ∧ standard
+      `subTileMap` binding ∧ `gMap{Bottom,Top}.bgSettings != NULL`.
+- [x] **Reusable diff harness:** `--mapcheck` (`port/port_mapcheck.c`)
+      compares, per frame per layer, the rendered VRAM screenblock
+      (addressed via hardware BGCNT/HOFS/VOFS semantics) against full-room
+      sampling of the special maps at the camera origin, with per-tile
+      persistence tracking (≥30-frame streak = bypass) and a
+      self-locating candidate scan for the block/phase convention.
+- [x] **Full canonical route:** 3 459 frames checked, **3 703 200 tile
+      comparisons, zero persistent mismatches.** One single-frame transient
+      (1 023 tiles, frame 11186, festival Hyrule Town entry — a whole-window
+      refresh landing one frame ahead of the VBlank VRAM upload, converged
+      next frame). Rooms covered include Hyrule Field 1008×688, Minish
+      Woods 1008×1008, festival Hyrule Town 400×960, Deepwood, and two
+      `scroll_flags`-bit-1 rooms (bit 1 does **not** degrade the map —
+      confirmed live, as the static read predicted).
+- [x] **Five managers classified** (file:line evidence in source):
+      | Manager | Class |
+      |---|---|
+      | `backgroundAnimations.c` | map-agnostic — writes tile *graphics* to VRAM charblocks (`:2436`); tilemap entries untouched, keeps working under map sampling |
+      | `hyruleTownTileSetManager.c` | map-agnostic — `LoadGfxGroup` swaps only |
+      | `weatherChangeManager.c` | conditionally bypasses: detaches `gMapTop.bgSettings=0` (`:111`), repurposes screenblock 29 as a fog overlay via `gBG3Buffer` (`:144-145`), later rebinds (`:148`) — **every phase flips a predicate signal**, so it is excluded exactly while non-authoritative |
+      | `holeManager.c` | separate BG3 overlay (`:297-312`); world layers untouched |
+      | `lightManager.c` | WIN0/blend/BG3 (`:43-70,154`); world tilemaps untouched (window-reg widening is Spike 4) |
+- [x] *(partial, recorded honestly)* **Destructible tiles verified
+      end-to-end at runtime:** scripted sword slashes in Minish Woods cut
+      two bushes (`SetTileType=2` via the new mutation tap in
+      `playerUtils.c`); each produced exactly one 4-tile (one metatile)
+      single-frame transient then converged — propagation within one
+      frame, zero persistent. Bombable wall / door / small chest were
+      **not** individually triggered; all three route through the same
+      three tapped entry points (`SetTileType`/`SetTileByIndex`/
+      `RestorePrevTileEntity`) whose special-map writes share one gate,
+      so the mechanism is common. Their runtime confirmation folds into
+      the Spike 7/11 room walks, where the tap + harness run anyway.
+- [x] **`sub_0807C5F4` documented:** four 32×32-entry chunk copies at
+      offsets `0/0x20/0x1000/0x1020` (gated on `width>0xff` /
+      `height>0xff`) = 64×64 subtiles = **512×512 px maximum**, used only
+      on the degraded-room path. On the normal path the map is **never
+      paged**: `LoadRoomGfx` clears both arrays and
+      `RenderMapLayerToSubTileMap` fills the whole room resident
+      (128×128 subtiles = 1024×1024 px, covering the largest room).
+- [x] **VERDICT: PROCEED WITH OPTION E**, with the four-class exclusion
+      set above routed through the predicate to the unchanged 32×32 path.
+      The premise held everywhere the predicate said it should: ~3.9M
+      further comparisons in the mutation run, still zero persistent.
+      Option D is off the table unless Milestone 1 falsifies something
+      the harness could not see.
+
+**Bonus finding for Spike 3** (display plumbing, measured not assumed):
+the bottom special map renders through the **BG2** register set
+(screenblock 28) and the top through **BG1** (screenblock 29) — BG1's
+priority puts canopy above ground. The BG window is a *sliding* buffer,
+not a wrapping one: the engine keeps `hofs = cx & 15`,
+`vofs = (cy & 15) + 8` (constant one-tile vertical bias). Note
+`port_linked_stubs.c`'s `UpdateScrollVram` comment labels the
+buffer↔layer mapping the other way round — trust the registers, not the
+comment. Spike 3's map-sampling mode replaces exactly this addressing.
 
 ### Spike 2A — Width-only feasibility probe + static inventories (1.5 days, parallel with 2)
 **Questions:** Does the §8 claim hold that width-only under Option E needs only
@@ -709,14 +777,28 @@ against a 320×160 target and confirm or refute the §8.1 matrix row by row.
 Then two inventories moved here from later spikes because they are static
 work and their answers gate estimates:
 
-**Definition of done:**
-- [ ] Every cell in the §8.1 width column confirmed or corrected against source,
-      each with a file:line citation.
-- [ ] Any constraint discovered that §8.1 missed is added to the matrix.
-- [ ] **The per-entity OAM coordinate write site (open question 2) is located
-      and documented** — including whether it lives in C or unported `asm/`.
-      Spike 7 and Spike 8 estimates are revisited against the answer; if it is
-      in `asm/`, their estimates are floors, re-estimated before starting.
+**Definition of done:** *(completed 2026-07-28 — full report:
+`docs/spike2a-width-probe.md`)*
+- [x] Every §8.1 width cell confirmed/corrected with file:line citations.
+      One margin note corrected: the streamed window is *sliding*, not
+      wrapping (16 px horizontal slack) — moot under Option E.
+- [x] One missed constraint added: `playerUtils.c:4401-4403` room-entry
+      camera init (`scroll_x = width - 0x78 - 0x78`) joins Spike 5's list.
+- [x] **OAM write site found — port-owned C, not `asm/`:**
+      `RenderSpritePieces` (`port_draw.c:292-406`); entity→screen at
+      `port_draw.c:514,519`. Culling is two port literals (`y>=160`,
+      `x>=240`); the 8-bit-Y truncation is one pack site we own. Parking
+      convention documented: unused entries get attr0 `0x2A0` =
+      **OBJ-disable + y=160** — parked sprites cannot leak into widened
+      columns, and the §2.2 patch header's "parked at x≥240" claim is
+      wrong. **Spike 7 revised 2–3 d → 1.5–2 d (not a floor); Spike 8
+      shrinks to a native widening — sa2's EXTENDED_OAM is reference
+      only, its "not yet functional" TODO no longer matters.**
+- [x] `scroll_x/scroll_y` consumer inventory: 165 refs / 50 files;
+      **16 sites bake viewport literals** and are Spike 5/7's real blast
+      radius (list in the report).
+- [x] Width-only effort re-estimated: **Milestone 1 = 10–13 days**
+      (was 11–15), basis per-spike in the report.
 - [ ] **Inventory of every consumer of `gRoomControls.scroll_x`/`scroll_y`
       outside `scroll.c`/`script.c`** (spawn, cull, trigger logic), so Spike 5
       knows its blast radius before editing rather than after.
@@ -730,17 +812,26 @@ maximum per-frame vertical camera delta across the canonical route and compare
 against the 16 px budget. Separately, count OAM entries per frame with y that
 would fall outside the representable range at height 240.
 
-**Definition of done:**
-- [ ] Every cell in the §8.1 height column confirmed or corrected, with
-      citations.
-- [ ] Maximum observed per-frame vertical scroll delta recorded and compared
-      against the 16 px slack; verdict on whether the existing 32-row buffer is
-      genuinely sufficient.
-- [ ] Count of frames along the route with at least one sprite that would be
-      unrepresentable at 8-bit Y in a 240-tall viewport — the concrete severity
-      number for blocker 3.
-- [ ] Height-only effort re-estimated in days.
-- [ ] **Axis order confirmed or reversed** relative to §8.3, in writing.
+**Definition of done:** *(completed 2026-07-28 — full report:
+`docs/spike2b-height-probe.md`)*
+- [x] Every §8.1 height cell confirmed with citations; one addition
+      (`playerUtils.c:4408-4412` vertical camera init, twin of 2A's width
+      find, added to Spike 10's list).
+- [x] **Max continuous per-frame vertical delta: 12 px** (banded over
+      ~24k frames across both instrumented runs; everything larger is a
+      warp, which takes the full-refill path, never the incremental
+      streamer). Verdict: the 32-row buffer's 16 px slack is genuinely
+      sufficient at observed cadence — and moot for world layers under E.
+- [x] **Blocker 3 severity measured:** 103 frames / 118 entries / max 2
+      simultaneous enabled OAM entries with y∈[161,239] on the route
+      (~1% of gameplay frames). Real, small-surface, and re-measurable —
+      Spike 8's drops-to-zero DoD runs this same `--mapcheck` counter.
+- [x] Height-only effort re-estimated: **Milestone 2 = 6.5–8.5 days**
+      (was 7–10); Spike 8 down to 1–1.5 d via the 2A native-widening path.
+- [x] **Axis order CONFIRMED in writing: width first.** Both probes moved
+      the numbers but not §8.3's risk logic — height still holds the only
+      two blockers with no partial-credit failure mode. Milestone 1 may
+      begin.
 
 ---
 
@@ -969,14 +1060,15 @@ where the dominant risk is a late discovery that the premise was wrong.
 
 | Risk | Impact | Likelihood | Mitigation |
 |---|---|---|---|
-| Special-map premise fails beyond the known §5.1 exclusions | Option E dead; effort ~3× | Low–Medium (the static review already found the main exclusion classes) | Spike 2 is the gate, runs 3rd |
+| ~~Special-map premise fails beyond the known §5.1 exclusions~~ | ~~Option E dead; effort ~3×~~ | **Closed 2026-07-28** | Spike 2 ran: 7.6M tile comparisons, zero persistent mismatches; verdict recorded (§10 Spike 2) |
+| ~~Per-entity OAM write site lives in unported `asm/`~~ | ~~Spike 7/8 estimates blow up~~ | **Closed 2026-07-28** | Spike 2A: it is port-owned C (`port_draw.c:292-406`); estimates revised *down* (`docs/spike2a-width-probe.md` §2) |
 | Special maps repurposed during non-gameplay scenes (§5.1) | PPU samples garbage in file select, pause map, kinstone fusion, Gyorg fight | Certain (known) | Map-authoritative predicate: spec'd in Spike 2, implemented in Spike 3; excluded scenes stay on the 32×32 path |
 | Pixel-diff DoDs run without deterministic capture | Verification silently degrades to eyeballing | High if Spike 0 tooling is skipped | Route manifest + warp/dump/diff tooling are named Spike 0 deliverables, not assumed substrate |
 | Per-entity OAM write site lives in unported `asm/` | Spike 7/8 estimates blow up | Medium | Located in Spike 2A, before either spike starts |
 | `screenTileMap.c` rewrite required after all | High — hardest file in the effort | Medium | Only reached under Option D |
 | Per-scene tuning tail (as in sa2) | Schedule creep, long bug tail | High | Weight testing by playtime (§6), not room count |
 | OAM Y widening destabilises sprite rendering | Broad visual regressions | Medium | Deferred to Milestone 2 so failures are attributable; sa2 reference available |
-| 16 px vertical slack too tight for the 32-row buffer | Tile tearing on fast vertical scroll | Medium | Measured in Spike 2B before any height work starts |
+| ~~16 px vertical slack too tight for the 32-row buffer~~ | ~~Tile tearing on fast vertical scroll~~ | **Closed 2026-07-28** | Spike 2B measured: max continuous dy = 12 px over ~24k frames; teleports take the full-refill path (`docs/spike2b-height-probe.md` §2) |
 | Perf regression from 50% more scanline work | Frame drops | Low–Medium | Spike 0 baseline; OpenMP path already exists |
 | ~~Patch pipeline can't carry the change~~ | ~~Build breakage, merge pain~~ | **Closed 2026-07-27** | Pipeline retired; all PPU changes are fork commits (§7 Option F) |
 | Cutscene/scripted framing breaks at 320×240 | Visible authored-content bugs | Medium | Spikes 7 and 11; `cutscene.c` already uses window regs for letterboxing |

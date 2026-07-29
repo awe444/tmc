@@ -3433,6 +3433,16 @@ void sub_0807B2F8(PlayerEntity* this) {
 // tileType < 0x800   : set the TileType
 // tileType >= 0x4000 : call SetTile directly
 // else               : restore the previous tile entity
+#ifdef PC_PORT
+/* Spike 2 mutation tap (port_mapcheck.c): counts runtime tile mutations by
+ * entry point so harness runs can prove mutations actually occurred.
+ * [0]=SetTileType [1]=SetTileByIndex [2]=RestorePrevTileEntity */
+u32 gPort_TileMutationCount[3];
+#define PORT_TILE_MUTATION_TAP(i) (gPort_TileMutationCount[i]++)
+#else
+#define PORT_TILE_MUTATION_TAP(i)
+#endif
+
 void SetTileType(u32 tileType, u32 tilePos, u32 layer) {
     u8 collisionData;
     u16 tileIndex;
@@ -3441,6 +3451,7 @@ void SetTileType(u32 tileType, u32 tilePos, u32 layer) {
     u16* dest;
 
     if (tileType < 0x800) {
+        PORT_TILE_MUTATION_TAP(0);
         UnregisterInteractTile(tilePos, layer);
         mapLayer = GetLayerByIndex(layer);
         tileIndex = mapLayer->tileIndices[tileType];
@@ -3660,6 +3671,7 @@ void SetTileByIndex(u32 tileIndex, u32 tilePos, u32 layer) {
     u16* dest;
     u16 tileType;
 
+    PORT_TILE_MUTATION_TAP(1);
     UnregisterInteractTile(tilePos, layer);
     mapLayer = GetLayerByIndex(layer);
     mapLayer->mapData[tilePos] = tileIndex;
@@ -3691,6 +3703,7 @@ void RestorePrevTileEntity(u32 tilePos, u32 layer) {
     u16* dest;
     u16* subTiles;
 
+    PORT_TILE_MUTATION_TAP(2);
     UnregisterInteractTile(tilePos, layer);
     mapLayer = GetLayerByIndex(layer);
     mapLayer->mapData[tilePos] = tileIndex = mapLayer->mapDataOriginal[tilePos];

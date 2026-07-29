@@ -31,6 +31,7 @@ python3 tools/capture/diff_captures.py \
 | `--exit-frame=N` | hard-quit after N frames (safety net) |
 | `--uncapped` | disable frame pacing + vsync (fast headless runs) |
 | `--capture-canvas` | dump the composed 320×240 presentation canvas (borders included) instead of raw 240×160 PPU output |
+| `--mapcheck` | Spike 2 harness: per-frame diff of rendered BG tiles vs `gMapData*Special` full-room sampling, with persistence tracking (`port/port_mapcheck.c`) |
 
 Combine with `SDL_VIDEODRIVER=dummy` for headless capture. Frames are dumped
 from `virtuappu_frame_buffer` (pre-upscale, pre-filter), so captures are
