@@ -21,6 +21,7 @@ exit criteria but not the shipping build, which is still GBA-native.
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
 | B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320, pixel-exact vs 240) |
 | B9 | Legend card artwork dimmed right of a vertical seam | **Fixed** (verified 320, pixel-exact vs 240) |
+| B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
 
 ---
 
@@ -254,6 +255,52 @@ thing that must be moved and were not. Every remaining `WIN_RANGE` call site
 with a literal coordinate is worth auditing against this — see the note under
 carry-forward items.
 
+## B10 — BG3 gameplay overlays clipped and misaligned *(fixed)*
+
+Found by sweeping the carry-forward item "BG3 overlays were never swept for
+wrap past 256 px". **Wrap was not the defect.** BG3 never had a map source,
+so the "no map source ⇒ clip" rule caught it every time it was on — which
+both removed the overlay from the border columns and, because the clip also
+shifts by `UI_CENTER_DX`, moved it 40 px.
+
+**Two families, and the shift is wrong for one of them.**
+
+- *World-locked* overlays set `bg3.xOffset = scroll_x + k` (`holeManager.c:299`,
+  `powBackgroundManager.c:32`). At a wider viewport `scroll_x` is already 40 px
+  further left, so the layer aligns with the world on its own. The clip's extra
+  +40 broke that — **visible in the middle of the screen, not just the borders**.
+- *Screen-fixed* overlays sit at `ofs=(0,0)` (the Minish Woods light rays).
+  Unclipped they render at their natural phase across all 320 columns.
+
+**Fix.** BG3 is not clipped during a world view. On a UI screen it *is*
+authored content and still takes the clip.
+
+**Evidence.** The route's `field` and `textbox` waypoints were 7559 and 6123
+mismatched pixels against Spike 0 through the centre 240 columns; both are now
+**0**. A warp-tour probe of `SouthHyruleField` went 6197 → **0**. I had
+previously written those differences off as camera clamping — they were this.
+UI waypoints (cutscene, fileselect, pause, figurine) stay at 0 with solid
+borders. 240 unaffected: 11/11 and 0/265,497,600.
+
+`lightray` moved the other way, 29453 → 31673, and that is expected rather
+than a regression: it is the screen-fixed family, so unclipping changes the
+*phase* of a repeating diagonal pattern by 40 px while still covering the
+viewport. There is no ground truth for a decorative full-screen overlay on a
+wider screen, and no wrap seam appears — **0 wrap-period columns in every
+gameplay waypoint**.
+
+**How to find these:** `TMC_BG3_TRACE=1` logs every BG3 on/off transition with
+the room, control word, offsets and whether the clip caught it. BG3 is off in
+ordinary rooms, which is why none of the existing scripts ever exercised it —
+reaching it needs the warp tour built from `data/map/entity_headers.s`
+(`manager subtype=` 0x10 weather, 0x14 steam, 0x18 cloud, 0x19 pow, 0x1A hole,
+0x1C rain, 0x22 light, 0x23 light-level).
+
+**Unrelated crash noticed while sweeping:** the generated warp tour segfaults
+after ~16 rooms **at both 240 and 320**, so it is not a widening bug. It warps
+to arbitrary rooms at fixed coordinates (0x1E0, 0x1E0) that are out of bounds
+for interiors. Not chased.
+
 ---
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
@@ -409,8 +456,8 @@ Recorded here so they are not lost with the plan's spike sections:
   behaviour, and the header states that widening a site's coordinate range is
   a per-site decision for the spike that needs it. Each needs its scene
   reproduced before it is touched. The light door is the cheapest to reach.
-- **BG3 gameplay overlays** (hole, light, weather) are screen-fixed and were
-  never swept for wrap past 256 px.
+- ~~**BG3 gameplay overlays** were never swept for wrap past 256 px.~~
+  **Swept — see B10.** Wrap was not the defect; the centring clip was.
 - **Milestone 1 frame time at 320** is unmeasured. Baseline for comparison is
   the Spike 1 canvas build (present 6.48 ms mean), *not* the Spike 0 240
   baseline — the canvas cost is paid once and should not be charged twice.

@@ -326,6 +326,26 @@ static void mapsource_bind_ui(void) {
     clip.content_width = DISPLAY_WIDTH;
     sClippedBgMask = 0;
     for (bg = 0; bg < 4; bg++) {
+        /* BG3 during a world view is a *gameplay overlay* — hole parallax,
+         * cloud shadows, light/dark, weather, steam, POW — not a 240-authored
+         * surface. Two things go wrong if the rule catches it.
+         *
+         * It loses the overlay in the border columns, and, worse, the clip
+         * also shifts the layer by UI_CENTER_DX. Most of these overlays are
+         * world-locked (bg3.xOffset = scroll_x + k, e.g. holeManager.c:299,
+         * powBackgroundManager.c:32), and at a wider viewport scroll_x is
+         * already 40px further left, so the layer aligns with the world by
+         * itself. Adding the shift on top misaligns it — visible in the
+         * middle of the screen, not just the borders.
+         *
+         * Leaving it unclipped lets it wrap its 32-tile screenblock past
+         * 256px, which for these tiled patterns is exactly what covers the
+         * viewport: measured pixel-identical to the 240 build through the
+         * centre 240 columns, where clipping it differed by 6197 px. On a UI
+         * screen BG3 *is* authored content and still takes the clip. */
+        if (bg == 3 && !ui_screen) {
+            continue;
+        }
         if (!virtuappu_mode1_has_map_source(bg)) {
             virtuappu_mode1_set_bg_clip(bg, &clip);
             sClippedBgMask |= 1 << bg;
@@ -391,6 +411,45 @@ static void mapsource_trace_layers(void) {
             gRoomControls.area, gRoomControls.room, mapsrc, sClippedBgMask,
             gScreen.lcd.displayControl, gScreen.bg0.control, gScreen.bg1.control,
             gScreen.bg2.control, gScreen.bg3.control);
+}
+
+/* TMC_BG3_TRACE=1: log every time BG3 is switched on or off during gameplay.
+ *
+ * BG3 carries the screen-fixed gameplay overlays (hole parallax, light/dark,
+ * weather, steam, POW). It is off in ordinary rooms, and it never has a map
+ * source — so the "no map source ⇒ clip" rule always catches it, which is
+ * fine while it is off and is exactly what needs checking when it is not.
+ * This is the sweep hook for that (docs/viewport-bug-tracker.md). */
+static void mapsource_trace_bg3(void) {
+    static int en = -1;
+    static int lastOn = -1;
+    static u8 lastArea = 0xFF, lastRoom = 0xFF;
+    static unsigned frame = 0, onFrames = 0;
+    int on;
+    if (en < 0) en = (getenv("TMC_BG3_TRACE") != NULL);
+    if (!en) return;
+    /* Port_MapSource_Update runs once per VBlank, the same cadence as the
+     * capture frame counter, so this lines up with --dump frame numbers. */
+    frame++;
+    on = (gScreen.lcd.displayControl & 0x0800) != 0;
+    if (on) {
+        onFrames++;
+    }
+    if (on == lastOn && gRoomControls.area == lastArea && gRoomControls.room == lastRoom) {
+        return;
+    }
+    if (on || lastOn == 1) {
+        fprintf(stderr, "[bg3] f=%-6u onFrames=%-5u %s task=%d sub=%d area=0x%02X room=0x%02X "
+                        "bg3ctl=0x%04X ofs=(%d,%d) roomw=%u clipped=%d\n",
+                frame, onFrames,
+                on ? "ON " : "off", gMain.task, gMain.substate,
+                gRoomControls.area, gRoomControls.room, gScreen.bg3.control,
+                (int)gScreen.bg3.xOffset, (int)gScreen.bg3.yOffset,
+                gRoomControls.width, (sClippedBgMask >> 3) & 1);
+    }
+    lastOn = on;
+    lastArea = gRoomControls.area;
+    lastRoom = gRoomControls.room;
 }
 
 /* TMC_REJECT_TRACE=1: why each world layer was refused a map source. */
@@ -487,6 +546,7 @@ void Port_MapSource_Update(void) {
     mapsource_bind_ui();
     mapsource_trace_reject();
     mapsource_trace_layers();
+    mapsource_trace_bg3();
 }
 
 /* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the

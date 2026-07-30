@@ -52,6 +52,7 @@ Run-time (all off unless set):
 | `TMC_CAMTRACE=1` | per room: width, camera position, the legal camera range, and an explicit **out-of-range assertion**. This is what caught the scripted-camera clamp bug |
 | `TMC_REJECT_TRACE=1` | why each world layer was refused a map source, printed on change, with task/substate/subtask/room/flags |
 | `TMC_LAYER_TRACE=1` | which BG indices have a map source (`mapsrc_mask`) and which the centring clip caught (`clip_mask`), with DISPCNT and all four BGxCNT. Printed on change. This is how B2's layer was identified |
+| `TMC_BG3_TRACE=1` | every BG3 on/off transition, with frame, room, BGxCNT, offsets and whether the centring clip caught it. BG3 is off in ordinary rooms and carries the gameplay overlays (hole, cloud, light, weather, steam, POW) — this is how B10 was found |
 | `TMC_MAPSRC_DIAG=1` | periodic per-layer agreement sample between the special map and the screenblock |
 | `TMC_MAPSRC_LAYERS=0\|1\|2` | bind only the bottom layer, only the top, or both. Bisection aid — this is how the layer→BG mapping was pinned down |
 | `TMC_WINTRACE=1` | widest window edge committed during the run; proves the >255 window path is live |
@@ -180,6 +181,20 @@ Three things make this work, and breaking any of them breaks replay:
   overwritten as you play, which is why a copy is taken at launch.
 
 `build/play-320x160/record-bug.sh` wraps this for playtesters.
+
+### Reaching the BG3 gameplay overlays
+
+None of the committed scripts ever activate BG3 — it is off in ordinary rooms,
+which is why it went unswept for so long. The rooms that use it are listed in
+`data/map/entity_headers.s` as `manager subtype=`: `0x10` weather, `0x14`
+steam, `0x18` cloud, `0x19` pow, `0x1A` hole, `0x1C` rain, `0x22` light,
+`0x23` light-level. Map a `Room_*` label to a warp target by walking the
+`Area_*` blocks in that file (index within the block is the room number) and
+the `AREA_*` enum in `include/area.h` for the area ordinal.
+
+Generating a warp tour that way, plus `TMC_BG3_TRACE=1`, is how B10 was found.
+Note such a tour crashes after ~16 rooms at **both** widths — it warps to
+fixed coordinates that are out of bounds for interior rooms.
 
 ### Why not a save state
 
