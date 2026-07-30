@@ -71,6 +71,11 @@ static bool sCaptureCanvas = false;
 static uint32_t sFrame = 0;      /* frames presented so far */
 static uint16_t sHeldMask = 0;   /* GBA key mask currently held by script */
 
+/* ---- input recording (--record=FILE) --------------------------------- */
+
+static FILE* sRecFile = NULL;
+static uint16_t sRecLastMask = 0; /* NONE — matches the engine's idle start */
+
 /* Pending warp: retried each frame until Port_DebugAction_Warp accepts
  * (it refuses outside TASK_GAME), so scripts don't have to frame-guess
  * the moment gameplay becomes warpable after loading a save. */
@@ -169,6 +174,86 @@ static bool parse_keys(const char* spec, uint16_t* outMask) {
     *outMask = mask;
     return true;
 }
+
+/* Render a script key mask as "A+START", or "NONE" when nothing is held. */
+static void format_keys(uint16_t mask, char* out, size_t outSize) {
+    size_t used = 0;
+    out[0] = '\0';
+    for (size_t i = 0; i < sizeof(kKeyNames) / sizeof(kKeyNames[0]); i++) {
+        if (kKeyNames[i].mask == 0 || (mask & kKeyNames[i].mask) == 0) {
+            continue;
+        }
+        int n = snprintf(out + used, outSize - used, "%s%s",
+                         used ? "+" : "", kKeyNames[i].name);
+        if (n < 0 || (size_t)n >= outSize - used) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    if (used == 0) {
+        snprintf(out, outSize, "NONE");
+    }
+}
+
+static void record_atexit(void) {
+    if (sRecFile == NULL) {
+        return;
+    }
+    /* A trailing quit makes the script self-terminating on replay, so it
+     * stops where the recording stopped instead of running on. */
+    fprintf(sRecFile, "%u quit\n", sFrame);
+    fclose(sRecFile);
+    sRecFile = NULL;
+    fprintf(stderr, "[record] input script closed at frame %u\n", sFrame);
+}
+
+/* Copy the save file as it is *now*, before play mutates it. Replay must
+ * start from the same save or the run desyncs immediately. */
+static void record_snapshot_save(const char* scriptPath) {
+    char savePath[600];
+    FILE* in;
+    FILE* out;
+    char buf[4096];
+    size_t n;
+    snprintf(savePath, sizeof(savePath), "%s.sav", scriptPath);
+    in = fopen("tmc.sav", "rb");
+    if (in == NULL) {
+        fprintf(stderr, "[record] no tmc.sav to copy — replay must start blank\n");
+        return;
+    }
+    out = fopen(savePath, "wb");
+    if (out == NULL) {
+        fprintf(stderr, "[record] cannot write '%s'\n", savePath);
+        fclose(in);
+        return;
+    }
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        fwrite(buf, 1, n, out);
+    }
+    fclose(in);
+    fclose(out);
+    fprintf(stderr, "[record] starting save copied to %s\n", savePath);
+}
+
+void Port_Capture_RecordInput(volatile uint16_t* keyinput) {
+    uint16_t mask;
+    char keys[128];
+    if (sRecFile == NULL) {
+        return;
+    }
+    /* KEYINPUT is active-low with the top bits unused; the script format is
+     * active-high over the same ten buttons. */
+    mask = (uint16_t)((~(*keyinput)) & 0x03FF);
+    /* sRecLastMask starts at NONE, which is what the engine sees before the
+     * first press, so a plain change test needs no first-write special case. */
+    if (mask == sRecLastMask) {
+        return;
+    }
+    sRecLastMask = mask;
+    format_keys(mask, keys, sizeof(keys));
+    fprintf(sRecFile, "%u keys %s\n", sFrame, keys);
+}
+
 
 static int cmp_cmd(const void* a, const void* b) {
     const ScriptCmd* x = (const ScriptCmd*)a;
@@ -337,6 +422,21 @@ bool Port_Capture_HandleArg(const char* arg) {
         snprintf(sDumpDir, sizeof(sDumpDir), "%s", arg + 11);
         return true;
     }
+    if (strncmp(arg, "--record=", 9) == 0) {
+        const char* path = arg + 9;
+        sRecFile = fopen(path, "w");
+        if (sRecFile == NULL) {
+            fprintf(stderr, "[record] cannot open '%s' for writing\n", path);
+            exit(1);
+        }
+        fprintf(sRecFile, "# Recorded input — replay with --script=<this file>.\n"
+                          "# Replay from the save copied alongside as <this file>.sav,\n"
+                          "# in a directory with baserom.gba and assets/.\n");
+        record_snapshot_save(path);
+        atexit(record_atexit);
+        fprintf(stderr, "[record] recording input to %s\n", path);
+        return true;
+    }
     if (strcmp(arg, "--frame-stats") == 0) {
         sStatsEnabled = true;
         atexit(stats_atexit);
@@ -383,6 +483,8 @@ bool Port_Capture_HandleArg(const char* arg) {
 void Port_Capture_PrintUsage(void) {
     fprintf(stderr,
             "  --script=<file>:        Drive input from a capture script (deterministic replay).\n"
+            "  --record=<file>:        Record this session's input as a replayable script,\n"
+            "                          copying the starting save to <file>.sav.\n"
             "  --dump-dir=<dir>:       Directory for framebuffer dumps (default '.').\n"
             "  --frame-stats:          Print frame-time mean/p50/p99/max on exit.\n"
             "  --exit-frame=<n>:       Hard-quit after n frames (safety for scripted runs).\n"

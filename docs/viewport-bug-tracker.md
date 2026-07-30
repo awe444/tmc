@@ -2,7 +2,8 @@
 
 Bugs found playtesting the 320×160 build (`docs/viewport-expansion-research-plan.md`
 Milestone 1). Reported by the maintainer over two rounds of testing; IDs are
-theirs. **Last updated 2026-07-30**, at commit `b47ec0cc`.
+theirs. **Last updated 2026-07-30**, after the
+`mapsource_bind_ui` scheduling fix.
 
 Anything at 240 is a release blocker. Anything at 320 blocks the Milestone 1
 exit criteria but not the shipping build, which is still GBA-native.
@@ -12,12 +13,14 @@ exit criteria but not the shipping build, which is still GBA-native.
 | ID | Summary | Status |
 |---|---|---|
 | B1 | Save/erase popups' text garbled | **Fixed** (verified 320) |
-| B2 | Legend artwork repeats past x=240 | **Regressed** — was fixed, broke again with the B3 ordering fix |
-| B3 | Zelda-walking cutscene not full width | **Probably fixed, unconfirmed** — cause found and fixed, not retested in situ |
+| B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320, in situ) |
+| B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320, in situ) |
 | B4 | Smith-room sprites/layers wrong at first dialogue | **Open** — cannot reproduce |
 | B5 | Interior room-to-room scroll glitches | **Open** — cannot reproduce (needs walking) |
 | B6 | Zelda sprite in the left border | **Fixed** (confirmed by maintainer) |
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
+| B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320, pixel-exact vs 240) |
+| B9 | Legend card artwork dimmed right of a vertical seam | **Fixed** (verified 320, pixel-exact vs 240) |
 
 ---
 
@@ -43,7 +46,7 @@ can disagree with the buffer again.
 
 Repro: `scripts/bugs.script`, waypoint `B1_saving`.
 
-## B2 — legend artwork repeats past x=240 *(regressed, open)*
+## B2 — legend artwork repeats past x=240 *(fixed)*
 
 Opening stained-glass narration: the artwork draws a second partial copy at
 the right edge.
@@ -51,19 +54,35 @@ the right edge.
 **Cause.** A layer still reading a 32-tile VRAM screenblock covers 256 px and
 *wraps*; it cannot fill 320, so stretching it repeats its content.
 
-**Fix applied, then lost.** A mechanical rule — *a layer with no map source
-is clipped to `DISPLAY_WIDTH` and centred* — fixed it (border bleed in the
-legend region went 1300–6400 px/frame → 0). Fixing B3's ordering bug
-(below) re-exposed it: the artwork's layer is not being clipped and I have
-not determined which BG index it is on. A `TMC_LAYER_TRACE` hook exists for
-exactly this question but produced no output on the run I tried; that is the
-next thing to chase.
+**Fix.** The mechanical rule was already right — *a layer with no map source
+is clipped to `DISPLAY_WIDTH` and centred*. What broke it was **where the
+rule was being called from.** The B3 ordering fix moved `mapsource_bind_ui()`
+inside `Port_MapSource_CamTrace()`, which is a *diagnostic*: it returns early
+unless `TMC_CAMTRACE` is set **and** the room has just changed **and** the
+task is `TASK_GAME`. That did put the call after the world bindings, but it
+also meant the clips were never applied in an ordinary run at all — and it
+took `virtuappu_mode1_set_obj_clip`/`set_obj_offset` and `sUiCentered` down
+with them, since those are set in the same function.
 
-Repro: `scripts/sweep.script`, frames ~2500–5750; or `scripts/bugs.script`
-waypoint `B2_legend_text`. Measure with the border-bleed check in
-`tools/capture/README.md`.
+The call now lives at the end of `Port_MapSource_Update()`, after the binding
+loop: correctly ordered *and* unconditional. `CamTrace` is a pure diagnostic
+again.
 
-## B3 — Zelda-walking cutscene not full width *(probably fixed, unconfirmed)*
+This is also why `TMC_LAYER_TRACE` printed nothing — the trace was inside the
+same early-returning function. It works now, and reports a `clip_mask`
+alongside `mapsrc_mask` so "which layer is it on, and did the rule reach it"
+is answerable in one line. The legend runs as `SUBTASK_AUXCUTSCENE` with
+`mapsrc_mask=0x6 clip_mask=0x9`: the artwork is on BG0/BG3 and is clipped.
+
+**Verified 320:** all legend frames in `scripts/sweep.script` (2000–4500)
+have single-colour border bands, and the whole opening sweep (2000–11750,
+40 frames) has **0 columns that repeat at the 256 px wrap period**.
+
+Repro: `scripts/sweep.script`, frames ~2000–4500. Measure with the
+border-bleed check in `tools/capture/README.md` — but see the caveat added
+there about backdrop colour.
+
+## B3 — Zelda-walking cutscene not full width *(fixed)*
 
 Reported first as centred-240-with-borders, then after a partial fix as
 "left-clamped 240 with a discontinuous x>240 region".
@@ -87,7 +106,14 @@ Reported first as centred-240-with-borders, then after a partial fix as
    `bound`. The UI pass now runs after the world bindings. Wide rooms went
    from 0 to **6400/6400 px** of world in columns 280–319.
 
-Needs confirming in the actual cutscene.
+   The first attempt at (2) fixed the order by moving the call into a
+   diagnostic that almost never runs, which is what regressed B2. See B2 for
+   the real fix; the 6400/6400 measurement was taken while nothing was
+   clipping and did not distinguish the two.
+
+**Verified 320, in situ:** the cutscene renders full 320 width with world
+content edge to edge and Zelda correctly placed in world space
+(`scripts/sweep.script` frames 4750–5750, right band 6286–6400/6400 px).
 
 ## B4 — smith-room sprites/layers wrong at first dialogue *(open)*
 
@@ -149,6 +175,85 @@ which for a room narrower than the viewport is not the resting place. Caught
 by the `TMC_CAMTRACE` in-range assertion flagging a narrow room at `cam=0`
 instead of `-40`.
 
+## B8 — large heart offset left of the centred HUD *(fixed)*
+
+The heart row's small hearts are BG0 *tiles*, so they ride the layer's
+centring clip. The large heart is not a tile — it is the animated overlay
+`UI_ELEMENT_HEART`, an OBJ positioned in screen coordinates. It kept its
+authored 240-wide position while everything around it moved.
+
+**Cause.** HUD sprites take `UI_HUD_SPRITE_DX` at source, because a global
+OBJ offset would drag world sprites along too. The button elements get it via
+`gHUD.buttonX` (`ui.c`), and the item and text elements inherit their x from
+the button element — so three of the five element families were covered by
+one assignment and nobody noticed the other two. `HeartUIElement` derives its
+x from `health` instead (`x = ((health+3)>>2)*8 + 3`), which is why it was
+missed.
+
+**Fixed at both sites**, not just the reported one: `HeartUIElement` and
+`EzloNagUIElement_Action0` (`element->x = 0x10`, the Ezlo-has-something-to-say
+indicator) were the only two handlers setting a screen x without the shift.
+The Ezlo nag was never reported — it only appears when Ezlo wants to talk —
+but it is the identical one-line defect and would have been the next report.
+
+**Why it presented as two different symptoms.** In the build the maintainer
+was playing, `mapsource_bind_ui()` never ran (see B2), so there was no OBJ
+clip and the heart was simply *visible in the wrong place* — 40 px left. In a
+build with the clip working, the same sprite at x=27 falls inside the left
+border band and the OBJ clip **deletes it entirely**. Same defect, and the
+"missing large heart" it would have become is worth recognising as this bug
+rather than a new one.
+
+**Verified 320:** with the fix, the whole f11000 frame (smith's house, a
+240-wide room) shifted by 40 px is **pixel-identical to the 240 build's frame
+— 0 mismatches over all 38 400 pixels**, HUD included. `UI_HUD_SPRITE_DX` is
+0 at native width, and both 240 gates still pass.
+
+**Lesson.** The stale comment on `UI_CENTER_DX` in `include/viewport.h` still
+said "unlike the in-game HUD which is edge-anchored" — three weeks after D1
+was reversed. That is exactly the sentence that makes someone not think to
+shift a HUD sprite. It has been corrected, and `UI_HUD_SPRITE_DX` now
+documents which element sites need the shift and which inherit it.
+
+## B9 — legend card artwork dimmed right of a vertical seam *(fixed)*
+
+On each Picori legend card, once the text is on screen a vertical strip of the
+stained-glass artwork — everything right of Link's sword — renders at reduced
+brightness. The seam is sharp and does not correspond to anything in the art.
+
+**Cause.** The story panels use a hardware window (WIN0) plus a blend to dim
+the panel outside the artwork region. `sub_08053800` (`src/cutscene.c`) takes
+the window's edges from a per-card table, `gUnk_080FCCB4[].width`, which packs
+left and right into one u16 — `0..120` for the two tall portrait cards,
+`0..240` for the four wide ones. Those are **240-authored screen
+coordinates.**
+
+The panels are a 240-authored surface and are centred like every other one,
+by the BG clip. **A PPU window is not a BG, and the clip does not reach it**:
+it is applied in raw screen coordinates. So the artwork moved +40 and the
+window did not, leaving the blend boundary 40 px inside the artwork. Measured
+directly: per-column brightness held ~390–407 up to x=118 and dropped to
+~206 from x=120 — exactly the table's `120` with no shift applied.
+
+**Fix.** Add `UI_CENTER_DX` to both edges at the source site, matching how
+every other 240-authored coordinate is handled. Zero at GBA-native width.
+
+**Also fixed, same class, unreported:** `kinstoneMenu.c` sets
+`WIN_RANGE(0x68, 0x87)` — a 240-authored window on a centred UI screen. That
+menu still cannot be entered cold (pre-existing crash chain, CHANGELOG #16),
+so the fix is unverified at runtime, but the defect is identical and visible
+by inspection.
+
+**Verified 320:** all 11 captured legend frames are now **pixel-identical to
+the 240 build shifted by 40 px — 0 mismatches each**, against 1134–4636
+mismatched pixels per frame before the fix. Both 240 gates still pass.
+
+**This is a third distinct centring channel.** The BG clip moves layers, the
+`UI_HUD_SPRITE_DX` sites move HUD sprites (B8), and PPU windows are a third
+thing that must be moved and were not. Every remaining `WIN_RANGE` call site
+with a literal coordinate is worth auditing against this — see the note under
+carry-forward items.
+
 ---
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
@@ -191,25 +296,73 @@ to add between bug fixes.
 4. **Stride changes in decompiled code are not local.** The compiler cannot
    help: every `0x20` that meant "one row" is indistinguishable from every
    `0x20` that meant something else.
+5. **Never put production behaviour inside a diagnostic.** The B3 ordering
+   fix needed `mapsource_bind_ui()` to run later, and the convenient place
+   that ran later happened to be a trace function gated on an env var and a
+   room change. Ordering was fixed and the feature was switched off, in one
+   move. It measured as a *success* — "6400/6400 px of world in the far-right
+   columns" is exactly what you get when nothing clips — which is the same
+   trap as lesson 1: the measurement could not tell "correct" from "disabled".
+   When a fix makes a number jump to its theoretical maximum, check that the
+   code you think produced it actually ran.
+6. **A metric keyed on black is not a metric for borders.** The border-bleed
+   check counts non-black pixels in the letterbox columns, which reads a
+   correctly-clipped pause menu as 12 800 px of bleed because its backdrop is
+   green. Count *distinct colours per column* instead: a clipped border is
+   uniform whatever its colour.
 
 ---
 
 ## Next actions, in order
 
-1. **B2** — find which BG index the legend artwork is on, then make sure the
-   clip rule reaches it. `TMC_LAYER_TRACE=1` was added for exactly this and
-   produced no output on first use; check the trace itself before trusting
-   its silence. Repro is cheap: `scripts/sweep.script`, frames 2500–5750,
-   measure border bleed.
-2. **Confirm B3** in the actual cutscene now that the ordering bug is fixed.
-   Wide rooms already went 0 → 6400/6400 px of world in the far-right
-   columns, so the mechanism is proven; this is just confirmation.
-3. **B4 and B5 need a maintainer-supplied `tmc.sav`** parked at each moment,
-   or screenshots. Three rounds of inferring these from prose has a poor hit
-   rate — B4's captures render *correctly* in the scripted run, and B5 cannot
-   be reached by button presses at all.
-4. **Then** close out Milestone 1: measure frame time at 320 (the one exit
-   criterion never measured) and record the go/no-go.
+1. **B4 and B5 need a maintainer-supplied input recording.** These are the
+   only two open bugs. Three rounds of inferring them from prose has a poor
+   hit rate — B4's captures render *correctly* in the scripted run, and B5
+   cannot be reached by button presses at all.
+
+   `--record=FILE` now exists for exactly this (`tools/capture/README.md`,
+   "Recording a human session"): it logs the committed KEYINPUT in the
+   replay path's own script format and copies the starting save alongside, so
+   a human-reached bug becomes a headless, frame-exact, re-runnable fixture.
+   Playtester wrapper: `build/play-320x160/record-bug.sh`.
+
+   A save-state file was the obvious alternative and **does not work** — see
+   the note under carry-forward items.
+2. **Decide whether border colour matters (D3).** The plan's D3 says solid
+   black borders. That holds wherever the backdrop is black (gameplay, the
+   legend), but a clipped UI screen shows the *PPU backdrop* in its border
+   bands, which on the pause menu is green and on the figurine gallery grey.
+   It is a uniform colour, not bleed — the clip is working — but it is not
+   black. Cheap to force if the maintainer wants it; not obviously wrong as
+   is, since that is what hardware shows outside every layer.
+3. **A fourth playtest round** to confirm B2/B3 by eye and look for whatever
+   the previous rounds' fixes have newly exposed. Note that until this fix,
+   `mapsource_bind_ui()` had not run at all since `b47ec0cc` — so the UI
+   centring, the OBJ clip (B6) and the OBJ offset were *all* inert in the
+   build that was last played. Anything that looked fine then was not being
+   tested; anything that looked broken may already be fixed.
+
+## Milestone 1 exit criteria
+
+| Criterion | Result |
+|---|---|
+| 240 route pixel-identical | **11/11, 0 differences** |
+| 240 map-source audit | **0 mismatched in 265 497 600 fetches** |
+| No layer wraps/repeats at 320 | **0 wrap-period columns**, 40-frame opening sweep |
+| Frame time at 320 within +25% | **present 7.19 ms mean** vs the 6.48 ms Spike 1 canvas baseline = **+10.9%** |
+
+Frame time measured the same way as the baseline: canonical route (12 700
+frames), headless dummy video, uncapped, release build, n=3 runs —
+7.263 / 7.148 / 7.151 ms (run 1 carries warm-up). p99 9.25–11.12 ms, max
+12.5–14.7 ms. Logic is unchanged at 0.15 ms mean. Total ~7.34 ms against the
+16.67 ms budget (**44%**).
+
+The +10.9% over a canvas build whose presented surface is already 320×240 is
+the extra PPU rasterisation for 33% more viewport pixels; present cost itself
+is dominated by a texture upload whose size did not change.
+
+**Remaining before Milestone 1 can be called done:** B4 and B5, which need a
+save file. Every measurable criterion is met.
 
 ## Carry-forward items not from playtesting
 
@@ -226,6 +379,36 @@ Recorded here so they are not lost with the plan's spike sections:
   playthrough with fusions available.
 - **Per-scanline circular windows** (lantern, fade iris, white-triangle) use
   a DMA'd per-line table that has not been widened — Spike 9.
+- **Quicksave state files are not portable across processes.** `F5`/`F6`
+  (`port/port_quicksave.c`) are process-local by design. Persisting them was
+  implemented and reverted: restoring one in a fresh process segfaults in
+  `CollideFollowers` (`src/npcUtils.c:318`) walking `currentEntity->next`,
+  because the snapshot restores `gEntities` without every global that
+  participates in the entity lists. **Not ASLR** — it reproduces with
+  `setarch -R`, so pinning the address space does not help. Making it
+  portable means an exhaustive inventory of participating globals plus
+  relocation of every host pointer inside the snapshot. Input recording
+  (`--record`) solves the actual need instead, and has no pointers to fix up.
+- **World-space window sites still mask their x to 8 bits.** Found while
+  fixing B9, not yet reproduced, and *not* fixed — these are gameplay effects
+  whose windows are computed from world-to-screen coordinates:
+
+  | Site | Expression |
+  |---|---|
+  | `src/scroll.c:347`, `:414` | `WIN_RANGE(left & 0xff, right & 0xff)` |
+  | `src/object/lightDoor.c:77` | `WIN_RANGE((tmp2 - 0x18) & 0xff, (tmp2 + 0x18) & 0xff)` where `tmp2 = entity x - scroll_x` |
+
+  At 240 a screen x could not exceed 255 and the mask was free. At 320 it can:
+  a light door at screen x=300 masks to 44 and the window jumps to the far
+  side of the screen. `templeOfDropletsManager.c` and `bigGoron.c` compute
+  `tmp1`/`tmp2` similarly and want the same look.
+
+  **Deliberately left alone.** `include/screen.h` warns that several sites
+  rely on 8-bit wrap-around to produce an *inverted* window (left > right),
+  which the PPU renders as a wrap — so removing a mask can change intended
+  behaviour, and the header states that widening a site's coordinate range is
+  a per-site decision for the spike that needs it. Each needs its scene
+  reproduced before it is touched. The light door is the cheapest to reach.
 - **BG3 gameplay overlays** (hole, light, weather) are screen-fixed and were
   never swept for wrap past 256 px.
 - **Milestone 1 frame time at 320** is unmeasured. Baseline for comparison is

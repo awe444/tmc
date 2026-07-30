@@ -26,6 +26,7 @@ python3 tools/capture/diff_captures.py \
 | Flag | Effect |
 |---|---|
 | `--script=FILE` | drive input from a capture script; implies `--frame-stats` |
+| `--record=FILE` | record this session's input as a replayable script, copying the starting save to `FILE.sav`. See "Recording a human session" below |
 | `--dump-dir=DIR` | where `dump` writes `.ppm` frames (default `.`) |
 | `--frame-stats` | print logic/present mean/p50/p99/max on exit |
 | `--exit-frame=N` | hard-quit after N frames (safety net) |
@@ -50,7 +51,7 @@ Run-time (all off unless set):
 |---|---|
 | `TMC_CAMTRACE=1` | per room: width, camera position, the legal camera range, and an explicit **out-of-range assertion**. This is what caught the scripted-camera clamp bug |
 | `TMC_REJECT_TRACE=1` | why each world layer was refused a map source, printed on change, with task/substate/subtask/room/flags |
-| `TMC_LAYER_TRACE=1` | which BG indices currently have a map source, with DISPCNT and all four BGxCNT. Intended for B2; produced no output on first use, unverified |
+| `TMC_LAYER_TRACE=1` | which BG indices have a map source (`mapsrc_mask`) and which the centring clip caught (`clip_mask`), with DISPCNT and all four BGxCNT. Printed on change. This is how B2's layer was identified |
 | `TMC_MAPSRC_DIAG=1` | periodic per-layer agreement sample between the special map and the screenblock |
 | `TMC_MAPSRC_LAYERS=0\|1\|2` | bind only the bottom layer, only the top, or both. Bisection aid — this is how the layer→BG mapping was pinned down |
 | `TMC_WINTRACE=1` | widest window edge committed during the run; proves the >255 window path is live |
@@ -138,7 +139,7 @@ tools/capture/make_script.py sweep > tools/capture/scripts/sweep.script
 | `route.script` | the canonical 11-waypoint regression route (see above). Hand-written; the reference captures depend on it, so **do not regenerate it** |
 | `intro.script` | press through the whole opening from a blank save |
 | `sweep.script` | the opening with a dump every 250 frames, 2000–12000. **Use this first** to find which frame a moment happens on |
-| `bugs.script` | dumps at the frames of specific reported bugs (`docs/viewport-bug-tracker.md`) |
+| `bugs.script` | dumps at the frames of specific reported bugs (`docs/viewport-bug-tracker.md`). **Its frame numbers have drifted and its waypoint names now lie** — `B2_glass_text_a` (frame 6600) lands on the smith-room dialogue, not the stained glass, which is at 2000–4500 in `sweep.script`. Re-run `sweep` and regenerate before trusting a label |
 | `walk.script` | warp-tour of rooms ≥320 wide, each captured on entry and after a right-sweep |
 
 **Frame numbers are only valid for the exact input sequence in the file.**
@@ -150,13 +151,58 @@ stops landing on the right moment, re-run `sweep` and re-read the frames.
 
 It presses buttons from a blank save. It **cannot walk Link to a specific
 place**, which is why B5 (an interior doorway transition) has never been
-reproduced. Options for that class of bug: a `tmc.sav` parked at the moment,
-or `warp` to the room and hold a direction and hope.
+reproduced. Use `--record` (below) to have a human produce the script instead.
+
+## Recording a human session
+
+```bash
+tmc_pc --record=/tmp/b5.script          # play; quit normally when done
+tmc_pc --script=/tmp/b5.script          # replay, from /tmp/b5.script.sav
+```
+
+`--record` logs the committed KEYINPUT every frame it changes, in the same
+`<frame> keys ...` format the replay path already consumes, and copies the
+starting `tmc.sav` to `FILE.sav`. Replay then reproduces the session
+frame-for-frame — verified by recording a scripted run and replaying it: all
+17 dumped frames byte-identical.
+
+Three things make this work, and breaking any of them breaks replay:
+
+- **It records from frame 0, not from a hotkey.** Replay begins at a fresh
+  boot, so input from before recording started would be missing and
+  everything after would desync. Menu and file-select navigation must be in
+  the log.
+- **It records after `Port_Capture_OverrideInput`**, i.e. exactly the
+  KEYINPUT the engine reads. That includes the title auto-START hack, which
+  fires during normal play but is suppressed during scripted replay — logging
+  the committed value means the recording supplies it either way.
+- **The starting save must accompany the script.** The live `tmc.sav` is
+  overwritten as you play, which is why a copy is taken at launch.
+
+`build/play-320x160/record-bug.sh` wraps this for playtesters.
+
+### Why not a save state
+
+`F5`/`F6` quicksave exist (`port/port_quicksave.c`) but are process-local.
+Persisting them to disk was implemented and **abandoned**: a snapshot restores
+`gEntities` without every global that participates in the entity linked
+lists, so loading one in a fresh process segfaults in `CollideFollowers`
+walking `->next`. Not an ASLR artefact — it reproduces with `setarch -R`.
+Making it portable needs an exhaustive global inventory plus pointer
+relocation. Input recording sidesteps the whole problem because a key mask
+has no pointers in it.
 
 ## Useful measurements
 
 Border bleed — content that has escaped into the letterbox columns. Should be
-0 for any centred surface:
+0 for any centred surface.
+
+**This check assumes the border is black, and on a UI screen it is not.** The
+border bands show the PPU *backdrop*, which is black during gameplay and in
+the legend but green on the pause menu and grey in the figurine gallery — so
+the check reports a correctly-clipped pause menu as 12 800 px of bleed. Use
+the distinct-colours-per-column form below unless you know the backdrop is
+black; a clipped border is *uniform*, whatever colour it is.
 
 ```bash
 python3 - <<'PY'
@@ -171,9 +217,32 @@ for p in sorted(glob.glob("/tmp/out/*.ppm")):
 PY
 ```
 
-Wrap detection — a column identical to one 256 px earlier is the BG wrap
-period repeating, i.e. a layer stretched past what a screenblock can cover.
-Should be 0 everywhere.
+Border uniformity + wrap detection — the two checks that actually found and
+cleared B2. A clipped border is one distinct column value per band; a column
+identical to one 256 px earlier is the BG wrap period repeating, i.e. a layer
+stretched past what a screenblock can cover. Skip all-black columns in the
+wrap check or every letterboxed frame is a false positive:
+
+```bash
+python3 - <<'PY'
+import sys, glob
+sys.path.insert(0, "tools/capture")
+from ppm2png import read_ppm
+from pathlib import Path
+for p in sorted(glob.glob("/tmp/out/*.ppm")):
+    w, h, rgb = read_ppm(Path(p))
+    cols = [bytes(rgb[(y*w+x)*3+c] for y in range(h) for c in range(3)) for x in range(w)]
+    black = b'\x00' * (h*3)
+    wrap = [x for x in range(256, w) if cols[x] == cols[x-256] and cols[x] != black]
+    print(f"{Path(p).stem}: left_uniform={len(set(cols[0:40]))} "
+          f"right_uniform={len(set(cols[280:320]))} wrap={len(wrap)}")
+PY
+```
+
+`left_uniform`/`right_uniform` of 1 means that band is a solid border (the
+surface is clipped and centred); 40 means it is full of content (the surface
+fills the viewport, which is correct for a wide room). `wrap` should be 0
+everywhere.
 
 World coverage — non-black pixels in columns 280–319 of a room wider than the
 viewport. Should be ~6400 (the full band); 0 means the world has been

@@ -853,7 +853,15 @@ void HeartUIElement(UIElement* element) {
                 y = 0x14;
                 x = tmp - 0x4d;
             }
-            element->x = x;
+            /* The heart row's *tiles* live on BG0 and travel with that
+             * layer's centring clip. This element is the animated overlay
+             * heart, an OBJ positioned in screen coordinates, so it has to
+             * take the same shift at source or it stays at the authored
+             * 240-wide position while the little hearts move (B8). The
+             * button/item/text elements get this via gHUD.buttonX; this one
+             * derives its x from health instead, which is how it was
+             * missed. */
+            element->x = x + UI_HUD_SPRITE_DX;
             element->y = y;
             if ((health & 3) == 0) {
                 frameIndex = 4; // Full heart
@@ -872,7 +880,11 @@ void EzloNagUIElement(UIElement* element) {
 void EzloNagUIElement_Action0(UIElement* element) {
     if (gHUD.ezloNagFuncIndex == 1) {
         gHUD.ezloNagFuncIndex = 2;
-        element->x = 0x10;
+        /* Same defect as the heart element (B8): a HUD OBJ at a hardcoded
+         * screen position. Not separately reported — the Ezlo nag only
+         * appears when Ezlo has something to say — but it is the same one
+         * line and would have been the next report. */
+        element->x = 0x10 + UI_HUD_SPRITE_DX;
         element->y = 0x90;
         element->unk_6 = 0;
         element->type = UI_ELEMENT_EZLONAGSTART;

@@ -233,6 +233,7 @@ bool Port_MapSource_LayerAuthoritative(int layer) {
  * edge-anchored HUD, authored out to the viewport edges. The text box also
  * lives on BG0 there and centres itself per-window (message.c). */
 static bool sUiCentered = false;
+static int sClippedBgMask = 0; /* which BGs the clip rule caught, for the trace */
 
 bool Port_MapSource_UiCentered(void) {
     return sUiCentered;
@@ -323,9 +324,11 @@ static void mapsource_bind_ui(void) {
      * relationship to each other intact. */
     clip.offset_x = UI_CENTER_DX;
     clip.content_width = DISPLAY_WIDTH;
+    sClippedBgMask = 0;
     for (bg = 0; bg < 4; bg++) {
         if (!virtuappu_mode1_has_map_source(bg)) {
             virtuappu_mode1_set_bg_clip(bg, &clip);
+            sClippedBgMask |= 1 << bg;
         }
     }
 
@@ -363,6 +366,31 @@ static void mapsource_bind_ui(void) {
         virtuappu_mode1_set_obj_clip(span_left, span_right);
     }
 #endif
+}
+
+/* TMC_LAYER_TRACE=1: which BG indices have a map source and which the clip
+ * rule caught, with DISPCNT and all four BGxCNT. The question this answers is
+ * "which layer is that artwork actually on, and did the rule reach it" — so it
+ * must run after mapsource_bind_ui(), not before. */
+static void mapsource_trace_layers(void) {
+    static int en = -1;
+    static int last = -1;
+    int mapsrc = 0, key, b;
+    if (en < 0) en = (getenv("TMC_LAYER_TRACE") != NULL);
+    if (!en) return;
+    for (b = 0; b < 4; b++) {
+        if (virtuappu_mode1_has_map_source(b)) mapsrc |= 1 << b;
+    }
+    key = mapsrc | (sClippedBgMask << 4);
+    if (key == last) return;
+    last = key;
+    fprintf(stderr, "[layers] task=%d sub=%d ui=%d area=0x%02X room=0x%02X "
+                    "mapsrc_mask=0x%X clip_mask=0x%X dispcnt=0x%04X "
+                    "bg0ctl=0x%04X bg1ctl=0x%04X bg2ctl=0x%04X bg3ctl=0x%04X\n",
+            gMain.task, gMain.substate, gUI.lastState,
+            gRoomControls.area, gRoomControls.room, mapsrc, sClippedBgMask,
+            gScreen.lcd.displayControl, gScreen.bg0.control, gScreen.bg1.control,
+            gScreen.bg2.control, gScreen.bg3.control);
 }
 
 /* TMC_REJECT_TRACE=1: why each world layer was refused a map source. */
@@ -442,6 +470,23 @@ void Port_MapSource_Update(void) {
             virtuappu_mode1_set_map_source(bg, &src);
         }
     }
+
+    /* The UI clip rule must run *after* the world bindings: it asks which
+     * layers have a map source, and a layer bound earlier in this same
+     * function would otherwise be seen as unbound and wrongly clipped to the
+     * authored width — which silently confined the whole world to 240 and
+     * made cutscenes look centred even while the trace said "bound".
+     *
+     * It must also run *unconditionally*, on every frame. An earlier attempt
+     * fixed the ordering by moving this call into Port_MapSource_CamTrace,
+     * which is a diagnostic: it returns early unless TMC_CAMTRACE is set and
+     * the room has just changed. That did order it after the bindings, but it
+     * also meant the clips were never applied in an ordinary run — which is
+     * what regressed B2 (legend artwork repeating past x=240) and disarmed
+     * the sprite clip and offset with it. */
+    mapsource_bind_ui();
+    mapsource_trace_reject();
+    mapsource_trace_layers();
 }
 
 /* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the
@@ -467,30 +512,8 @@ void Port_MapSource_CamTrace(void) {
                 narrow ? "NARROW(centred)" : "scrollable",
                 (cx < mn || cx > mx) ? "  ** OUT OF RANGE **" : "");
     }
-
-    /* The UI clip rule must run *after* the world bindings: it asks which
-     * layers have a map source, and a layer bound later in this same
-     * function would otherwise be seen as unbound and wrongly clipped to
-     * the authored width — which silently confined the whole world to 240
-     * and made cutscenes look centred even while the trace said "bound". */
-    mapsource_bind_ui();
-    mapsource_trace_reject();
-    if (getenv("TMC_LAYER_TRACE") != NULL) {
-        static int last = -1;
-        int mask = 0, b;
-        for (b = 0; b < 4; b++) {
-            if (virtuappu_mode1_has_map_source(b)) mask |= 1 << b;
-        }
-        if (mask != last) {
-            last = mask;
-            fprintf(stderr, "[layers] task=%d sub=%d ui=%d area=0x%02X mapsrc_mask=0x%X "
-                            "dispcnt=0x%04X bg0ctl=0x%04X bg1ctl=0x%04X bg2ctl=0x%04X bg3ctl=0x%04X\n",
-                    gMain.task, gMain.substate, gUI.lastState, gRoomControls.area, mask,
-                    gScreen.lcd.displayControl, gScreen.bg0.control, gScreen.bg1.control,
-                    gScreen.bg2.control, gScreen.bg3.control);
-        }
-    }
 }
+
 void Port_MapSource_Report(void) {
     int layer;
     for (layer = 0; layer < 2; layer++) {

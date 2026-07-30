@@ -24,6 +24,7 @@
 #include "screen.h"
 #include "subtask.h"
 #include "ui.h"
+#include "viewport.h"
 #include "affine.h"
 #include "fade.h"
 
@@ -288,7 +289,12 @@ void KinstoneMenu_Type3_Overlay1(void) {
         gMenu.overlayType = 2;
         gMenu.transitionTimer = 20;
         gScreen.lcd.displayControl |= 0x2000;
-        gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0x68, 0x87);
+        /* Same class as B9: a 240-authored window on a centred UI screen, so
+         * it takes the centring shift the PPU window cannot get from the BG
+         * clip. Untested at runtime — the kinstone menu crashes on cold entry
+         * at both widths (pre-existing, CHANGELOG #16). Zero at GBA-native. */
+        gScreen.controls.window0HorizontalDimensions =
+            WIN_RANGE(0x68 + UI_CENTER_DX, 0x87 + UI_CENTER_DX);
         gScreen.controls.window0VerticalDimensions = WIN_RANGE(0x40, 0x5f);
         gScreen.controls.windowInsideControl = 0x3f;
         gScreen.controls.windowOutsideControl = 0x1f;

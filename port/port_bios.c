@@ -119,6 +119,9 @@ static void Port_UpdateInput(void) {
         *(vu16*)(gIoMem + REG_OFFSET_KEYINPUT) &= ~START_BUTTON;
     }
     Port_Capture_OverrideInput((volatile uint16_t*)(gIoMem + REG_OFFSET_KEYINPUT));
+    /* After the override, so a recording captures exactly the KEYINPUT the
+     * engine reads — that is what makes the log replayable as-is. */
+    Port_Capture_RecordInput((volatile uint16_t*)(gIoMem + REG_OFFSET_KEYINPUT));
 }
 
 static void Port_PumpEvents(void) {
