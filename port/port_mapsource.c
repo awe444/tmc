@@ -277,11 +277,10 @@ static bool mapsource_is_ui_screen(void) {
  * moves the box twice — which is what clipped the "Saving file..." and
  * "Erasing file..." popups on the file-select and pause-menu screens. */
 int Port_MapSource_MessageTileShift(void) {
-#if UI_CENTER_TILE_DX > 0
-    return mapsource_is_ui_screen() ? 0 : UI_CENTER_TILE_DX;
-#else
+    /* Always zero now. BG0 is a 32-column map, so shifting a ~28-column
+     * text box by 5 columns would overflow the row; the whole layer is
+     * centred instead, which carries the box with it. */
     return 0;
-#endif
 }
 
 /* Decide, per layer, how it can legitimately fill a wider viewport.
@@ -313,45 +312,41 @@ static void mapsource_bind_ui(void) {
     virtuappu_mode1_clear_bg_clips();
     sUiCentered = ui_screen;
 
-    /* BG0 always gets its map source: the buffer is wider than a hardware
-     * screenblock, so the VRAM copy the screenblock path reads is the wrong
-     * shape. Only its origin depends on whether this is a UI screen. */
-    {
-        VirtuaPPUMode1MapSource src;
-        src.map = gBG0Buffer;
-        src.stride = UI_BG0_WIDTH_TILES;
-        src.width_tiles = UI_BG0_WIDTH_TILES;
-        src.height_tiles = UI_BG0_HEIGHT_TILES;
-        src.origin_x = (int)gScreen.bg0.xOffset - (ui_screen ? UI_CENTER_DX : 0);
-        src.origin_y = (int)gScreen.bg0.yOffset;
-        virtuappu_mode1_set_map_source(0, &src);
-    }
-
-    /* Sprites travel with the layers they sit on. On a UI screen everything
-     * is centred, so the sprites are too. In a world view they stay put and
-     * are instead confined to the room's on-screen span below. */
-    virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0, 0);
-
+    /* One rule, applied uniformly: a layer with no map source is reading a
+     * 32-tile screenblock. It covers 256 px and wraps, so it cannot fill a
+     * wider viewport — stretching it only repeats its content. Clip it to
+     * the authored width and centre it.
+     *
+     * BG0 is now such a layer (its buffer stayed 32 wide), so it needs no
+     * special case: the HUD, the text box and every UI screen are all
+     * carried by the same clip, which is what keeps their authored
+     * relationship to each other intact. */
     clip.offset_x = UI_CENTER_DX;
     clip.content_width = DISPLAY_WIDTH;
-    for (bg = 1; bg < 4; bg++) {
+    for (bg = 0; bg < 4; bg++) {
         if (!virtuappu_mode1_has_map_source(bg)) {
             virtuappu_mode1_set_bg_clip(bg, &clip);
         }
     }
+
+    /* On a UI screen everything on show is centred, sprites included. In a
+     * world view the world sprites must stay where the engine put them —
+     * the HUD's own sprites are shifted at their source instead
+     * (UI_HUD_SPRITE_DX in ui.c), so they travel with the HUD layer without
+     * dragging Link along with them. */
+    virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0, 0);
 
     if (ui_screen) {
         virtuappu_mode1_set_obj_clip(UI_CENTER_DX, UI_CENTER_DX + DISPLAY_WIDTH);
         return;
     }
 
-    /* World view: confine sprites to the room's on-screen span so the
-     * border stays border. A room narrower than the viewport is centred, so
-     * the columns either side are outside the room — hardware never had
-     * such columns, and an entity standing there would not have been drawn
-     * (the stray Zelda sprite in the left border). During a room-to-room
-     * scroll the world layers have fallen back to the screenblock path and
-     * are clipped to native width above, so the sprites match that. */
+    /* World view: confine sprites to the room's on-screen span so the border
+     * stays border. A room narrower than the viewport is centred, so the
+     * columns either side are outside the room and hardware would never
+     * have drawn an entity standing there. When the world layers have fallen
+     * back to the screenblock path (mid-transition) they are clipped to the
+     * authored width above, so the sprites match that instead. */
     {
         int span_left = 0;
         int span_right = MODE1_GBA_WIDTH;
@@ -395,8 +390,6 @@ void Port_MapSource_Update(void) {
      * would keep sampling after the engine moved on. */
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
     virtuappu_mode1_clear_map_sources();
-    mapsource_bind_ui();
-    mapsource_trace_reject();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);
         int bg;
@@ -474,8 +467,30 @@ void Port_MapSource_CamTrace(void) {
                 narrow ? "NARROW(centred)" : "scrollable",
                 (cx < mn || cx > mx) ? "  ** OUT OF RANGE **" : "");
     }
-}
 
+    /* The UI clip rule must run *after* the world bindings: it asks which
+     * layers have a map source, and a layer bound later in this same
+     * function would otherwise be seen as unbound and wrongly clipped to
+     * the authored width — which silently confined the whole world to 240
+     * and made cutscenes look centred even while the trace said "bound". */
+    mapsource_bind_ui();
+    mapsource_trace_reject();
+    if (getenv("TMC_LAYER_TRACE") != NULL) {
+        static int last = -1;
+        int mask = 0, b;
+        for (b = 0; b < 4; b++) {
+            if (virtuappu_mode1_has_map_source(b)) mask |= 1 << b;
+        }
+        if (mask != last) {
+            last = mask;
+            fprintf(stderr, "[layers] task=%d sub=%d ui=%d area=0x%02X mapsrc_mask=0x%X "
+                            "dispcnt=0x%04X bg0ctl=0x%04X bg1ctl=0x%04X bg2ctl=0x%04X bg3ctl=0x%04X\n",
+                    gMain.task, gMain.substate, gUI.lastState, gRoomControls.area, mask,
+                    gScreen.lcd.displayControl, gScreen.bg0.control, gScreen.bg1.control,
+                    gScreen.bg2.control, gScreen.bg3.control);
+        }
+    }
+}
 void Port_MapSource_Report(void) {
     int layer;
     for (layer = 0; layer < 2; layer++) {

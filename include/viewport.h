@@ -34,41 +34,37 @@
 #define VIEWPORT_REGION_WIDTH (VIEWPORT_WIDTH + VIEWPORT_REGION_MARGIN)
 #define VIEWPORT_REGION_HEIGHT (VIEWPORT_HEIGHT + VIEWPORT_REGION_MARGIN)
 
-/* BG0 carries the HUD and most UI screens. On hardware it is a 32x32-tile
- * screenblock, which covers 256 px — enough for a 240-wide screen but not
- * for a wider one, where it would wrap and draw the HUD twice.
+/* BG0 carries the HUD, the text box and most UI screens.
  *
- * A wider viewport therefore needs a wider BG0 tilemap. Growing the
- * hardware screenblock is not an option: BG0 sits at screenbase 31, so a
- * 64-wide map would run into the OBJ tile region at 0x10000. Instead the
- * buffer becomes a plain wider array and is handed to the PPU as a map
- * source (the same mechanism the world layers use), which has no
- * screenblock and no wrap. At GBA-native width nothing changes — the
- * buffer keeps its 32-tile stride and BG0 stays on the hardware path.
+ * It stays a 32x32-tile map at every viewport size — the hardware shape.
+ * Widening it was tried and abandoned: the row stride is baked into far
+ * more places than the buffer's own accessors (the shared text renderer's
+ * two-tile-tall glyph writer, per-line advances, and several byte-count
+ * clears), and each one is a silent corruption rather than a compile error.
+ * Three rounds of playtesting kept finding more.
  *
- * Index UI writes with UI_BG0_AT(col, row) rather than a baked linear
- * offset, so the stride is in one place.
+ * Keeping the hardware stride means BG0 cannot place a tile past x=255, so
+ * a right-edge-anchored HUD is not achievable on this layer. D1 is
+ * therefore realised as *centered*: the whole 240-wide layer is shifted to
+ * the middle of a wider viewport, so the HUD, the text box and every UI
+ * screen keep their authored relationship to each other and only their
+ * position on the frame changes. Sprites belonging to the HUD are shifted
+ * by the same amount at their source (gHUD.buttonX) so they travel with it.
+ *
+ * The accessors below are kept even though they now reduce to the original
+ * literals: they document intent, and they are how a future height
+ * expansion or a second attempt at widening would be expressed.
  */
-#if VIEWPORT_WIDTH > 240
-#define UI_BG0_WIDTH_TILES 64
-#else
 #define UI_BG0_WIDTH_TILES 32
-#endif
 #define UI_BG0_HEIGHT_TILES 32
 #define UI_BG0_ENTRIES (UI_BG0_WIDTH_TILES * UI_BG0_HEIGHT_TILES)
 #define UI_BG0_AT(col, row) ((row) * UI_BG0_WIDTH_TILES + (col))
 
-/* Byte size of `rows` whole tilemap rows. Several UI routines clear a band
- * of rows with a literal byte count that silently assumed a 32-entry row;
- * at a wider stride such a literal clears less than a row and leaves the
- * tail of each row stale, which is what garbled the save/erase popups. */
+/* Byte size of `rows` whole tilemap rows. */
 #define UI_BG0_ROW_BYTES(rows) ((rows) * UI_BG0_WIDTH_TILES * 2)
 
-/* Rightmost tile column of the viewport, for edge-anchored UI (D1). At
- * GBA-native width this is column 29, so right-anchored elements keep
- * their original positions. */
-#define UI_VIEW_TILE_COLS (VIEWPORT_WIDTH / 8)
-#define UI_BG0_RIGHT_COL (UI_VIEW_TILE_COLS - 1)
+/* Rightmost tile column of the authored 240-wide layout. */
+#define UI_BG0_RIGHT_COL ((DISPLAY_WIDTH / 8) - 1)
 
 /* Centering shift for UI surfaces authored against a 240-wide screen.
  * D1 settles the *screens* (title, file select, menus) and the text box as
@@ -77,10 +73,10 @@
 #define UI_CENTER_DX ((VIEWPORT_WIDTH - DISPLAY_WIDTH) / 2)
 #define UI_CENTER_TILE_DX (UI_CENTER_DX / 8)
 
-/* Shift applied to right-anchored UI positions (D1: edge-anchored HUD).
- * Zero at GBA-native width, so anchored elements keep their authored
- * coordinates there. */
-#define UI_RIGHT_ANCHOR_DX (VIEWPORT_WIDTH - DISPLAY_WIDTH)
+/* HUD sprites (item/button icons) are positioned in engine coordinates and
+ * must move with the centred BG0 layer they sit on, so they take the same
+ * shift. Zero at GBA-native width. */
+#define UI_HUD_SPRITE_DX UI_CENTER_DX
 
 /* Horizontal camera limits for a room at (origin_x, width).
  *
