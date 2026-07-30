@@ -1,3 +1,4 @@
+#include "ui_bg0.h"
 #include "message.h"
 #include "asm.h"
 #include "common.h"
@@ -763,8 +764,11 @@ static void CreateWindow(void) {
 
 // Also used by figurine menu
 void DispMessageFrame(u16* buffer, s32 width, s32 height, u32 flags) {
+    /* Row stride of the destination tilemap; BG0 can be wider than a
+     * hardware screenblock, so this is not a fixed 0x20 any more. */
+    const u32 stride = UiDestStride(buffer);
     u16* ptr = buffer;
-    u16* ptr2 = &buffer[(height << 5) + 0x20];
+    u16* ptr2 = &buffer[(u32)height * stride + stride];
     u32 flags1;
     u32 i;
     *ptr++ = flags;
@@ -784,21 +788,21 @@ void DispMessageFrame(u16* buffer, s32 width, s32 height, u32 flags) {
 
     *ptr = flags | 0x400;
     *ptr2 = flags | 0xc00;
-    buffer += 0x20;
-    ptr += 0x20;
+    buffer += stride;
+    ptr += stride;
 
     if (height > 0) {
         *buffer = flags + 3;
         *ptr = (flags + 3) | 0x400;
-        buffer += 0x20;
-        ptr += 0x20;
+        buffer += stride;
+        ptr += stride;
 
         height -= 2;
         while (height-- > 0) {
             *buffer = flags + 4;
             *ptr = (flags + 4) | 0x400;
-            buffer += 0x20;
-            ptr += 0x20;
+            buffer += stride;
+            ptr += stride;
         }
 
         *buffer = (flags + 3) | 0x800;

@@ -55,19 +55,13 @@ extern void sub_080ADD70(void);
 
 #ifdef PC_PORT
 #include "port_gba_mem.h"
-#include "viewport.h"
-/* Real array, not an EWRAM alias: it must be able to exceed 32 tiles wide
- * for edge-anchored UI at a wider viewport (see viewport.h). Nothing
- * addresses it by GBA address any more — phonograph.c was the last such
- * site. */
-extern u16 gBG0Buffer[UI_BG0_ENTRIES];
+#include "ui_bg0.h"
 #ifndef gBG0Buffer
 #define gBG1Buffer (*(u16(*)[0x400]) & gEwram[0x21F30])
 #define gBG2Buffer (*(u16(*)[0x400]) & gEwram[0x344B0])
 #define gBG3Buffer (*(u16(*)[0x800]) & gEwram[0x1A40])
 #endif
 #else
-extern u16 gBG0Buffer[0x400];
 extern u16 gBG1Buffer[0x400];
 extern u16 gBG2Buffer[0x400];
 extern u16 gBG3Buffer[0x800];

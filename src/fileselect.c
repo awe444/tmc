@@ -222,7 +222,7 @@ const struct_080FC3E4 gUnk_080FC3E4[] = {
 };
 
 const Font gUnk_080FC844 = {
-    &gBG0Buffer[0xcf], BG_TILE_ADDR(0x198), gTextGfxBuffer, 0, 96, 224, 1, 1, 0, 1, 3, 0, 0, 1, 0
+    &gBG0Buffer[UI_BG0_AT(15, 6)], BG_TILE_ADDR(0x198), gTextGfxBuffer, 0, 96, 224, 1, 1, 0, 1, 3, 0, 0, 1, 0
 };
 
 const u16 gUnk_080FC85C[][3] = {
@@ -744,11 +744,11 @@ static void DrawFileSelectSettingsHint(void) {
     Font font;
 
     gChooseFileState.unk_0x12 = 1;
-    MemClear(&gBG0Buffer[0x221], 0x80);
+    MemClear(&gBG0Buffer[UI_BG0_AT(1, 17)], 0x80);
     gScreen.bg0.updated = 1;
 
     MemCopy(&gUnk_080FC844, &font, sizeof(font));
-    font.dest = &gBG0Buffer[0x221];
+    font.dest = &gBG0Buffer[UI_BG0_AT(1, 17)];
     font.width = 0x60;
     font.right_align = 0;
     font.sm_border = 0;
@@ -849,7 +849,7 @@ static void DrawPortSettingsMenu(void) {
 
     MemClear(&gBG0Buffer, sizeof(gBG0Buffer));
     MemCopy(&gUnk_080FC844, &font, sizeof(font));
-    font.dest = &gBG0Buffer[0x85];
+    font.dest = &gBG0Buffer[UI_BG0_AT(5, 4)];
     font.width = 0xB0;
     font.right_align = 0;
     font.sm_border = 1;

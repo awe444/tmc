@@ -7,6 +7,7 @@
 #include "port_touch_controls.h"
 #include "port_viewport.h"
 #include "port_mapsource.h"
+#define DISPLAY_WIDTH 240 /* GBA-native content width; engine headers do not parse as C++ */
 
 #ifdef launcher
 #include "tmc_launcher.h"
@@ -164,6 +165,24 @@ static void Port_PPU_ComposeCanvas(void) {
         std::memcpy(&sCanvas[(oy + y) * cw + ox],
                     &virtuappu_frame_buffer[y * MODE1_GBA_WIDTH],
                     (size_t)fw * sizeof(uint32_t));
+    }
+
+    /* Centred UI (title, file select, menus) occupies a DISPLAY_WIDTH-wide
+     * band in the middle of a wider frame. The columns either side carry
+     * that screen's backdrop palette rather than nothing, so paint them the
+     * border colour to satisfy D3's solid-black borders. */
+    if (fw > DISPLAY_WIDTH && Port_MapSource_UiCentered()) {
+        const int bandL = ox + (fw - DISPLAY_WIDTH) / 2;
+        const int bandR = bandL + DISPLAY_WIDTH;
+        for (int y = 0; y < fh; ++y) {
+            uint32_t* row = &sCanvas[(oy + y) * cw];
+            for (int x = ox; x < bandL; ++x) {
+                row[x] = PORT_VIEW_BORDER_COLOR;
+            }
+            for (int x = bandR; x < ox + fw; ++x) {
+                row[x] = PORT_VIEW_BORDER_COLOR;
+            }
+        }
     }
 }
 

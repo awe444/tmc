@@ -1119,49 +1119,57 @@ world accordingly.
       the box shares BG0 with the *anchored* HUD during gameplay.
       Measured **94.7% identical to the 240 reference at a 40 px shift**
       (residual is the surrounding world/HUD, which legitimately differ).
-- [ ] **NOT DONE: the UI screens (title, file select, pause, figurine).**
-      Measured against the 240 reference at a 40 px shift they come out at
-      **5.0% / 5.7% / 47.2% / 64.7%** — i.e. broken, not merely offset.
+- [x] **UI screens centered — measured pixel-exact.** Against the 240
+      reference at a 40 px shift, with border bands checked separately:
 
-> ### Finding: widening BG0's stride is not a localized change
->
-> Attempting to centre the UI screens exposed the real cost of D1, and it
-> is larger than this spike's own scope note claimed.
->
-> `UI_BG0_WIDTH_TILES` changes gBG0Buffer's **row stride** from 32 to 64.
-> Every writer must agree on that stride. `ui.c` (14 sites) and
-> `message.c` were converted; **8 further indexed sites still bake a
-> stride-32 layout** — `subtask.c:54,95`, `demo.c:191-192`,
-> `fileselect.c:225,747,751,852`, `phonograph.c:210` — and, more
-> awkwardly, the shared `Font` text renderer advances rows by its own
-> stride assumption, so any screen drawing text through a `Font` table
-> inherits the old layout regardless of its `dest`.
->
-> Rebinding those layers as map sources (the approach that worked for the
-> HUD) does **not** help here: title and file select load their content
-> straight into VRAM screenblocks, so the staging buffer a map source
-> would read is stale or empty. That is why title/file-select score ~5%
-> rather than ~50%.
->
-> **My earlier "16 references / 7 offsets, far more tractable than ~40"
-> was wrong.** It counted literal indexed accesses in one file and missed
-> both the other writers and the shared renderer. The plan's original
-> ~40-site warning was the better estimate.
->
-> **Cost to finish as specified:** propagate the stride through the 8
-> remaining sites *and* give the `Font` renderer a stride parameter,
-> then re-verify every UI screen at both widths. Estimate **2–3 further
-> days**, which puts Spike 6 at the top of its 4–6 day D1 range.
->
-> **Cheaper alternative worth considering (a D1 variant):** the only thing
-> forcing the stride change is the *rupee/shell counter*, a BG0 tile
-> element anchored past x=256. Hearts are already at column 0 (flush left
-> with no shift), and the item/button icons are OAM sprites already
-> anchored via `gHUD.buttonX` + the widened cull. Leaving just the counter
-> in the 240-wide band would keep gBG0Buffer at stride 32, need **no**
-> further writer changes, and let the UI screens centre with a simple
-> per-layer clip — recovering most of the anchored look for roughly zero
-> additional cost.
+      | screen | content | border black |
+      |---|---|---|
+      | file select | **100.0%** | 100% |
+      | cutscene | **100.0%** | 100% |
+      | pause menu | **100.0%** | 100% |
+      | figurine menu | **100.0%** | 100% |
+      | text box | **100.0%** | n/a (gameplay: world fills the width) |
+      | title | 77.7% | 100% |
+
+      Reaching this took three mechanisms, in the order the failures
+      demanded them:
+      1. **Stride propagation.** `UI_BG0_WIDTH_TILES` changes gBG0Buffer's
+         row stride, so every writer had to agree. The 8 remaining indexed
+         sites were converted, and — the part that actually mattered — the
+         shared text renderer had the stride baked in at `text.c:588,603,643`
+         and throughout `DispMessageFrame`. Both now derive it from the
+         destination via `UiDestStride()`, which returns 0x20 for BG1/BG3
+         and VRAM and the real width for BG0. `gBG0Buffer`'s declaration and
+         that helper now live together in `include/ui_bg0.h` so they cannot
+         disagree; previously the buffer was declared twice, in `vram.h`
+         *and* `structures.h`.
+      2. **A PPU layer clip** (`virtuappu_mode1_set_bg_clip`). Rebinding
+         these layers as map sources does **not** work: title and file
+         select load tilemaps straight into VRAM screenblocks, so a map
+         source reads a stale staging buffer — that is why they first
+         measured ~5%. The clip acts on the layer's normal screenblock
+         fetch, so it is agnostic about where content came from, and it
+         suppresses the wrap a plain scroll offset would produce.
+      3. **A global OBJ offset** (`virtuappu_mode1_set_obj_offset`). Shifting
+         backgrounds without their sprites detaches menu cursors, item icons
+         and the title sword. Adding it took file select 77.7% → 100%,
+         pause 87% → 100%, figurine 95.8% → 100%.
+
+      Plus a D3 detail worth naming: a clipped layer's side bands show that
+      screen's **backdrop palette**, not black (pale yellow on the title
+      screen). `Port_MapSource_UiCentered()` lets the canvas compositor
+      paint those bands the border colour, so all five screens now measure
+      100% black borders.
+- [ ] **Title screen: 77.7%, single known cause.** The residual is the
+      affine BG2 sword, which renders through `mode2.c`'s affine path where
+      neither the clip nor the OBJ offset applies, so it sits 40 px left of
+      the centered content. Everything else on the screen (logo, PRESS
+      START, copyright, borders) is correct. This is the **mode-2 deferral
+      already recorded in §7/open question 6** — affine scenes stay
+      240×160 for Milestone 1 — now with a concrete visible instance.
+      Fixing it means offsetting the affine reference point, which is not a
+      plain pixel shift and risks the gameplay affine scenes (barrel,
+      tornado), so it belongs with Spike 9's affine work rather than here.
 
 **Also deferred:** BG3 overlays during gameplay (hole, light, weather) are
 screen-fixed and still wrap past 256 px at a wide viewport. Not part of

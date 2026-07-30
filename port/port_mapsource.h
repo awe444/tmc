@@ -47,6 +47,13 @@ const char* Port_MapSource_ReasonName(int reason);
 void Port_MapSource_SetEnabled(bool enabled);
 bool Port_MapSource_Enabled(void);
 
+/* True while UI content is being centred (i.e. outside gameplay at a wider
+ * viewport). The canvas compositor uses it to paint the side bands the
+ * border colour instead of letting each screen's backdrop palette show
+ * through — D3 asks for solid black borders, and a backdrop is whatever
+ * palette entry 0 happens to be (pale yellow on the title screen). */
+bool Port_MapSource_UiCentered(void);
+
 /* Frames in which each layer was bound / rejected, for run summaries. */
 void Port_MapSource_Report(void);
 

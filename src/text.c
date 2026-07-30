@@ -1,3 +1,4 @@
+#include "ui_bg0.h"
 #include "asm.h"
 #include "common.h"
 #include "enemy.h"
@@ -585,7 +586,7 @@ u32 ShowTextBox(uintptr_t textIndexOrPtr, const Font* paramFont) {
             uVar8 = font.sm_border ? uVar8 & temp2 : font.width;
 
             puVar9 = font.dest;
-            font.dest += 0x20;
+            font.dest += UiDestStride(font.dest);
 
             if (font.right_align) {
                 uVar8 = (uVar8 + 0xf) & ~0xf;
@@ -600,7 +601,7 @@ u32 ShowTextBox(uintptr_t textIndexOrPtr, const Font* paramFont) {
             font.gfx_src = font.gfx_src + 7;
             textIndexOrPtr = font.gfx_src - 1;
             while (iVar10-- > 0) {
-                puVar9 += 0x20;
+                puVar9 += UiDestStride(puVar9);
                 puVar6 = puVar9;
                 for (uVar5 = uVar8; (s32)uVar5-- > 0;) {
                     *puVar6++ = textIndexOrPtr;
@@ -640,7 +641,7 @@ bool32 sub_0805F5CC(Font* param_1, Token* param_2, WStruct* param_3) {
         param_1->gfx_dest = (void*)((uintptr_t)param_1->gfx_dest + iVar4);
     } else {
         if (param_2->code == 10) {
-            param_1->dest += param_1->_16 * 0x20;
+            param_1->dest += param_1->_16 * UiDestStride(param_1->dest);
         }
     }
     return param_2->code > 0;
