@@ -1,16 +1,25 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** Milestone 1 spikes 0–7 implemented; **playtesting has reopened
-part of it.** See `docs/viewport-bug-tracker.md` — that document is
-authoritative for anything the two playtest rounds touched, and it records
-several corrections to claims made below. Headlines: **D1 was reversed from
-edge-anchored to centered** (§0), Spike 2's original measurement was
-invalidated and re-run (§10), and Spike 5 missed `script.c`, which caused a
-softlock. **Two bugs remain open (B4, B5), both needing a save file parked at
-the moment — no scripted repro exists for either.** Everything else is fixed
-and verified at 320, and every measurable Milestone 1 exit criterion is met
-(§10.1), frame time included. The 240 build remains verified pixel-identical
-to the pre-expansion references throughout.
+**Status: Milestone 1 is DONE — signed off by the maintainer 2026-07-30, go
+for Milestone 2.** A 320×160 viewport builds, runs the canonical route, centres
+narrower rooms with borders, and costs +10.9% present time against the Spike 1
+canvas baseline. The 240 build is verified pixel-identical to the
+pre-expansion references and stays that way — that is the standing regression
+gate.
+
+**Read `docs/viewport-bug-tracker.md` first.** It is authoritative wherever it
+disagrees with this document: four playtest rounds plus one sweep produced ten
+bugs and several corrections to claims made below. It also carries the
+**carry-forward list Milestone 2 inherits**, and the lessons that cost the most
+to learn.
+
+Headlines from that record, because they change what this plan says: **D1 was
+reversed** from edge-anchored to centered (§0); **D3 was amended** — borders are
+a uniform colour, not necessarily black (§0); Spike 2's original measurement was
+invalidated and re-run (§10); Spike 5 missed `script.c`, causing a softlock; and
+B4/B5 were **deferred, never reproduced**.
+
+Next work is §10.2 — Spikes 8–11.
 
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
@@ -36,7 +45,7 @@ deliberately. None require code first.
 |---|---|---|---|---|
 | **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Decided edge-anchored 2026-07-28, REVERSED to centered 2026-07-30.** Edge-anchoring needs `gBG0Buffer`'s stride widened, and the stride proved to be baked into the shared text renderer and several byte-count clears — silent corruptions, not compile errors, so each surfaced only as a playtest bug (three rounds, three more found). BG0 is back to the hardware 32×32 shape, which *cannot* place a tile past x=255, so the layer can only shift uniformly and D1 is realised as centered. Full reasoning and the cost of retrying: `docs/viewport-bug-tracker.md`. |
 | **D2** | **Viewport size: build-time constant or runtime-configurable?** Gates Spike 3's architecture (fork API shape, buffer sizing) and the settings-menu surface. The port already exposes internal-scale at runtime (`port_runtime_config.h`). | Build-time for Milestone 1; revisit before ship | Spike 0 | **Decided 2026-07-27: build-time for M1** |
-| **D3** | **Border appearance** for centered rooms: solid black, or something else? 78% of rooms show borders (§6) — this is most of what players see. | Solid black | Spike 0 | **Decided 2026-07-27: solid black** |
+| **D3** | **Border appearance** for centered rooms: solid black, or something else? 78% of rooms show borders (§6) — this is most of what players see. | Solid black | Spike 0 | **Decided 2026-07-27: solid black. AMENDED 2026-07-30: a uniform colour, not necessarily black.** In gameplay and the legend the backdrop *is* black, so those match. A clipped UI screen shows the PPU backdrop in its border bands — green on the pause menu, grey in the figurine gallery. The bands are uniform (the clip works); they are just not black, which is what hardware shows outside every layer. Accepted as-is rather than forced. Verify borders by **distinct colours per column**, not by "is it black" — see the bug tracker's lesson 6. |
 | **D4** | **Phase 1 scaffold: wire or delete?** (was open question 8). Constraint either way: `viruappu-widescreen.patch` survives as reference material — Spike 9's per-line IO snapshot design lives only in that unapplied patch. | Wire | Spike 0 | **Decided 2026-07-27: delete** — the inert `widescreen_width` option and the dead stretch branch are removed; width plumbing arrives properly in Milestone 1. The patch file stays as Spike 9 reference. |
 
 ---
@@ -873,6 +882,13 @@ would fall outside the representable range at height 240.
 
 ## 10.1 Milestone 1 — Width expansion (240×160 → 320×160)
 
+> **COMPLETE — signed off 2026-07-30.** Exit criteria and results at the end of
+> this section. The spike write-ups below are kept as the record of *how* it was
+> done and what each one proved; several carry inline corrections from
+> playtesting, and `docs/viewport-bug-tracker.md` wins wherever they disagree.
+> If you are starting Milestone 2, read §10.2's "State of the code" first — it
+> summarises what these spikes left behind without requiring you to read them.
+
 ### Spike 3 — Map-sampling BG mode in VirtuaPPU (3–4 days)
 **Questions:** Can a non-GBA BG mode read `gMapData*Special` at an arbitrary
 scroll origin and width, and does it reproduce the existing render exactly at
@@ -1061,11 +1077,19 @@ days) before starting.
 **Method:** Implement D1 by compositing the 32×32 UI path over the expanded
 world accordingly.
 
+> **SUPERSEDED IN PART, 2026-07-30.** The first bullet below describes the
+> edge-anchored HUD, which was **reversed** — D1 is now *centered* (§0), and
+> `UI_RIGHT_ANCHOR_DX` no longer exists in the tree. Everything else in this
+> DoD still holds and is load-bearing (the `gBG0Buffer` array, the phonograph
+> alias, the stride-derived `ui.c` sites), which is why the section is
+> annotated rather than deleted. What replaced it: BG0 stayed a 32×32 map, so
+> the whole layer shifts uniformly by `UI_CENTER_DX` and HUD sprites take
+> `UI_HUD_SPRITE_DX` at source. Full reasoning in the bug tracker.
+
 **Definition of done:** *(core complete 2026-07-28; see remaining item)*
-- [x] **D1 implemented as decided: edge-anchored.** Hearts flush to the true
-      top-left, item/button icons and the rupee counter to the true right
-      edge. `UI_RIGHT_ANCHOR_DX` is 0 at GBA-native width, so anchored
-      elements keep their authored coordinates there.
+- [x] ~~**D1 implemented as decided: edge-anchored.**~~ **Reversed** — see the
+      note above. Hearts, counters, text box and UI screens are centered and
+      move together.
 - [x] **The duplicated HUD is gone** — measured, not eyeballed: red heart
       pixels at x ≥ 160 went **87 → 0** at 320.
 - [x] **Blocker 1 dissolved for BG0, without touching blocker 7.**
@@ -1241,22 +1265,88 @@ than a misleading number. **The 240 regression gate is unaffected: still
 - [x] All rooms narrower than 320 are centered with correct borders. Verified
       by border uniformity (one distinct column value per band) rather than
       by "border is black" — a clipped UI screen's border shows the PPU
-      backdrop, which is green on the pause menu. **D3 says solid black; that
-      is not what a UI-screen border currently is.** Open, see the bug tracker.
+      backdrop, which is green on the pause menu. **D3 amended to accept a
+      uniform colour** (§0).
 - [x] No visual regression versus Spike 0 captures in the central 240 columns.
       The 240 build is pixel-identical on all 11 waypoints and the map-source
       audit is 0/265 497 600.
+
+      At 320 the centre-240 also matches Spike 0 exactly on every
+      240-authored surface and on camera-following rooms — widening adds
+      columns symmetrically, so the middle is untouched. It legitimately
+      differs where the camera **clamps at a room edge** (the clamp sits 40 px
+      further out) and on the title screen (affine carry-forward). Do not read
+      those as regressions; two waypoints that *did* look like clamping were
+      B10 and are now 0.
 - [x] Frame time within 25% of the Spike 0 baseline. **present 7.19 ms mean
       (n=3: 7.263/7.148/7.151) vs the 6.48 ms Spike 1 canvas baseline this is
       measured against (§Spike 1 carry-forward) = +10.9%.** Logic unchanged at
       0.15 ms. Total ~7.34 ms of a 16.67 ms budget (44%). No perf spike needed.
-- [ ] Go/no-go recorded for Milestone 2. **Blocked only on B4 and B5**, which
-      need a maintainer-supplied `tmc.sav` — neither is reachable by the
-      scripted tester. Every measurable criterion above is met.
+- [x] Go/no-go recorded for Milestone 2. **GO — maintainer sign-off
+      2026-07-30.** B4 and B5 were deferred rather than fixed: neither was
+      ever reproduced, and both need a human-driven recording (`--record`,
+      see the bug tracker). World-space window masking was deferred too.
 
 ---
 
 ## 10.2 Milestone 2 — Height expansion (320×160 → 320×240)
+
+### State of the code entering Milestone 2
+
+Written for someone picking this up cold. Milestone 1's width work is landed
+and signed off; this is what it left behind.
+
+**Build.** `xmake f -c -y -m release && xmake build tmc_pc` gives the 240
+build at `build/pc/tmc_pc`. Prefix **both** commands with `TMC_VIEW_W=320` for
+the wide build — and `xmake f -c` is required, a plain `xmake f` will not drop
+a previously configured width. Height has no equivalent switch yet; adding
+`TMC_VIEW_H` alongside it is Milestone 2's first plumbing job
+(`include/viewport.h`, `xmake.lua:453`).
+
+**The regression gate is not optional.** Before any viewport commit, at the
+default 240 build: the canonical route must be 11/11 pixel-identical and the
+map-source audit 0 mismatches in 265,497,600 fetches. Exact commands in
+`tools/capture/README.md`. Both have caught real regressions, including a
+change intended for the wide build that altered what the shipping build
+renders.
+
+**How width was actually achieved**, since height will mirror it:
+
+- `include/viewport.h` holds every derived constant — `VIEWPORT_WIDTH`,
+  `UI_CENTER_DX`, `UI_HUD_SPRITE_DX`, the camera clamps. All reduce to the
+  original literals at GBA-native size, which is why 240 stays byte-identical.
+- The world renders through a **map source**: the PPU samples the engine's
+  full-room special maps directly (`port/port_mapsource.c`) instead of a
+  32-tile VRAM screenblock, which is what lets it exceed 256 px. A screenblock
+  covers 256 px and wraps; that constraint is the root of most of Milestone 1's
+  bugs and it applies identically on the vertical axis.
+- Everything *not* map-sourced is 240-authored and gets **clipped and centred**
+  — with three separate channels that must each be handled, a lesson that cost
+  three bugs: BG layers via the clip (`mapsource_bind_ui`), HUD sprites via
+  `UI_HUD_SPRITE_DX` at each source site, and **PPU windows**, which the BG
+  clip cannot reach and which must be shifted where they are set (B9).
+  Expect the same three channels vertically.
+- BG3 during a world view is a gameplay overlay and is deliberately **not**
+  clipped (B10).
+
+**Tooling that now exists** (`tools/capture/README.md` is the reference):
+deterministic scripted replay and framebuffer capture; `--record=FILE` to
+turn a human-played session into a replayable script; per-waypoint diffing;
+and diagnostics `TMC_CAMTRACE`, `TMC_REJECT_TRACE`, `TMC_LAYER_TRACE`,
+`TMC_BG3_TRACE`, `TMC_MAPSRC_DIAG`, `TMC_WINTRACE`.
+
+**Two verification traps**, both of which produced false results during
+Milestone 1 (bug-tracker lessons 1, 5 and 6):
+
+1. A metric keyed on "is it black" is not a border check — count *distinct
+   colours per column* instead.
+2. When a fix makes a number jump to its theoretical best, confirm the code
+   you think produced it actually ran. A "6400/6400 px" success was measured
+   while the feature was silently disabled.
+
+**Inherited work items** are listed in the bug tracker's carry-forward table;
+the two that land in Spike 9 are the per-scanline window tables and the affine
+paths (title sword, barrel, tornado).
 
 ### Spike 8 — OAM Y widening (2–3 days)
 **Questions:** Can sa2's `EXTENDED_OAM` split-field approach be ported given its

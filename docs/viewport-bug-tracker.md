@@ -1,11 +1,16 @@
 # Viewport expansion — bug tracker
 
 Bugs found playtesting the 320×160 build (`docs/viewport-expansion-research-plan.md`
-Milestone 1). Reported by the maintainer over two rounds of testing; IDs are
-theirs. **Last updated 2026-07-30**, after the
-`mapsource_bind_ui` scheduling fix.
+Milestone 1). Reported by the maintainer over four rounds of testing; IDs are
+theirs, except B10 which came from a sweep.
 
-Anything at 240 is a release blocker. Anything at 320 blocks the Milestone 1
+**Status: Milestone 1 is done — signed off by the maintainer 2026-07-30.**
+Eight of ten bugs are fixed and verified; B4 and B5 are **deferred by
+decision**, not outstanding blockers. This document stays the authoritative
+record of what the widening actually did to the engine, and §"Carry-forward
+items" is the list Milestone 2 inherits.
+
+Anything at 240 is a release blocker. Anything at 320 blocked the Milestone 1
 exit criteria but not the shipping build, which is still GBA-native.
 
 ## Status
@@ -15,8 +20,8 @@ exit criteria but not the shipping build, which is still GBA-native.
 | B1 | Save/erase popups' text garbled | **Fixed** (verified 320) |
 | B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320, in situ) |
 | B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320, in situ) |
-| B4 | Smith-room sprites/layers wrong at first dialogue | **Open** — cannot reproduce |
-| B5 | Interior room-to-room scroll glitches | **Open** — cannot reproduce (needs walking) |
+| B4 | Smith-room sprites/layers wrong at first dialogue | **Deferred** — never reproduced; needs a recording |
+| B5 | Interior room-to-room scroll glitches | **Deferred** — never reproduced; needs a recording |
 | B6 | Zelda sprite in the left border | **Fixed** (confirmed by maintainer) |
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
 | B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320, pixel-exact vs 240) |
@@ -116,15 +121,18 @@ Reported first as centred-240-with-borders, then after a partial fix as
 content edge to edge and Zelda correctly placed in world space
 (`scripts/sweep.script` frames 4750–5750, right band 6286–6400/6400 px).
 
-## B4 — smith-room sprites/layers wrong at first dialogue *(open)*
+## B4 — smith-room sprites/layers wrong at first dialogue *(deferred)*
 
-**Cannot reproduce.** Captures of that room *with* dialogue render correctly
-at 320 (`scripts/bugs.script` waypoint `B4_smith_dialogue`). The report
-specifies "the very first character dialogue", and the scripted run appears
-to land on a later one. Needs either a save file parked at that moment or a
-screenshot to identify which of several possible faults it is.
+**Never reproduced.** Captures of that room *with* dialogue render correctly
+at 320 (`scripts/bugs.script` waypoint `B4_smith_dialogue`, and the smith-room
+frames in `sweep.script`). The report specifies "the very first character
+dialogue", and the scripted run lands on a later one.
 
-## B5 — interior room-to-room scroll glitches *(open)*
+**Deferred at Milestone 1 sign-off.** To pick it up, capture a recording — see
+"Reproducing B4 and B5" below. Do not spend more time inferring it from prose:
+three rounds of that produced no hit.
+
+## B5 — interior room-to-room scroll glitches *(deferred)*
 
 Walking from the left interior room into the right one: visible glitching,
 scrolling not smooth.
@@ -137,13 +145,36 @@ garbage. Mitigation applied: during a transition the world layers and their
 sprites are clipped to the authored width, giving a clean 240-wide slice with
 borders instead.
 
-**Cannot reproduce.** The scripted tester only presses buttons; this needs
+**Never reproduced.** The scripted tester only presses buttons; this needs
 Link walked to a specific doorway. The mitigation has never been observed
-working.
+working, so it is unverified rather than known-good.
 
 Maintainer preference on record: *a fade transition would be acceptable, and
 preferable, if the borders cannot contain the adjacent room.* That is a
 design change rather than a fix and has not been made.
+
+**Deferred at Milestone 1 sign-off.** See "Reproducing B4 and B5" below.
+
+## Reproducing B4 and B5
+
+Both need a human at the controls, which is why they survived four rounds.
+`--record=FILE` exists for exactly this and turns a human-reached moment into
+a headless, frame-exact, re-runnable fixture:
+
+```bash
+cd build/play-320x160 && ./record-bug.sh B5
+```
+
+Play to the bug, quit **normally** (not `kill`), and keep both produced files:
+the `.script` and the `.script.sav` beside it. Replay with
+`tmc_pc --script=<file>` from a directory holding that save as `tmc.sav`.
+Start recording from the title screen — the log begins at frame 0 and replay
+starts from a fresh boot, so file-select navigation must be in it. Full
+mechanism and the three things that break replay:
+`tools/capture/README.md`, "Recording a human session".
+
+A portable save-state file would have been the obvious alternative and **does
+not work** — see the carry-forward item on quicksave portability.
 
 ## B6 — stray Zelda sprite in the left border *(fixed)*
 
@@ -360,43 +391,16 @@ to add between bug fixes.
 
 ---
 
-## Next actions, in order
-
-1. **B4 and B5 need a maintainer-supplied input recording.** These are the
-   only two open bugs. Three rounds of inferring them from prose has a poor
-   hit rate — B4's captures render *correctly* in the scripted run, and B5
-   cannot be reached by button presses at all.
-
-   `--record=FILE` now exists for exactly this (`tools/capture/README.md`,
-   "Recording a human session"): it logs the committed KEYINPUT in the
-   replay path's own script format and copies the starting save alongside, so
-   a human-reached bug becomes a headless, frame-exact, re-runnable fixture.
-   Playtester wrapper: `build/play-320x160/record-bug.sh`.
-
-   A save-state file was the obvious alternative and **does not work** — see
-   the note under carry-forward items.
-2. **Decide whether border colour matters (D3).** The plan's D3 says solid
-   black borders. That holds wherever the backdrop is black (gameplay, the
-   legend), but a clipped UI screen shows the *PPU backdrop* in its border
-   bands, which on the pause menu is green and on the figurine gallery grey.
-   It is a uniform colour, not bleed — the clip is working — but it is not
-   black. Cheap to force if the maintainer wants it; not obviously wrong as
-   is, since that is what hardware shows outside every layer.
-3. **A fourth playtest round** to confirm B2/B3 by eye and look for whatever
-   the previous rounds' fixes have newly exposed. Note that until this fix,
-   `mapsource_bind_ui()` had not run at all since `b47ec0cc` — so the UI
-   centring, the OBJ clip (B6) and the OBJ offset were *all* inert in the
-   build that was last played. Anything that looked fine then was not being
-   tested; anything that looked broken may already be fixed.
-
-## Milestone 1 exit criteria
+## Milestone 1 exit criteria — met, signed off 2026-07-30
 
 | Criterion | Result |
 |---|---|
 | 240 route pixel-identical | **11/11, 0 differences** |
 | 240 map-source audit | **0 mismatched in 265 497 600 fetches** |
-| No layer wraps/repeats at 320 | **0 wrap-period columns**, 40-frame opening sweep |
+| No layer wraps/repeats at 320 | **0 wrap-period columns**, 40-frame opening sweep + 11-waypoint route |
+| Rooms narrower than 320 centred with borders | **verified** on every room tested; borders are a uniform colour (see D3 below) |
 | Frame time at 320 within +25% | **present 7.19 ms mean** vs the 6.48 ms Spike 1 canvas baseline = **+10.9%** |
+| Go/no-go for Milestone 2 | **GO** — maintainer approval, 2026-07-30 |
 
 Frame time measured the same way as the baseline: canonical route (12 700
 frames), headless dummy video, uncapped, release build, n=3 runs —
@@ -408,12 +412,35 @@ The +10.9% over a canvas build whose presented surface is already 320×240 is
 the extra PPU rasterisation for 33% more viewport pixels; present cost itself
 is dominated by a texture upload whose size did not change.
 
-**Remaining before Milestone 1 can be called done:** B4 and B5, which need a
-save file. Every measurable criterion is met.
+**Decisions taken at sign-off**, so they are not relitigated:
 
-## Carry-forward items not from playtesting
+- **B4 and B5 deferred**, not fixed. Neither was ever reproduced.
+- **D3 amended: coloured borders are accepted.** The plan's D3 said solid
+  black. That holds wherever the backdrop is black (gameplay, the legend), but
+  a clipped UI screen shows the *PPU backdrop* in its border bands — green on
+  the pause menu, grey in the figurine gallery. The bands are uniform, so the
+  clip is working; they are simply not black, which is what hardware shows
+  outside every layer anyway. Accepted as-is rather than forced.
+- **World-space window sites deferred** (carry-forward below).
 
-Recorded here so they are not lost with the plan's spike sections:
+The 240 gates above were re-run after every change in this document and are
+the standing regression gate; keep running both before any viewport commit
+(`tools/capture/README.md`, "Regression gate").
+
+## Carry-forward items — what Milestone 2 inherits
+
+Recorded here so they are not lost with the plan's spike sections. Routing:
+
+| Item | Lands in |
+|---|---|
+| Title screen affine sword | Spike 9 (affine) |
+| Per-scanline circular windows | Spike 9 (HDMA) |
+| World-space window x masked to 8 bits | Spike 9, or sooner if a scene is reported |
+| Kinstone menu unverified | any real playthrough |
+| Quicksave state files not portable | nothing — recorded as a dead end |
+
+None of these blocks starting Milestone 2. The two Spike 9 items are the ones
+that will actually be *worked*; the rest are notes.
 
 - **Title screen affine sword** sits ~40 px left. It renders through
   `mode2.c`'s affine path, which neither the BG clip nor the OBJ offset
@@ -458,6 +485,7 @@ Recorded here so they are not lost with the plan's spike sections:
   reproduced before it is touched. The light door is the cheapest to reach.
 - ~~**BG3 gameplay overlays** were never swept for wrap past 256 px.~~
   **Swept — see B10.** Wrap was not the defect; the centring clip was.
-- **Milestone 1 frame time at 320** is unmeasured. Baseline for comparison is
+- ~~**Milestone 1 frame time at 320** is unmeasured.~~ **Measured** — see the
+  exit-criteria table above. Note the baseline for any future comparison is
   the Spike 1 canvas build (present 6.48 ms mean), *not* the Spike 0 240
-  baseline — the canvas cost is paid once and should not be charged twice.
+  baseline: the canvas cost is paid once and must not be charged twice.
