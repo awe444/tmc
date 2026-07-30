@@ -24,6 +24,7 @@
 #include "script.h"
 #include "subtask.h"
 #include "tiles.h"
+#include "viewport.h"
 
 void sub_08051F78(void);
 void sub_08051FF0(void);
@@ -264,7 +265,16 @@ void sub_08053800(void) {
         ShowTextBox(TEXT_INDEX(TEXT_PICORI, 1) + index, ptr->font);
         gScreen.bg1.updated = 1;
         gScreen.controls.alphaBlend = 0x10;
-        gScreen.controls.window0HorizontalDimensions = WIN_RANGE(ptr->width >> 8, ptr->width & 0xff);
+        /* B9: ptr->width packs the panel window's left/right edges, authored
+         * against a 240-wide screen (the tall portrait cards use 0..120, the
+         * wide ones 0..240). The story panels are a 240-authored surface and
+         * are centred like every other one — but a hardware window is applied
+         * by the PPU in *screen* coordinates and knows nothing about the BG
+         * clip that does the centring. Left unshifted, the window's right edge
+         * landed 40 px early, which put the blend boundary inside the artwork
+         * and dimmed everything right of it. Zero at GBA-native width. */
+        gScreen.controls.window0HorizontalDimensions = WIN_RANGE(
+            (ptr->width >> 8) + UI_CENTER_DX, (ptr->width & 0xff) + UI_CENTER_DX);
         gScreen.controls.window0VerticalDimensions = WIN_RANGE(ptr->height >> 8, ptr->height & 0xff);
         SetFade(FADE_INSTANT, ptr->fadeSpeed);
     }

@@ -67,15 +67,20 @@
 #define UI_BG0_RIGHT_COL ((DISPLAY_WIDTH / 8) - 1)
 
 /* Centering shift for UI surfaces authored against a 240-wide screen.
- * D1 settles the *screens* (title, file select, menus) and the text box as
- * centered, unlike the in-game HUD which is edge-anchored — so these two
- * shifts coexist and must not be confused. Zero at GBA-native width. */
+ * D1 was reversed (see docs/viewport-bug-tracker.md): the in-game HUD is
+ * *also* centered now, not edge-anchored, because a 32-column BG0 cannot
+ * place a tile past x=255. There is therefore only one shift, and every
+ * 240-authored surface takes it. Zero at GBA-native width. */
 #define UI_CENTER_DX ((VIEWPORT_WIDTH - DISPLAY_WIDTH) / 2)
 #define UI_CENTER_TILE_DX (UI_CENTER_DX / 8)
 
-/* HUD sprites (item/button icons) are positioned in engine coordinates and
- * must move with the centred BG0 layer they sit on, so they take the same
- * shift. Zero at GBA-native width. */
+/* HUD sprites are positioned in engine coordinates and must move with the
+ * centred BG0 layer they sit on, so they take the same shift. World sprites
+ * must NOT — that is why this is applied at each HUD source site rather than
+ * as a global OBJ offset. Every UI element that sets a screen x needs it:
+ * buttons via gHUD.buttonX, the heart overlay and the Ezlo nag directly
+ * (ui.c); item and text elements inherit x from the button element and so
+ * must not add it again. Zero at GBA-native width. */
 #define UI_HUD_SPRITE_DX UI_CENTER_DX
 
 /* Horizontal camera limits for a room at (origin_x, width).

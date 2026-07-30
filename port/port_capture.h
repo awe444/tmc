@@ -38,6 +38,23 @@ bool Port_Capture_Uncapped(void);
  * overwrites the committed KEYINPUT with the script's held-key state. */
 void Port_Capture_OverrideInput(volatile uint16_t* keyinput);
 
+/* --record=FILE: write this session's input as a replayable script.
+ *
+ * The point is reproducing a bug that only a human can reach. The engine's
+ * only nondeterminism is input (see the RNG note above), so replaying a
+ * faithful input log from the same starting save reproduces the run
+ * frame-for-frame — which a memory snapshot cannot do across processes,
+ * because it carries host pointers (this was tried; see the bug tracker).
+ *
+ * Records from frame 0 rather than from a hotkey: replay starts at a fresh
+ * boot, so any input before recording began would be missing and everything
+ * after it would desync. The starting tmc.sav is copied alongside for the
+ * same reason — the live one is overwritten as you play.
+ *
+ * Called at the very end of Port_UpdateInput so it logs exactly the KEYINPUT
+ * the engine went on to read, including the title auto-START hack. */
+void Port_Capture_RecordInput(volatile uint16_t* keyinput);
+
 /* Called once per frame from VBlankIntrWait, after PresentFrame (so a
  * dump command reads exactly the frame that was just presented).
  * logicNs   = engine time between the previous VBlankIntrWait return and

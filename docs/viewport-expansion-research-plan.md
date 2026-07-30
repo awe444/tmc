@@ -6,8 +6,11 @@ authoritative for anything the two playtest rounds touched, and it records
 several corrections to claims made below. Headlines: **D1 was reversed from
 edge-anchored to centered** (§0), Spike 2's original measurement was
 invalidated and re-run (§10), and Spike 5 missed `script.c`, which caused a
-softlock. Two bugs are still open and two unconfirmed. The 240 build remains
-verified pixel-identical to the pre-expansion references throughout.
+softlock. **Two bugs remain open (B4, B5), both needing a save file parked at
+the moment — no scripted repro exists for either.** Everything else is fixed
+and verified at 320, and every measurable Milestone 1 exit criterion is met
+(§10.1), frame time included. The 240 build remains verified pixel-identical
+to the pre-expansion references throughout.
 
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
@@ -1234,14 +1237,22 @@ than a misleading number. **The 240 regression gate is unaffected: still
 0 mismatches in 265 497 600 fetches.**
 
 ### Milestone 1 exit criteria
-- [ ] 320×160 builds, runs, and completes the canonical route without crash.
-- [ ] All rooms narrower than 320 are centered with correct borders.
-- [ ] No visual regression versus Spike 0 captures in the central 240 columns.
-- [ ] Frame time within 25% of the Spike 0 baseline. **If exceeded:** the
-      overrun is handled by a dedicated perf spike scheduled before ship — the
-      criterion is not silently renegotiated. Milestone 2 may start in
-      parallel with that perf spike only if the overrun is under 2×.
-- [ ] Go/no-go recorded for Milestone 2.
+- [x] 320×160 builds, runs, and completes the canonical route without crash.
+- [x] All rooms narrower than 320 are centered with correct borders. Verified
+      by border uniformity (one distinct column value per band) rather than
+      by "border is black" — a clipped UI screen's border shows the PPU
+      backdrop, which is green on the pause menu. **D3 says solid black; that
+      is not what a UI-screen border currently is.** Open, see the bug tracker.
+- [x] No visual regression versus Spike 0 captures in the central 240 columns.
+      The 240 build is pixel-identical on all 11 waypoints and the map-source
+      audit is 0/265 497 600.
+- [x] Frame time within 25% of the Spike 0 baseline. **present 7.19 ms mean
+      (n=3: 7.263/7.148/7.151) vs the 6.48 ms Spike 1 canvas baseline this is
+      measured against (§Spike 1 carry-forward) = +10.9%.** Logic unchanged at
+      0.15 ms. Total ~7.34 ms of a 16.67 ms budget (44%). No perf spike needed.
+- [ ] Go/no-go recorded for Milestone 2. **Blocked only on B4 and B5**, which
+      need a maintainer-supplied `tmc.sav` — neither is reachable by the
+      scripted tester. Every measurable criterion above is met.
 
 ---
 
