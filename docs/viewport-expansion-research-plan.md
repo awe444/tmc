@@ -1,29 +1,14 @@
 # Viewport Expansion Research Plan — 240×160 → 320×240
 
-**Status:** Spikes 0, 1 and **2 (the decision gate)** complete, Option F
-closed. **The gate is passed: Option E is confirmed** — 7.6M runtime tile
-comparisons across two instrumented runs, zero persistent mismatches, all
-exclusions caught by the predicate (Spike 2 DoD, §10). The 320×240 canvas
-(Option B) is in as the shippable fallback. **The entire gate phase
-(Spikes 0–2B) is complete**: the width and height probes both held
-(`docs/spike2a-width-probe.md`, `docs/spike2b-height-probe.md`), the OAM
-write site is port-owned C, blocker severities are measured, and the
-**axis order is confirmed: width first**. Revised estimates: Milestone 1
-= 10–13 d, Milestone 2 = 6.5–8.5 d. **D1 (HUD placement) is the only
-open decision**; mockups ready in `tools/capture/references/hud-mockups/`.
-**Spikes 3, 4 and 5 are complete**: the map-sampling BG mode is live and
-bit-identical to the hardware path at 240 (0 mismatches in 265M tile
-fetches) while rendering real world data at 320; window bounds are widened
-to 32 bits with a committed edge of 320 proven at runtime; and the
-horizontal camera is viewport-derived, centring all 443 narrow rooms and
-clamping correctly across every width cluster. **Option C (variable
-per-room viewport) is formally dropped** — fixed viewport plus clamping
-covers it. **D1 is decided (edge-anchored) and Spike 6's HUD half is
-done**: `gBG0Buffer` is a real viewport-sized array bound as a map source,
-so blocker 1 is dissolved for BG0 without touching blocker 7, and the
-duplicated HUD is gone (87 → 0 stray heart pixels). Remaining in Spike 6:
-centering the UI *screens* (title, file select, menus, text boxes), which
-still wrap at 256. Then Spike 7 (culling).
+**Status:** Milestone 1 spikes 0–7 implemented; **playtesting has reopened
+part of it.** See `docs/viewport-bug-tracker.md` — that document is
+authoritative for anything the two playtest rounds touched, and it records
+several corrections to claims made below. Headlines: **D1 was reversed from
+edge-anchored to centered** (§0), Spike 2's original measurement was
+invalidated and re-run (§10), and Spike 5 missed `script.c`, which caused a
+softlock. Two bugs are still open and two unconfirmed. The 240 build remains
+verified pixel-identical to the pre-expansion references throughout.
+
 **Target:** PC port only (`PC_PORT`). GBA-native build target is *not* preserved.
 **Scope:** USA assets only. Mod/pak compatibility (`port_asset_pak*`) at
 320×240 is **best-effort, not gating** — mods are authored against 240×160
@@ -46,7 +31,7 @@ deliberately. None require code first.
 
 | # | Decision | Default if unmade | Made in | Status |
 |---|---|---|---|---|
-| **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Decided 2026-07-28: edge-anchored.** Hearts to the true top-left, items/rupees to the true right edge — native look at 320. Accepts reopening blocker 1 for BG0 (wider `gBG0Buffer`) and the ~40 stride-sensitive `ui.c` sites; Spike 6 re-estimated 2 d → 4–6 d. |
+| **D1** | **HUD placement at expanded width.** Centered (hearts/rupees float 40 px in from the window edge) or edge-anchored (reopens the stride-sensitive `gBG0Buffer` sites, §3)? This is a product choice, not an engineering one — decide from the two Spike 0 mockups. Menus/title/file-select are settled (centered, §5); this is specifically the in-game overlay. | Centered | Before Spike 6 | **Decided edge-anchored 2026-07-28, REVERSED to centered 2026-07-30.** Edge-anchoring needs `gBG0Buffer`'s stride widened, and the stride proved to be baked into the shared text renderer and several byte-count clears — silent corruptions, not compile errors, so each surfaced only as a playtest bug (three rounds, three more found). BG0 is back to the hardware 32×32 shape, which *cannot* place a tile past x=255, so the layer can only shift uniformly and D1 is realised as centered. Full reasoning and the cost of retrying: `docs/viewport-bug-tracker.md`. |
 | **D2** | **Viewport size: build-time constant or runtime-configurable?** Gates Spike 3's architecture (fork API shape, buffer sizing) and the settings-menu surface. The port already exposes internal-scale at runtime (`port_runtime_config.h`). | Build-time for Milestone 1; revisit before ship | Spike 0 | **Decided 2026-07-27: build-time for M1** |
 | **D3** | **Border appearance** for centered rooms: solid black, or something else? 78% of rooms show borders (§6) — this is most of what players see. | Solid black | Spike 0 | **Decided 2026-07-27: solid black** |
 | **D4** | **Phase 1 scaffold: wire or delete?** (was open question 8). Constraint either way: `viruappu-widescreen.patch` survives as reference material — Spike 9's per-line IO snapshot design lives only in that unapplied patch. | Wire | Spike 0 | **Decided 2026-07-27: delete** — the inert `widescreen_width` option and the dead stretch branch are removed; width plumbing arrives properly in Milestone 1. The patch file stays as Spike 9 reference. |
@@ -1006,9 +991,15 @@ Then replace `0x78`/`0xf8`/`0xf0`/literal `120` with viewport-derived
 expressions. Test across the §6 width clusters: 240, 272, 304, 336, 400+.
 
 **Definition of done:** *(completed 2026-07-28)*
-- [x] **Every horizontal camera constant replaced** by a viewport-derived
-      expression; no bare `0x78`/`0xf0`/`0xf8`/`120` remains in horizontal
-      camera math. New `include/viewport.h` owns the derivations
+- [x] *(amended 2026-07-30)* **Every horizontal camera constant replaced** —
+      **but this was reported before it was true.** The `sed` for `script.c`
+      matched nothing (the real text has `gRoomControls.` prefixes) and the
+      verifying grep only covered `scroll.c`, so `WaitForCameraTouchRoomBorder`
+      kept predicting the camera's resting place from `DISPLAY_WIDTH` while
+      the camera clamped on 320 — an unreachable equality and a hard
+      softlock (bug B7). Every remaining `DISPLAY_WIDTH/HEIGHT` in `src/` has
+      since been audited and the viewport-derived ones converted. Lesson:
+      verify the *scope* of the verification, not just its result. New `include/viewport.h` owns the derivations
       (`VIEWPORT_HALF_WIDTH`, `VIEWPORT_REGION_WIDTH`, the camera range
       macros) and Spike 4's `WIN_VIEWPORT_*` now alias it, so there is one
       definition of "how wide is the viewport". Sites: `scroll.c`
@@ -1101,9 +1092,13 @@ world accordingly.
       each anchored expression reproduces its original offset exactly at
       240. The other 12 whole-buffer uses already went through
       `sizeof(gBG0Buffer)` and adapt for free.
-      *Scope note:* the feared "~40 stride-sensitive sites" was **16
-      references / 7 offsets** in `ui.c` — the 40 figure counted all 24
-      files, most of which are separate UI screens that stay centered.
+      *Scope note, corrected twice:* I first called the feared "~40
+      stride-sensitive sites" an over-estimate at "16 references / 7 offsets
+      in `ui.c`". That was wrong — it counted literal indexed accesses in one
+      file and missed the other writers, the byte-count clears, and the
+      shared `Font` text renderer. The plan's original ~40 was the better
+      estimate. **This whole sub-spike was subsequently reverted** (D1
+      reversal, above); the stride is back to 32.
 - [x] **Sprite cull widened** (`port_draw.c`): `x >= 240` / `y >= 160` are
       now viewport-derived. Required here, not deferrable — a
       right-anchored icon at x≈288 was culled before it could draw, which
