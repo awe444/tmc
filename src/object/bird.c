@@ -5,6 +5,7 @@
  * @brief Bird object
  */
 #include "collision.h"
+#include "viewport.h"
 #include "game.h"
 #include "item.h"
 #include "message.h"
@@ -333,7 +334,7 @@ void Bird_Type9(BirdEntity* this) {
             child->spriteOrientation.flipY = super->spriteOrientation.flipY;
         }
         PausePlayer();
-        if (gRoomControls.scroll_x + 0x78 < super->x.HALF.HI) {
+        if (gRoomControls.scroll_x + VIEWPORT_HALF_WIDTH < super->x.HALF.HI) {
             super->action++;
             super->spritePriority.b1 = 1;
             if (child != NULL) {

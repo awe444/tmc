@@ -5,6 +5,7 @@
  * @brief Guard with Spear NPC
  */
 #include "entity.h"
+#include "viewport.h"
 #include "item.h"
 #include "npc.h"
 #include "object.h"
@@ -291,11 +292,11 @@ void CheckLastSwordMove(Entity* this, ScriptExecutionContext* context) {
 u32 sub_080644C8(GuardWithSpearEntity* this) {
     if (super->x.HALF.HI - gRoomControls.scroll_x + 8 < 0)
         return 0;
-    if (super->x.HALF.HI - gRoomControls.scroll_x - 8 > DISPLAY_WIDTH)
+    if (super->x.HALF.HI - gRoomControls.scroll_x - 8 > VIEWPORT_WIDTH)
         return 0;
     if (super->y.HALF.HI - gRoomControls.scroll_y < 0)
         return 0;
-    if (super->y.HALF.HI - gRoomControls.scroll_y - 0x18 > DISPLAY_HEIGHT)
+    if (super->y.HALF.HI - gRoomControls.scroll_y - 0x18 > VIEWPORT_HEIGHT)
         return 0;
     return 1;
 }

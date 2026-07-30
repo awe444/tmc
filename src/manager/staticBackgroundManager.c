@@ -5,6 +5,7 @@
  * @brief Sets up static bg 3 images?
  */
 #include "manager/staticBackgroundManager.h"
+#include "viewport.h"
 #include "common.h"
 #include "screen.h"
 #include "game.h"
@@ -58,7 +59,7 @@ void sub_0805B448(StaticBackgroundManager* this) {
 }
 
 void sub_0805B474(StaticBackgroundManager* this) {
-    s32 tmp = ((gRoomControls.scroll_y - gRoomControls.origin_y) * 0x60) / (gRoomControls.height - DISPLAY_HEIGHT);
+    s32 tmp = ((gRoomControls.scroll_y - gRoomControls.origin_y) * 0x60) / (gRoomControls.height - VIEWPORT_HEIGHT);
     gScreen.bg3.yOffset = gRoomControls.origin_y + tmp;
     gScreen.bg3.xOffset = gRoomControls.scroll_x - ((gRoomControls.width - 0x100) / 2);
 }

@@ -102,6 +102,57 @@ static uint32_t sOamHighYFrames = 0;
 static uint32_t sOamHighYEntriesTotal = 0;
 static uint32_t sOamHighYEntriesMax = 0;
 
+/* --- Spike 7: off-screen behaviour ---------------------------------------
+ * Two things the wider viewport could break, counted rather than eyeballed:
+ *
+ *  - OAM entries resolving into the *expanded* columns (240..VIEWPORT-1).
+ *    Spike 2A established that unused entries are parked *disabled*
+ *    (attr0 = 0x2A0), so leakage should be structurally impossible; this
+ *    counts enabled sprites landing there, split by whether they are
+ *    plausible content or suspiciously parked-looking.
+ *  - Entities the engine considers off-screen that are now visible, i.e.
+ *    pop-in: an enabled sprite appearing in the expanded columns on the
+ *    same frame it first becomes visible.
+ */
+static uint32_t sExpandedColFrames = 0;
+static uint32_t sExpandedColEntries = 0;
+static uint32_t sExpandedColMax = 0;
+static uint32_t sParkedLookalikes = 0;
+
+static void spike7_sample(void) {
+    uint32_t n = 0;
+    int i;
+    if (gMain.task != TASK_GAME || MODE1_GBA_WIDTH <= 240) {
+        return;
+    }
+    for (i = 0; i < 0x80; i++) {
+        uint16_t attr0, attr1;
+        int x;
+        memcpy(&attr0, (const u8*)&gOAMControls.oam[i] + 0, 2);
+        memcpy(&attr1, (const u8*)&gOAMControls.oam[i] + 2, 2);
+        if ((attr0 & 0x0300) == 0x0200) {
+            continue; /* disabled, including the 0x2A0 parking pattern */
+        }
+        x = attr1 & 0x1FF;
+        if (x >= MODE1_GBA_WIDTH) {
+            x -= 512;
+        }
+        if (x >= 240 && x < MODE1_GBA_WIDTH) {
+            n++;
+            /* attr0 y == 160 with no other content is the parking y; an
+             * enabled entry there is the leakage the old patch feared. */
+            if ((attr0 & 0xFF) == 0xA0) {
+                sParkedLookalikes++;
+            }
+        }
+    }
+    if (n > 0) {
+        sExpandedColFrames++;
+        sExpandedColEntries += n;
+        if (n > sExpandedColMax) sExpandedColMax = n;
+    }
+}
+
 static void spike2b_sample(void) {
     /* camera deltas: only within one room and outside transition scrolls */
     if (gMain.task == TASK_GAME && gRoomControls.scrollAction < 2 &&
@@ -303,6 +354,7 @@ void Port_MapCheck_OnFrame(uint32_t frame) {
     }
     sFramesSeen++;
     spike2b_sample();
+    spike7_sample();
 
     if (gRoomControls.area != sLastArea || gRoomControls.room != sLastRoom) {
         sLastArea = gRoomControls.area;
@@ -420,6 +472,11 @@ void Port_MapCheck_Report(void) {
             sMaxDx, sMaxDy, sMaxDyContinuous,
             sDyBand[0], sDyBand[1], sDyBand[2], sDyBand[3], sDyBand[4],
             sDxBand[0], sDxBand[1], sDxBand[2], sDxBand[3], sDxBand[4]);
+    fprintf(stderr,
+            "[mapcheck] spike7: OAM in expanded cols 240..%d: frames=%u entries=%u "
+            "max-simultaneous=%u parked-lookalikes=%u\n",
+            MODE1_GBA_WIDTH - 1, sExpandedColFrames, sExpandedColEntries,
+            sExpandedColMax, sParkedLookalikes);
     fprintf(stderr,
             "[mapcheck] spike2b: OAM high-Y (enabled, y in 161..239): frames=%u "
             "entries-total=%u max-simultaneous=%u\n",

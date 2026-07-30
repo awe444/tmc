@@ -5,6 +5,7 @@
  * @brief Rainfall on the crenel minish path.
  */
 #include "manager/rainfallManager.h"
+#include "viewport.h"
 #include "asm.h"
 #include "room.h"
 #include "enemy.h"
@@ -36,8 +37,8 @@ void RainfallManager_Action1(RainfallManager* this) {
         super->timer = 15;
         waterDrop = CreateEnemy(WATER_DROP, 0);
         if (waterDrop != NULL) {
-            waterDrop->x.HALF.HI = gRoomControls.scroll_x + 0x78 + gUnk_08108C6C[Random() & 7];
-            waterDrop->y.HALF.HI = gRoomControls.scroll_y + 0x50 + gUnk_08108C7C[Random() & 3];
+            waterDrop->x.HALF.HI = gRoomControls.scroll_x + VIEWPORT_HALF_WIDTH + gUnk_08108C6C[Random() & 7];
+            waterDrop->y.HALF.HI = gRoomControls.scroll_y + VIEWPORT_HALF_HEIGHT + gUnk_08108C7C[Random() & 3];
             waterDrop->z.HALF.HI = 0xff38;
         }
     }

@@ -5,6 +5,7 @@
  * @brief Cutscene Misc object
  */
 #include "object/cutsceneMiscObject.h"
+#include "viewport.h"
 #include "area.h"
 #include "asm.h"
 #include "color.h"
@@ -336,8 +337,8 @@ void CutsceneMiscObject_Type5(CutsceneMiscObjectEntity* this) {
         if ((gRoomTransition.frameCount % 32) == 0) {
             Entity* e = CreateObject(0x6A, 5, 1);
             if (e != NULL) {
-                e->x.HALF.HI = gRoomControls.scroll_x + (s32)Random() % DISPLAY_WIDTH;
-                e->y.HALF.HI = gRoomControls.scroll_y + (s32)Random() % DISPLAY_HEIGHT;
+                e->x.HALF.HI = gRoomControls.scroll_x + (s32)Random() % VIEWPORT_WIDTH;
+                e->y.HALF.HI = gRoomControls.scroll_y + (s32)Random() % VIEWPORT_HEIGHT;
             }
         }
         return;

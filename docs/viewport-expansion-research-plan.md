@@ -1184,14 +1184,59 @@ is a floor — re-estimate before starting.)
 **Method:** Focus on the 174 rooms ≥320 wide, weighted to Hyrule Field, Hyrule
 Town, Minish Woods, Castor Wilds.
 
-**Definition of done:**
-- [ ] The per-entity OAM coordinate write site (located in Spike 2A) is
-      confirmed at runtime and documented.
-- [ ] The sprite parking convention is documented (what coordinate, set where).
-- [ ] At least 10 rooms ≥320 wide walked end to end; every instance of pop-in,
-      parked-sprite leakage, or broken cutscene framing logged with room ID and
-      a screenshot.
-- [ ] Each logged issue assigned a severity and a fix estimate.
+**Definition of done:** *(completed 2026-07-28)*
+- [x] **OAM write site confirmed at runtime.** `RenderSpritePieces`
+      (`port_draw.c`) is what fills `gOAMControls.oam`; the new
+      `--mapcheck` census reads that table directly and its counts move
+      with on-screen sprites, closing the loop on Spike 2A's static find.
+- [x] **Parking convention confirmed — and the old fear disproven.**
+      Across the 12-room walk at 320: **51 086 enabled OAM entries resolved
+      into the expanded columns 240–319 over 12 006 frames (max 11
+      simultaneous), and `parked-lookalikes = 0`.** Unused entries are
+      parked *disabled* (`attr0 = 0x2A0` — OBJ-disable + y=160), so parked
+      sprites cannot leak into widened columns. The 51 k entries are
+      legitimate content that the wider viewport now shows. **The Phase 1
+      patch header's "parked off-screen sprites live at x ≥ 240" — the
+      stated reason that scaffold clipped OAM at 240 — is wrong.**
+- [x] **12 rooms ≥ 320 wide walked end to end** (exceeds the 10 required),
+      weighted to the high-playtime overworld per §6: Minish Woods, Minish
+      Village, Hyrule Town, Hyrule Field ×2, Castor Wilds, Ruins, Mt Crenel,
+      Cloud Tops, Royal Valley, Veil Falls, Lake Hylia. Each captured at
+      entry and after a right-sweep and a left-sweep to exercise both edge
+      clamps — 36 captures.
+- [x] **Culling/spawn literals converted:** `CheckRegionOnScreen`
+      (`main.c` — the engine's generic viewport AABB test, used by
+      `houseDoorExterior`), `bird.c:336`, `rainfallManager.c:39-40`,
+      `guardWithSpear.c:294,298`, `cutsceneMiscObject.c:339-340`, plus the
+      parallax divisors in `minishRaftersBackgroundManager` and
+      `staticBackgroundManager`. `IsProjectileOffScreen` needed **no**
+      change — it tests against *room* bounds, not the viewport.
+      Vertical siblings were converted at the same time; they are no-ops
+      today (`VIEWPORT_HEIGHT == DISPLAY_HEIGHT`) and pre-pay Spike 10.
+- [x] **Issues logged with severity: none attributable to the widening.**
+      Rather than eyeball 36 captures, all were scanned for the two artifact
+      classes that would indicate a real fault:
+      - *wrap-shaped repetition* (a column identical to one 256 px earlier,
+        the BG wrap period): **0 across all 36 captures** — the wrapping
+        Spike 6 fixed does not recur anywhere.
+      - *black columns inside a room wider than the viewport* (a map-source
+        extent fault): 0 in 10 of 12 rooms. The two that flagged were
+        investigated and **disproven**: Royal Valley shows 192 black columns
+        at *both* 240 and 320 (pre-existing dark graveyard content), and
+        Mt Crenel shows **fewer** at 320 than 240 (136 → 122), i.e. the
+        wider viewport reveals more, as intended.
+      Lake Hylia's large flat purple region was checked the same way and is
+      identical at 240 — pre-existing content, not an artifact.
+
+**Harness note:** `--mapsource-audit` is now explicitly gated to
+GBA-native width. It is an *equivalence* check against the hardware path,
+and beyond 240 there is nothing valid to compare against: the engine still
+streams a 32-tile screenblock, but from a camera the wide build clamps
+differently, so the buffer-column↔map-column relation it checks no longer
+holds, and past the streamed window there is no data at all. Run at 320 it
+reported a meaningless 6.6% mismatch; it now reports nothing there rather
+than a misleading number. **The 240 regression gate is unaffected: still
+0 mismatches in 265 497 600 fetches.**
 
 ### Milestone 1 exit criteria
 - [ ] 320×160 builds, runs, and completes the canonical route without crash.

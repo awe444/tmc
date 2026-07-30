@@ -5,6 +5,7 @@
  * @brief Parallax background for minish rafters
  */
 #include "manager/minishRaftersBackgroundManager.h"
+#include "viewport.h"
 #include "common.h"
 #include "room.h"
 #include "game.h"
@@ -47,7 +48,7 @@ u32 sub_08058244(int i) {
     s32 tmp2;
     u32 tmp3;
     s32 tmp4;
-    tmp = ((gRoomControls.scroll_y - gRoomControls.origin_y) * 0x20) / (gRoomControls.height - DISPLAY_HEIGHT);
+    tmp = ((gRoomControls.scroll_y - gRoomControls.origin_y) * 0x20) / (gRoomControls.height - VIEWPORT_HEIGHT);
     gScreen.bg1.yOffset = gRoomControls.origin_y + tmp;
     tmp = (((gRoomControls.scroll_x - gRoomControls.origin_x) * gUnk_081081EC[i]) /
            (gRoomControls.width - DISPLAY_WIDTH));
