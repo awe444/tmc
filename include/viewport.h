@@ -58,6 +58,12 @@
 #define UI_BG0_ENTRIES (UI_BG0_WIDTH_TILES * UI_BG0_HEIGHT_TILES)
 #define UI_BG0_AT(col, row) ((row) * UI_BG0_WIDTH_TILES + (col))
 
+/* Byte size of `rows` whole tilemap rows. Several UI routines clear a band
+ * of rows with a literal byte count that silently assumed a 32-entry row;
+ * at a wider stride such a literal clears less than a row and leaves the
+ * tail of each row stale, which is what garbled the save/erase popups. */
+#define UI_BG0_ROW_BYTES(rows) ((rows) * UI_BG0_WIDTH_TILES * 2)
+
 /* Rightmost tile column of the viewport, for edge-anchored UI (D1). At
  * GBA-native width this is column 29, so right-anchored elements keep
  * their original positions. */

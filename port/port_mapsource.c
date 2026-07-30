@@ -131,6 +131,8 @@ int Port_MapSource_LastReason(int layer) {
  *   bgSettings     - layer detached entirely (e.g. weatherChangeManager
  *                    fog phase)
  */
+static bool mapsource_is_ui_screen(void);
+
 static int mapsource_reason(int layer) {
     if (!sEnabled) {
         return REASON_DISABLED;
@@ -147,8 +149,26 @@ static int mapsource_reason(int layer) {
     if (gMain.task != TASK_GAME) {
         return REASON_TASK;
     }
+    /* Ordinary gameplay, and also the subtasks that are *views of the
+     * world* — cutscenes and world events. Those call UpdateScrollVram
+     * (subtaskAuxCutscene.c:85, subtaskWorldEvent.c:57), so the special
+     * maps are live and full-room during them, and they must fill the
+     * viewport rather than be centred: leaving them on the screenblock
+     * path made the opening cutscenes wrap and repeat past column 240.
+     * Menu subtasks are excluded — that is where the arrays get
+     * repurposed as scratch (Spike 2 §5.1). */
     if (gMain.substate != GAMEMAIN_UPDATE) {
+#if VIEWPORT_WIDTH > DISPLAY_WIDTH
+        /* Only a wider viewport needs this. At GBA-native size the
+         * screenblock path already covers the whole screen, and it is the
+         * behaviour verified bit-identical to the pre-expansion build, so
+         * do not change what the shipping build renders. */
+        if (gMain.substate != GAMEMAIN_SUBTASK || mapsource_is_ui_screen()) {
+            return REASON_SUBSTATE;
+        }
+#else
         return REASON_SUBSTATE;
+#endif
     }
     if (gRoomControls.scroll_flags & 1) {
         return REASON_SCROLL_FLAGS;
@@ -264,6 +284,26 @@ int Port_MapSource_MessageTileShift(void) {
 #endif
 }
 
+/* Decide, per layer, how it can legitimately fill a wider viewport.
+ *
+ * There are only two ways a text BG can:
+ *   1. It is bound to a full-room map source (the world layers during
+ *      gameplay and cutscenes, and BG0 whose buffer we widened). Those
+ *      render the whole viewport.
+ *   2. It is not — in which case it is reading a 32-tile VRAM screenblock,
+ *      which covers 256 px and *wraps*. Such a layer cannot fill 320 no
+ *      matter what state the game is in: stretching it just repeats its
+ *      content, which is what duplicated the stained-glass artwork and the
+ *      pause-menu frame.
+ *
+ * So the rule is mechanical rather than a guess about game state: a layer
+ * without a map source is clipped to DISPLAY_WIDTH and centred. That covers
+ * every 240-authored surface (title, file select, menus, legend artwork)
+ * and every transient screenblock fallback (room-to-room scrolling) with no
+ * need to classify subtasks correctly for *rendering* — classification is
+ * only still needed to decide whether the world layers may be map-sourced
+ * at all, and whether sprites should travel with a shifted layer.
+ */
 static void mapsource_bind_ui(void) {
 #if UI_CENTER_DX > 0
     bool ui_screen = mapsource_is_ui_screen();
@@ -273,10 +313,9 @@ static void mapsource_bind_ui(void) {
     virtuappu_mode1_clear_bg_clips();
     sUiCentered = ui_screen;
 
-    /* BG0 always needs its map source at a wide viewport: the buffer is
-     * wider than a hardware screenblock, so the VRAM copy the screenblock
-     * path would read is the wrong shape. Only its origin depends on
-     * whether this is a UI screen. */
+    /* BG0 always gets its map source: the buffer is wider than a hardware
+     * screenblock, so the VRAM copy the screenblock path reads is the wrong
+     * shape. Only its origin depends on whether this is a UI screen. */
     {
         VirtuaPPUMode1MapSource src;
         src.map = gBG0Buffer;
@@ -288,65 +327,65 @@ static void mapsource_bind_ui(void) {
         virtuappu_mode1_set_map_source(0, &src);
     }
 
-    /* Sprites travel with the layers they sit on: menu cursors and item
-     * icons belong to centred UI. World views (gameplay and cutscenes) keep
-     * sprites where the engine put them. */
+    /* Sprites travel with the layers they sit on. On a UI screen everything
+     * is centred, so the sprites are too. In a world view they stay put and
+     * are instead confined to the room's on-screen span below. */
     virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0, 0);
 
-    if (!ui_screen) {
-        /* World view. Confine both the world layers and its sprites to the
-         * room's actual on-screen span, so the border stays border:
-         *
-         *  - A room narrower than the viewport is centred, so the columns
-         *    either side are outside the room. Hardware never had such
-         *    columns, and an entity standing there would simply not have
-         *    been drawn — leaving it visible put a stray Zelda sprite in
-         *    the left border after she walks out of the house.
-         *  - During a room-to-room scroll the map source is not bound (the
-         *    predicate rejects scrollAction >= 2, since the window blends
-         *    two rooms), so the layers fall back to a 32-tile screenblock
-         *    that cannot fill a wider viewport. Clipping to the native
-         *    width during the transition shows a clean 240-wide slice with
-         *    borders instead of wrapped garbage in the extra columns.
-         */
+    clip.offset_x = UI_CENTER_DX;
+    clip.content_width = DISPLAY_WIDTH;
+    for (bg = 1; bg < 4; bg++) {
+        if (!virtuappu_mode1_has_map_source(bg)) {
+            virtuappu_mode1_set_bg_clip(bg, &clip);
+        }
+    }
+
+    if (ui_screen) {
+        virtuappu_mode1_set_obj_clip(UI_CENTER_DX, UI_CENTER_DX + DISPLAY_WIDTH);
+        return;
+    }
+
+    /* World view: confine sprites to the room's on-screen span so the
+     * border stays border. A room narrower than the viewport is centred, so
+     * the columns either side are outside the room — hardware never had
+     * such columns, and an entity standing there would not have been drawn
+     * (the stray Zelda sprite in the left border). During a room-to-room
+     * scroll the world layers have fallen back to the screenblock path and
+     * are clipped to native width above, so the sprites match that. */
+    {
         int span_left = 0;
         int span_right = MODE1_GBA_WIDTH;
-        bool transitioning = (gRoomControls.scrollAction >= 2);
-        if (transitioning) {
+        if (gRoomControls.scrollAction >= 2 || !virtuappu_mode1_has_map_source(2)) {
             span_left = UI_CENTER_DX;
             span_right = UI_CENTER_DX + DISPLAY_WIDTH;
         } else if ((int)gRoomControls.width < MODE1_GBA_WIDTH) {
             int cx = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
-            span_left = -cx;                        /* cx is negative here */
+            span_left = -cx;
             span_right = span_left + (int)gRoomControls.width;
             if (span_left < 0) span_left = 0;
             if (span_right > MODE1_GBA_WIDTH) span_right = MODE1_GBA_WIDTH;
         }
         virtuappu_mode1_set_obj_clip(span_left, span_right);
-        if (transitioning) {
-            VirtuaPPUMode1BgClip tclip;
-            int b;
-            tclip.offset_x = UI_CENTER_DX;
-            tclip.content_width = DISPLAY_WIDTH;
-            for (b = 0; b < 4; b++) {
-                virtuappu_mode1_set_bg_clip(b, &tclip);
-            }
-            /* BG0 carries the HUD, which is authored to the wide edges; a
-             * clipped-and-shifted HUD would jump during the transition, so
-             * leave it alone and only clip the world layers. */
-            virtuappu_mode1_set_bg_clip(0, NULL);
-        }
-        return;
-    }
-
-    virtuappu_mode1_set_obj_clip(UI_CENTER_DX, UI_CENTER_DX + DISPLAY_WIDTH);
-
-    clip.offset_x = UI_CENTER_DX;
-    clip.content_width = DISPLAY_WIDTH;
-    for (bg = 1; bg < 4; bg++) {
-        virtuappu_mode1_set_bg_clip(bg, &clip);
     }
 #endif
+}
+
+/* TMC_REJECT_TRACE=1: why each world layer was refused a map source. */
+static void mapsource_trace_reject(void) {
+    static int en = -1;
+    static int lastR0 = -99, lastR1 = -99;
+    if (en < 0) en = (getenv("TMC_REJECT_TRACE") != NULL);
+    if (!en) return;
+    if (sLastReason[0] != lastR0 || sLastReason[1] != lastR1) {
+        lastR0 = sLastReason[0]; lastR1 = sLastReason[1];
+        fprintf(stderr, "[reject] task=%d substate=%d uiState=%d area=0x%02X room=0x%02X "
+                        "w=%u sf=0x%02X sa=%u -> bottom=%s top=%s\n",
+                gMain.task, gMain.substate, gUI.lastState,
+                gRoomControls.area, gRoomControls.room, gRoomControls.width,
+                gRoomControls.scroll_flags, gRoomControls.scrollAction,
+                Port_MapSource_ReasonName(sLastReason[0]),
+                Port_MapSource_ReasonName(sLastReason[1]));
+    }
 }
 
 void Port_MapSource_Update(void) {
@@ -357,6 +396,7 @@ void Port_MapSource_Update(void) {
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
     virtuappu_mode1_clear_map_sources();
     mapsource_bind_ui();
+    mapsource_trace_reject();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);
         int bg;

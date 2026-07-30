@@ -5,6 +5,7 @@
  * @brief Shows textbox when entering the room.
  */
 #include "manager/enterRoomTextboxManager.h"
+#include "viewport.h"
 #include "area.h"
 #include "common.h"
 #include "fileselect.h"
@@ -70,7 +71,7 @@ void sub_0805E18C(EnterRoomTextboxManager* this) {
 }
 
 void sub_0805E1D8(EnterRoomTextboxManager* this) {
-    MemClear(&gBG0Buffer[0xa0], 0x80);
+    MemClear(&gBG0Buffer[UI_BG0_AT(0, 5)], UI_BG0_ROW_BYTES(2));
     gScreen.bg0.updated = 1;
     DeleteThisEntity();
 }
@@ -83,7 +84,7 @@ void sub_0805E1F8(u32 unk0, bool32 isDungeon) {
         u8 unk_06[3];
     } PACKED tmp;
     const Font* font;
-    MemClear(&gBG0Buffer[0xa0], 0x80);
+    MemClear(&gBG0Buffer[UI_BG0_AT(0, 5)], UI_BG0_ROW_BYTES(2));
     MemCopy(gUnk_08108E60, &tmp, sizeof(tmp));
     tmp.unk_04 = unk0 >> 8;
     tmp.unk_05 = unk0;

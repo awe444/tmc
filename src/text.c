@@ -635,7 +635,7 @@ bool32 sub_0805F5CC(Font* param_1, Token* param_2, WStruct* param_3) {
             puVar5 -= (iVar4 + 1U) >> 1;
         }
         param_1->gfx_src = sub_0805F67C(puVar5, param_1->gfx_src, iVar4);
-        param_1->dest += 0x40;
+        param_1->dest += 2 * UiDestStride(param_1->dest); /* one 2-tile-tall text row */
         iVar4 *= 0x40;
         MemCopy(param_1->buffer_loc, param_1->gfx_dest, iVar4);
         param_1->gfx_dest = (void*)((uintptr_t)param_1->gfx_dest + iVar4);
@@ -647,10 +647,16 @@ bool32 sub_0805F5CC(Font* param_1, Token* param_2, WStruct* param_3) {
     return param_2->code > 0;
 }
 
+/* Writes one row of characters. Each character is two tiles tall, so the
+ * bottom tile goes one tilemap row below the top one — that is a *stride*,
+ * not the constant 0x20 it was written as. At a wider BG0 the bottom halves
+ * landed in the middle of the same row instead of the row beneath, which
+ * interleaved every text box drawn through a Font (the save/erase popups). */
 s32 sub_0805F67C(short* param_1, s32 param_2, s32 param_3) {
+    const u32 stride = UiDestStride((const u16*)param_1);
     for (param_3--; param_3 != -1; param_3--) {
         param_1[0] = param_2++;
-        param_1[0x20] = param_2++;
+        param_1[stride] = param_2++;
         param_1++;
     }
     return param_2;

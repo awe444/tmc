@@ -5,6 +5,7 @@
  * @brief File select task
  */
 #include "fileselect.h"
+#include "viewport.h"
 
 #include "common.h"
 #include "figurineMenu.h"
@@ -744,7 +745,7 @@ static void DrawFileSelectSettingsHint(void) {
     Font font;
 
     gChooseFileState.unk_0x12 = 1;
-    MemClear(&gBG0Buffer[UI_BG0_AT(1, 17)], 0x80);
+    MemClear(&gBG0Buffer[UI_BG0_AT(1, 17)], UI_BG0_ROW_BYTES(2));
     gScreen.bg0.updated = 1;
 
     MemCopy(&gUnk_080FC844, &font, sizeof(font));

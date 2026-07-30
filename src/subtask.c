@@ -1,4 +1,5 @@
 #include "subtask.h"
+#include "viewport.h"
 #include "common.h"
 #include "fileselect.h"
 #include "game.h"
@@ -51,7 +52,7 @@ void sub_080A6F6C(u32 textIndexOrPtr) {
     extern Font gUnk_08128FA8;
     if (gGenericMenu.unk2e.HWORD != textIndexOrPtr) {
         gGenericMenu.unk2e.HWORD = textIndexOrPtr;
-        MemClear(&gBG0Buffer[UI_BG0_AT(0, 17)], 0x100);
+        MemClear(&gBG0Buffer[UI_BG0_AT(0, 17)], UI_BG0_ROW_BYTES(4));
         if ((textIndexOrPtr & 0xff) != 0) {
             ShowTextBox(textIndexOrPtr, &gUnk_08128FA8);
         }
@@ -92,7 +93,7 @@ void ShowAreaName(WindcrestID windcrest, u32 type) {
 
     if (gGenericMenu.unk2e.HWORD != textIndexOrPtr) {
         gGenericMenu.unk2e.HWORD = textIndexOrPtr;
-        MemClear(&gBG0Buffer[UI_BG0_AT(0, 17)], 0x100);
+        MemClear(&gBG0Buffer[UI_BG0_AT(0, 17)], UI_BG0_ROW_BYTES(4));
         if ((textIndexOrPtr & 0xff) != 0) {
             ShowTextBox(textIndexOrPtr, font);
         }
