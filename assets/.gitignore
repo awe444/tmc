@@ -1,3 +1,18 @@
+# Everything in this directory is extracted from baserom.gba on first run
+# (port_asset_bootstrap.cpp) and must not be committed -- see the note in the
+# root .gitignore about copyrighted ROM content.
+#
+# The exceptions are the hand-authored asset *configuration* that the
+# extractor and the decomp build read. Those are source, not output.
+#
+# Do not restore a blanket `!*.json`: the extractor writes JSON here too
+# (gfx_groups, palette_groups, palettes, tilemaps, texts, sprite_ptrs,
+# area_*, .asset_build_state), and the blanket rule tracked four of those by
+# accident -- each had exactly one commit, the one that added extraction.
 *
-!*.json
 !.gitignore
+!assets.json
+!gfx.json
+!map.json
+!samples.json
+!sounds.json
