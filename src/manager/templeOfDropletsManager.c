@@ -447,23 +447,23 @@ void sub_0805A94C(TempleOfDropletsManager* this) {
     tmp2 = tmp1 + 0x100;
     if (tmp1 < 0)
         tmp1 = 0;
-    if (tmp1 > DISPLAY_WIDTH)
-        tmp1 = DISPLAY_WIDTH;
+    if (tmp1 > VIEWPORT_WIDTH)
+        tmp1 = VIEWPORT_WIDTH;
     if (tmp2 < 0)
         tmp2 = 0;
-    if (tmp2 > DISPLAY_WIDTH)
-        tmp2 = DISPLAY_WIDTH;
+    if (tmp2 > VIEWPORT_WIDTH)
+        tmp2 = VIEWPORT_WIDTH;
     gScreen.controls.window1HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
     tmp1 = -gScreen.bg3.yOffset;
     tmp2 = tmp1 + 0x100;
     if (tmp1 < 0)
         tmp1 = 0;
-    if (tmp1 > DISPLAY_HEIGHT)
-        tmp1 = DISPLAY_HEIGHT;
+    if (tmp1 > VIEWPORT_HEIGHT)
+        tmp1 = VIEWPORT_HEIGHT;
     if (tmp2 < 0)
         tmp2 = 0;
-    if (tmp2 > DISPLAY_HEIGHT)
-        tmp2 = DISPLAY_HEIGHT;
+    if (tmp2 > VIEWPORT_HEIGHT)
+        tmp2 = VIEWPORT_HEIGHT;
     gScreen.controls.window1VerticalDimensions = WIN_RANGE(tmp1, tmp2);
 }
 
@@ -475,12 +475,12 @@ void sub_0805A9CC(TempleOfDropletsManager* this) {
     tmp2 = tmp1 + 0x100;
     if (tmp1 < 0)
         tmp1 = 0;
-    if (tmp1 > DISPLAY_WIDTH)
-        tmp1 = DISPLAY_WIDTH;
+    if (tmp1 > VIEWPORT_WIDTH)
+        tmp1 = VIEWPORT_WIDTH;
     if (tmp2 < 0)
         tmp2 = 0;
-    if (tmp2 > DISPLAY_WIDTH)
-        tmp2 = DISPLAY_WIDTH;
+    if (tmp2 > VIEWPORT_WIDTH)
+        tmp2 = VIEWPORT_WIDTH;
     gScreen.controls.window1HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
     tmp1 = gRoomControls.scroll_y - this->unk_26 + this->unk_36;
     gScreen.bg3.yOffset = tmp1 & 0x3F;

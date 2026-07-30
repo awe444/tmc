@@ -1,4 +1,5 @@
 #include "script.h"
+#include "viewport.h"
 #include "area.h"
 #include "asm.h"
 #include "common.h"
@@ -1197,8 +1198,8 @@ void SetFadeIrisForCameraTarget(u32 type) {
         x = cameraTarget->x.HALF.HI - gRoomControls.scroll_x;
         y = cameraTarget->y.HALF.HI - gRoomControls.scroll_y;
     } else {
-        x = DISPLAY_WIDTH / 2;
-        y = DISPLAY_HEIGHT / 2;
+        x = VIEWPORT_HALF_WIDTH;
+        y = VIEWPORT_HALF_HEIGHT;
     }
     SetFadeIris(x, y, type, gActiveScriptInfo.fadeSpeed);
 }
@@ -1968,17 +1969,23 @@ void WaitForCameraTouchRoomBorder(Entity* entity, ScriptExecutionContext* contex
     s32 bottom;
 
     if (gRoomControls.camera_target != NULL) {
-        left = gRoomControls.camera_target->x.HALF.HI - DISPLAY_WIDTH / 2;
-        bottom = gRoomControls.camera_target->y.HALF.HI - DISPLAY_HEIGHT / 2;
+        /* This predicts where the camera will come to rest and waits for
+         * scroll_x/scroll_y to reach it exactly. It therefore has to apply
+         * the *same* clamp Scroll1 does — VIEWPORT_CAM_MIN_X/MAX_X — or the
+         * equality never holds and the script waits forever. That is a hard
+         * softlock, not a cosmetic issue: it is what hung the Hyrule Town
+         * bell-to-square camera pan at a wider viewport. */
+        left = gRoomControls.camera_target->x.HALF.HI - VIEWPORT_HALF_WIDTH;
+        bottom = gRoomControls.camera_target->y.HALF.HI - VIEWPORT_HALF_HEIGHT;
 
-        if (left < gRoomControls.origin_x)
-            left = gRoomControls.origin_x;
-        if (left > gRoomControls.origin_x + gRoomControls.width - DISPLAY_WIDTH)
-            left = gRoomControls.origin_x + gRoomControls.width - DISPLAY_WIDTH;
+        if (left < VIEWPORT_CAM_MIN_X(gRoomControls.origin_x, gRoomControls.width))
+            left = VIEWPORT_CAM_MIN_X(gRoomControls.origin_x, gRoomControls.width);
+        if (left > VIEWPORT_CAM_MAX_X(gRoomControls.origin_x, gRoomControls.width))
+            left = VIEWPORT_CAM_MAX_X(gRoomControls.origin_x, gRoomControls.width);
         if (bottom < gRoomControls.origin_y)
             bottom = gRoomControls.origin_y;
-        if (bottom > gRoomControls.origin_y + gRoomControls.height - DISPLAY_HEIGHT)
-            bottom = gRoomControls.origin_y + gRoomControls.height - DISPLAY_HEIGHT;
+        if (bottom > gRoomControls.origin_y + gRoomControls.height - VIEWPORT_HEIGHT)
+            bottom = gRoomControls.origin_y + gRoomControls.height - VIEWPORT_HEIGHT;
 
         if (left == gRoomControls.scroll_x && bottom == gRoomControls.scroll_y)
             gActiveScriptInfo.flags |= 1;

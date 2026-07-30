@@ -158,7 +158,7 @@ void Scroll1(RoomControls* controls) {
                     }
                 }
             } else {
-                uVar2 = controls->origin_y + controls->height - DISPLAY_HEIGHT;
+                uVar2 = controls->origin_y + controls->height - VIEWPORT_HEIGHT;
                 if (controls->scroll_y < uVar2) {
                     if (-controls->scrollSpeed >= diff) {
                         diff = -controls->scrollSpeed;
@@ -332,8 +332,8 @@ void Scroll5Sub2(RoomControls* controls) {
             left = 0;
         }
         right = diffX + controls->unk_18 - 8;
-        if (right > DISPLAY_WIDTH) {
-            right = DISPLAY_WIDTH;
+        if (right > VIEWPORT_WIDTH) {
+            right = VIEWPORT_WIDTH;
         }
         diffY = controls->camera_target->y.HALF.HI - controls->scroll_y;
         bottom = (diffY - controls->unk_1a) + 8;
@@ -341,8 +341,8 @@ void Scroll5Sub2(RoomControls* controls) {
             bottom = 0;
         }
         top = diffY + controls->unk_1a - 8;
-        if (top > DISPLAY_HEIGHT) {
-            top = DISPLAY_HEIGHT;
+        if (top > VIEWPORT_HEIGHT) {
+            top = VIEWPORT_HEIGHT;
         }
         gScreen.controls.window1HorizontalDimensions = WIN_RANGE(left & 0xff, right & 0xff);
         gScreen.controls.window1VerticalDimensions = WIN_RANGE(bottom & 0xff, top & 0xff);
@@ -399,8 +399,8 @@ void Scroll5Sub5(RoomControls* controls) {
             left = 0;
         }
         right = diffX + controls->unk_18;
-        if (right > DISPLAY_WIDTH) {
-            right = DISPLAY_WIDTH;
+        if (right > VIEWPORT_WIDTH) {
+            right = VIEWPORT_WIDTH;
         }
         diffY = controls->camera_target->y.HALF.HI - controls->scroll_y;
         bottom = (diffY - controls->unk_1a);
@@ -408,8 +408,8 @@ void Scroll5Sub5(RoomControls* controls) {
             bottom = 0;
         }
         top = diffY + controls->unk_1a;
-        if (top > DISPLAY_HEIGHT) {
-            top = DISPLAY_HEIGHT;
+        if (top > VIEWPORT_HEIGHT) {
+            top = VIEWPORT_HEIGHT;
         }
         gScreen.controls.window1HorizontalDimensions = WIN_RANGE(left & 0xff, right & 0xff);
         gScreen.controls.window1VerticalDimensions = WIN_RANGE(bottom & 0xff, top & 0xff);
@@ -791,7 +791,7 @@ void sub_08080974(u32 arg0, u32 arg1) {
 
     var0 = roomControls->origin_x;
     if (arg0 <= var0 + VIEWPORT_HALF_WIDTH) {
-        roomControls->scroll_x = var0;
+        roomControls->scroll_x = VIEWPORT_CAM_MIN_X(var0, roomControls->width);
     } else {
         var0 += roomControls->width;
         var1 = var0 - VIEWPORT_HALF_WIDTH;
@@ -799,6 +799,12 @@ void sub_08080974(u32 arg0, u32 arg1) {
             var1 = arg0;
         }
         roomControls->scroll_x = var1 - VIEWPORT_HALF_WIDTH;
+        if ((s32)roomControls->scroll_x < VIEWPORT_CAM_MIN_X(roomControls->origin_x, roomControls->width)) {
+            roomControls->scroll_x = VIEWPORT_CAM_MIN_X(roomControls->origin_x, roomControls->width);
+        }
+        if ((s32)roomControls->scroll_x > VIEWPORT_CAM_MAX_X(roomControls->origin_x, roomControls->width)) {
+            roomControls->scroll_x = VIEWPORT_CAM_MAX_X(roomControls->origin_x, roomControls->width);
+        }
     }
 
     var0 = roomControls->origin_y;
@@ -826,7 +832,7 @@ void sub_080809D4(void) {
     x = roomControls->camera_target->x.HALF.HI;
     var0 = roomControls->origin_x;
     if (x <= var0 + VIEWPORT_HALF_WIDTH) {
-        roomControls->scroll_x = var0;
+        roomControls->scroll_x = VIEWPORT_CAM_MIN_X(var0, roomControls->width);
     } else {
         var0 += roomControls->width;
         var1 = var0 - VIEWPORT_HALF_WIDTH;
@@ -834,6 +840,12 @@ void sub_080809D4(void) {
             var1 = (u16)roomControls->camera_target->x.HALF.HI;
         }
         roomControls->scroll_x = var1 - VIEWPORT_HALF_WIDTH;
+        if ((s32)roomControls->scroll_x < VIEWPORT_CAM_MIN_X(roomControls->origin_x, roomControls->width)) {
+            roomControls->scroll_x = VIEWPORT_CAM_MIN_X(roomControls->origin_x, roomControls->width);
+        }
+        if ((s32)roomControls->scroll_x > VIEWPORT_CAM_MAX_X(roomControls->origin_x, roomControls->width)) {
+            roomControls->scroll_x = VIEWPORT_CAM_MAX_X(roomControls->origin_x, roomControls->width);
+        }
     }
 
     y = roomControls->camera_target->y.HALF.HI;

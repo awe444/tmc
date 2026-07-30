@@ -51,7 +51,7 @@ u32 sub_08058244(int i) {
     tmp = ((gRoomControls.scroll_y - gRoomControls.origin_y) * 0x20) / (gRoomControls.height - VIEWPORT_HEIGHT);
     gScreen.bg1.yOffset = gRoomControls.origin_y + tmp;
     tmp = (((gRoomControls.scroll_x - gRoomControls.origin_x) * gUnk_081081EC[i]) /
-           (gRoomControls.width - DISPLAY_WIDTH));
+           (gRoomControls.width - VIEWPORT_WIDTH));
     gScreen.bg1.xOffset = tmp & 0xf;
     return tmp;
 }

@@ -54,6 +54,10 @@ bool Port_MapSource_Enabled(void);
  * palette entry 0 happens to be (pale yellow on the title screen). */
 bool Port_MapSource_UiCentered(void);
 
+/* Tile columns the text box should shift itself by. Zero on UI screens,
+ * where the whole BG0 layer is already shifted (see the note in the .c). */
+int Port_MapSource_MessageTileShift(void);
+
 /* Frames in which each layer was bound / rejected, for run summaries. */
 void Port_MapSource_Report(void);
 

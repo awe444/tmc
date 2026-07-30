@@ -96,14 +96,14 @@ void sub_0809B97C(LightRayEntity* this, u32 param_2) {
     if (tmp1 < 0) {
         tmp1 = 0;
     }
-    if (DISPLAY_WIDTH < tmp1) {
-        tmp1 = DISPLAY_WIDTH;
+    if (VIEWPORT_WIDTH < tmp1) {
+        tmp1 = VIEWPORT_WIDTH;
     }
     if (tmp2 < 0) {
         tmp2 = 0;
     }
-    if (DISPLAY_WIDTH < tmp2) {
-        tmp2 = DISPLAY_WIDTH;
+    if (VIEWPORT_WIDTH < tmp2) {
+        tmp2 = VIEWPORT_WIDTH;
     }
     gScreen.controls.window0HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
 }

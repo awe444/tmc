@@ -142,14 +142,14 @@ static void sub_0806D02C(Entity* this) {
 
     tmp1 = -(s16)gScreen.bg1.xOffset;
     tmp2 = tmp1 + 0x100;
-    tmp1 = min(max(0, tmp1), DISPLAY_WIDTH);
-    tmp2 = min(max(0, tmp2), DISPLAY_WIDTH);
+    tmp1 = min(max(0, tmp1), VIEWPORT_WIDTH);
+    tmp2 = min(max(0, tmp2), VIEWPORT_WIDTH);
     gScreen.controls.window1HorizontalDimensions = WIN_RANGE(tmp1, tmp2);
 
     tmp1 = -(s16)gScreen.bg1.yOffset;
     tmp2 = tmp1 + 0x100;
-    tmp1 = min(max(0, tmp1), DISPLAY_HEIGHT);
-    tmp2 = min(max(0, tmp2), DISPLAY_HEIGHT);
+    tmp1 = min(max(0, tmp1), VIEWPORT_HEIGHT);
+    tmp2 = min(max(0, tmp2), VIEWPORT_HEIGHT);
     gScreen.controls.window1VerticalDimensions = WIN_RANGE(tmp1, tmp2);
 }
 

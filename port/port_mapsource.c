@@ -11,6 +11,8 @@
 #include "map.h"
 #include "room.h"
 #include "screen.h"
+#include "subtask.h"
+#include "ui.h"
 #include "tileMap.h"
 #include "vram.h"
 
@@ -195,14 +197,6 @@ bool Port_MapSource_LayerAuthoritative(int layer) {
     return r == REASON_BOUND;
 }
 
-/* BG0 (HUD/UI). At a wider-than-hardware viewport a 32-tile screenblock
- * wraps and draws the HUD twice, so gBG0Buffer is widened (viewport.h) and
- * bound as a map source instead — no screenblock, no wrap, and no VRAM
- * growth, which keeps blocker 7 out of this.
- *
- * At GBA-native width this does nothing at all and BG0 stays on the
- * hardware path, so the 240 build is unaffected by construction rather
- * than by testing. */
 /* UI centring (D1: screens and the text box are centered; the in-game HUD
  * is edge-anchored and handled separately).
  *
@@ -224,39 +218,129 @@ bool Port_MapSource_UiCentered(void) {
     return sUiCentered;
 }
 
+/* Is the screen currently showing a full-screen surface that was *authored*
+ * for a 240-wide display, as opposed to a view of the world?
+ *
+ * `substate != GAMEMAIN_UPDATE` is NOT the right test, which is what an
+ * earlier version used. Cutscenes run as subtasks too, but they are views
+ * of the world and must fill the viewport like gameplay does; centring them
+ * shrinks the cutscene to 240 and shifts its sprites, which is what made
+ * the opening cutscenes render narrow and misaligned.
+ *
+ * So discriminate on the subtask *type* (gUI.lastState, the value handed to
+ * MenuFadeIn): menus are 240-authored UI, cutscenes and world events are
+ * world views. Title and file select are not subtasks at all — they are
+ * separate tasks — and are always UI. */
+static bool mapsource_is_ui_screen(void) {
+    if (gMain.task != TASK_GAME) {
+        return true; /* title, file select, gameover, staffroll */
+    }
+    if (gMain.substate != GAMEMAIN_SUBTASK) {
+        return false; /* ordinary gameplay */
+    }
+    switch (gUI.lastState) {
+        case SUBTASK_PAUSEMENU:
+        case SUBTASK_MAPHINT:
+        case SUBTASK_KINSTONEMENU:
+        case SUBTASK_FIGURINEMENU:
+        case SUBTASK_LOCALMAPHINT:
+            return true;
+        default:
+            /* AUXCUTSCENE, PORTALCUTSCENE, WORLDEVENT, FASTTRAVEL: world. */
+            return false;
+    }
+}
+
+/* B1: the text box centres itself per-window (message.c) because it shares
+ * BG0 with the edge-anchored HUD during gameplay. On a UI screen the whole
+ * BG0 layer is already shifted, so applying the per-window shift as well
+ * moves the box twice — which is what clipped the "Saving file..." and
+ * "Erasing file..." popups on the file-select and pause-menu screens. */
+int Port_MapSource_MessageTileShift(void) {
+#if UI_CENTER_TILE_DX > 0
+    return mapsource_is_ui_screen() ? 0 : UI_CENTER_TILE_DX;
+#else
+    return 0;
+#endif
+}
+
 static void mapsource_bind_ui(void) {
 #if UI_CENTER_DX > 0
-    bool gameplay = (gMain.task == TASK_GAME && gMain.substate == GAMEMAIN_UPDATE);
+    bool ui_screen = mapsource_is_ui_screen();
     VirtuaPPUMode1BgClip clip;
     int bg;
 
     virtuappu_mode1_clear_bg_clips();
+    sUiCentered = ui_screen;
 
     /* BG0 always needs its map source at a wide viewport: the buffer is
      * wider than a hardware screenblock, so the VRAM copy the screenblock
-     * path would read is the wrong shape. */
+     * path would read is the wrong shape. Only its origin depends on
+     * whether this is a UI screen. */
     {
         VirtuaPPUMode1MapSource src;
         src.map = gBG0Buffer;
         src.stride = UI_BG0_WIDTH_TILES;
         src.width_tiles = UI_BG0_WIDTH_TILES;
         src.height_tiles = UI_BG0_HEIGHT_TILES;
-        src.origin_x = (int)gScreen.bg0.xOffset - (gameplay ? 0 : UI_CENTER_DX);
+        src.origin_x = (int)gScreen.bg0.xOffset - (ui_screen ? UI_CENTER_DX : 0);
         src.origin_y = (int)gScreen.bg0.yOffset;
         virtuappu_mode1_set_map_source(0, &src);
     }
 
-    /* Sprites must travel with the layers they sit on: menu cursors, item
-     * icons and the title sword all belong to centred UI content. */
-    virtuappu_mode1_set_obj_offset(gameplay ? 0 : UI_CENTER_DX, 0);
-    sUiCentered = !gameplay;
+    /* Sprites travel with the layers they sit on: menu cursors and item
+     * icons belong to centred UI. World views (gameplay and cutscenes) keep
+     * sprites where the engine put them. */
+    virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0, 0);
 
-    if (gameplay) {
+    if (!ui_screen) {
+        /* World view. Confine both the world layers and its sprites to the
+         * room's actual on-screen span, so the border stays border:
+         *
+         *  - A room narrower than the viewport is centred, so the columns
+         *    either side are outside the room. Hardware never had such
+         *    columns, and an entity standing there would simply not have
+         *    been drawn — leaving it visible put a stray Zelda sprite in
+         *    the left border after she walks out of the house.
+         *  - During a room-to-room scroll the map source is not bound (the
+         *    predicate rejects scrollAction >= 2, since the window blends
+         *    two rooms), so the layers fall back to a 32-tile screenblock
+         *    that cannot fill a wider viewport. Clipping to the native
+         *    width during the transition shows a clean 240-wide slice with
+         *    borders instead of wrapped garbage in the extra columns.
+         */
+        int span_left = 0;
+        int span_right = MODE1_GBA_WIDTH;
+        bool transitioning = (gRoomControls.scrollAction >= 2);
+        if (transitioning) {
+            span_left = UI_CENTER_DX;
+            span_right = UI_CENTER_DX + DISPLAY_WIDTH;
+        } else if ((int)gRoomControls.width < MODE1_GBA_WIDTH) {
+            int cx = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
+            span_left = -cx;                        /* cx is negative here */
+            span_right = span_left + (int)gRoomControls.width;
+            if (span_left < 0) span_left = 0;
+            if (span_right > MODE1_GBA_WIDTH) span_right = MODE1_GBA_WIDTH;
+        }
+        virtuappu_mode1_set_obj_clip(span_left, span_right);
+        if (transitioning) {
+            VirtuaPPUMode1BgClip tclip;
+            int b;
+            tclip.offset_x = UI_CENTER_DX;
+            tclip.content_width = DISPLAY_WIDTH;
+            for (b = 0; b < 4; b++) {
+                virtuappu_mode1_set_bg_clip(b, &tclip);
+            }
+            /* BG0 carries the HUD, which is authored to the wide edges; a
+             * clipped-and-shifted HUD would jump during the transition, so
+             * leave it alone and only clip the world layers. */
+            virtuappu_mode1_set_bg_clip(0, NULL);
+        }
         return;
     }
 
-    /* Outside gameplay the other layers carry full-screen UI content that
-     * is 240 px wide; clip them into the centred span. */
+    virtuappu_mode1_set_obj_clip(UI_CENTER_DX, UI_CENTER_DX + DISPLAY_WIDTH);
+
     clip.offset_x = UI_CENTER_DX;
     clip.content_width = DISPLAY_WIDTH;
     for (bg = 1; bg < 4; bg++) {

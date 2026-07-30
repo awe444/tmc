@@ -18,9 +18,15 @@
  * rather than by moving BG0 as a whole. Both reduce to the original
  * `yPos * 0x20 + xPos` at GBA-native width. */
 #include "viewport.h"
+#ifdef PC_PORT
+#include "port_mapsource.h"
+#else
+#define Port_MapSource_MessageTileShift() 0
+#endif
 
 #define MESSAGE_WIDTH UI_BG0_WIDTH_TILES
-#define MESSAGE_POSITION_INDEX(window) UI_BG0_AT((window).xPos + UI_CENTER_TILE_DX, (window).yPos)
+#define MESSAGE_POSITION_INDEX(window)                                                             \
+    UI_BG0_AT((window).xPos + Port_MapSource_MessageTileShift(), (window).yPos)
 
 #define MESSAGE_PALETTE 0xF
 
