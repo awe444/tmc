@@ -168,8 +168,9 @@ static int win_publish_disabled(void) {
  * the whole frame (virtuappu_mode1_set_window_h_bounds explains why), so
  * without this the DMA writes go into a register nothing reads and every
  * circular window collapses to whatever whole-frame bounds were last
- * committed. Prefers the untruncated side channel where it agrees with the
- * byte the DMA wrote — that is what carries an edge past 255. */
+ * committed. Prefers the untruncated side channel where its recorded key
+ * matches the byte the DMA wrote — that is what carries an edge past the
+ * hardware table's 240 ceiling. */
 static void hdma_publish_window_line(int line)
 {
     const uint16_t win0h = (uint16_t)(gIoMem[HDMA_IO_OFF_WIN0H] |
@@ -178,10 +179,10 @@ static void hdma_publish_window_line(int line)
     int right = (int)(win0h & 0xFF);
 
     if (line >= 0 && line < VIEWPORT_HEIGHT) {
-        if (gWin0hExtLeft[line] >= 0 && (gWin0hExtLeft[line] & 0xFF) == left) {
+        if (gWin0hExtLeftKey[line] >= 0 && gWin0hExtLeftKey[line] == left) {
             left = gWin0hExtLeft[line];
         }
-        if (gWin0hExtRight[line] >= 0 && (gWin0hExtRight[line] & 0xFF) == right) {
+        if (gWin0hExtRightKey[line] >= 0 && gWin0hExtRightKey[line] == right) {
             right = gWin0hExtRight[line];
         }
     }

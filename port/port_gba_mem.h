@@ -55,6 +55,17 @@ void Port_OamYExt_Latch(void);
  */
 extern s16 gWin0hExtLeft[VIEWPORT_HEIGHT];
 extern s16 gWin0hExtRight[VIEWPORT_HEIGHT];
+/* The bytes actually written to the hardware table for the same line, kept
+ * as the validity key.
+ *
+ * Matching the wide value's own low byte against the register was wrong, and
+ * wrong precisely where this channel earns its keep: the hardware table is
+ * *clamped* to 240, not truncated, so an edge of 286 stores 240 there and 286
+ * here, the low bytes are 240 and 30, and the check rejected the very value
+ * it exists to carry. The iris was sliced flat at x=240 for exactly that
+ * reason. Comparing against what was written removes the coincidence. */
+extern s16 gWin0hExtLeftKey[VIEWPORT_HEIGHT];
+extern s16 gWin0hExtRightKey[VIEWPORT_HEIGHT];
 void Port_Win0hExt_Reset(void);
 
 // ROM data (loaded from baserom.gba)

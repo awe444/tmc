@@ -1040,12 +1040,16 @@ void sub_0801E290(u32 param_1, u32 param_2, u32 count) {
             base[uVar5 * 2 + 1] = iVar2;
             gWin0hExtRight[uVar5] = wideRight;
             gWin0hExtLeft[uVar5]  = iVar2;
+            gWin0hExtRightKey[uVar5] = iVar4;
+            gWin0hExtLeftKey[uVar5]  = iVar2;
         }
         if (((u16)uVar7 & 0xffff) < VIEWPORT_HEIGHT) {
             base[uVar7 * 2]     = iVar4;
             base[uVar7 * 2 + 1] = iVar2;
             gWin0hExtRight[uVar7] = wideRight;
             gWin0hExtLeft[uVar7]  = iVar2;
+            gWin0hExtRightKey[uVar7] = iVar4;
+            gWin0hExtLeftKey[uVar7]  = iVar2;
         }
         uVar5--;
         uVar7++;

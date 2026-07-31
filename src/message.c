@@ -22,6 +22,7 @@
 #include "port_mapsource.h"
 #else
 #define Port_MapSource_MessageTileShift() 0
+#define Port_MapSource_MessageTileShiftY() 0
 #endif
 
 #define MESSAGE_WIDTH UI_BG0_WIDTH_TILES
@@ -741,8 +742,14 @@ static u32 ChangeWindowSize(u32 delta) {
         if ((window->height & 1) != 0) {
             window->height++;
         }
+        /* Keeps the box its authored distance from the bottom edge on a
+         * taller screen. Applied here rather than at the draw site so that
+         * RecoverUI and the clears use the same rows the box was drawn on,
+         * and routed through the port so a popup on an already-shifted UI
+         * screen does not move twice. Zero at GBA-native height. */
         window->yPos =
-            ((gTextRender.message.textWindowHeight / 2) + gTextRender.message.textWindowPosY) - (window->height / 2);
+            ((gTextRender.message.textWindowHeight / 2) + gTextRender.message.textWindowPosY) -
+            (window->height / 2) + Port_MapSource_MessageTileShiftY();
     } else {
         window->yPos = -1;
         window->xPos = -1;

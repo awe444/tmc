@@ -284,6 +284,20 @@ int Port_MapSource_MessageTileShift(void) {
     return 0;
 }
 
+/* The vertical sibling, and unlike the x one it is *not* always zero.
+ *
+ * A world view's BG0 is not shifted vertically — it carries the HUD, which
+ * stays at the top — so the text box has to take UI_CENTER_DY on its own to
+ * keep its authored position inside the centred frame. A UI screen's BG0 *is*
+ * shifted by exactly that, so a popup on one already travels with the layer
+ * and adding this on top would move it twice. That is the same double-shift that B1
+ * clipped the "Saving file..." and "Erasing file..." popups with, one axis
+ * over: at 240 rows the second shift would push a popup past the 160-row
+ * content span and the clip would delete it outright. */
+int Port_MapSource_MessageTileShiftY(void) {
+    return sUiCentered ? 0 : UI_TEXTBOX_TILE_DY;
+}
+
 /* Decide, per layer, how it can legitimately fill a wider viewport.
  *
  * There are only two ways a text BG can:
