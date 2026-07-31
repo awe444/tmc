@@ -83,6 +83,28 @@
  * must not add it again. Zero at GBA-native width. */
 #define UI_HUD_SPRITE_DX UI_CENTER_DX
 
+/* Per-scanline (HBlank DMA) tables.
+ *
+ * Nine sites register a table that the DMA replays one entry per rendered
+ * line: the four circular WIN0H windows (common.c), three BG3HOFS scrollers
+ * (light rays, steam, Vaati's arrival), the pause map's per-line BG3CNT, and
+ * the rolling barrel's per-line BG2 affine matrix. Each fills exactly one
+ * entry per line, so every fill loop is bounded by the line count and every
+ * table is VIEWPORT_HEIGHT entries long — a table sized for 160 lines feeds
+ * the DMA whatever follows it in memory for the remaining 80.
+ *
+ * The tables are double-buffered in gUnk_02017AA0, and the half stride is
+ * set by the widest consumer: the barrel writes a whole 8-halfword affine
+ * matrix per line, where the others write a single halfword. At GBA-native
+ * height a half is 160 * 16 = 0xA00 bytes, which is what the engine spells
+ * literally, and the pair is the 0x1400 the array has always been.
+ */
+#define VIEWPORT_HDMA_UNITS_PER_LINE 8 /* halfwords; the affine-matrix case */
+#define VIEWPORT_HDMA_HALF_BYTES (VIEWPORT_HEIGHT * VIEWPORT_HDMA_UNITS_PER_LINE * 2)
+#define VIEWPORT_HDMA_HALF_U16 (VIEWPORT_HDMA_HALF_BYTES / 2)
+#define VIEWPORT_HDMA_HALF_AFFINE (VIEWPORT_HDMA_HALF_BYTES / 16)
+#define VIEWPORT_HDMA_BYTES (VIEWPORT_HDMA_HALF_BYTES * 2)
+
 /* Horizontal camera limits for a room at (origin_x, width).
  *
  * A room at least as wide as the viewport scrolls between showing its left

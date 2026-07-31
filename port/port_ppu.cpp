@@ -18,6 +18,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
@@ -381,12 +382,19 @@ extern "C" void Port_PPU_Init(SDL_Window* window) {
     }
 
     {
+        /* TMC_OAMY_LEGACY=1 unbinds the untruncated-y channel, leaving the
+         * PPU on the pure 8-bit wrap heuristic. The A/B that shows what the
+         * channel is worth at 240 lines: with it, a sprite straddling the
+         * top edge stays there; without it, the same encoding resolves onto
+         * the visible screen. At 160 lines the two agree by construction. */
+        const bool oam_y_legacy = std::getenv("TMC_OAMY_LEGACY") != nullptr;
         VirtuaPPUMode1GbaMemory memory = {
             gIoMem,
             gVram,
             gBgPltt,
             gObjPltt,
             gOamMem,
+            oam_y_legacy ? nullptr : gOamYExt,
         };
         virtuappu_mode1_bind_gba_memory(&memory);
     }
@@ -421,6 +429,46 @@ extern "C" void Port_PPU_Init(SDL_Window* window) {
     } else {
         printf("PPU initialized with SDL renderer backend.\n");
     }
+}
+
+/* TMC_OAMY_PROBE=<signed y> — park a copy of the first enabled sprite at a
+ * chosen y in a spare OAM slot, publishing the same y through the untruncated
+ * channel. The route's own content only ever hangs ~31 px above the top edge,
+ * so this is how the deeper overhangs get exercised: at 240 lines the 8-bit
+ * field can only express -16, and a sprite at -64 has no encoding at all.
+ * Runs after the engine's OAM publish, so nothing overwrites it. */
+static void Port_PPU_OamYProbe(void) {
+    /* Resolved once — this sits in the per-frame present path. */
+    static const int sProbeY = [] {
+        const char* env = std::getenv("TMC_OAMY_PROBE");
+        return env != nullptr ? std::atoi(env) : INT_MIN;
+    }();
+    if (sProbeY == INT_MIN) {
+        return;
+    }
+    const int y = sProbeY;
+    const int slot = 0x7F; /* top of the array; the engine fills upward */
+    int src = -1;
+
+    for (int i = 0; i < slot; i++) {
+        uint16_t attr0 = gOamMem[i * 4];
+        if ((attr0 & 0x0300) != 0x0200) { /* enabled */
+            src = i;
+            break;
+        }
+    }
+    if (src < 0) {
+        return; /* nothing on screen to copy tiles from */
+    }
+
+    /* Forced to a 64x64 square so the visible-row arithmetic is predictable:
+     * at y the sprite occupies screen rows y..y+63, so a negative y leaves
+     * exactly 64+y rows showing and y <= -64 must leave none. Shape bits are
+     * attr0[15:14], size bits attr1[15:14]; x is pinned to 128. */
+    gOamMem[slot * 4 + 0] = (uint16_t)((gOamMem[src * 4 + 0] & 0x3F00) | (y & 0xFF));
+    gOamMem[slot * 4 + 1] = (uint16_t)(0xC000 | 0x0080);
+    gOamMem[slot * 4 + 2] = gOamMem[src * 4 + 2];
+    gOamYExt[slot] = (int16_t)y;
 }
 
 extern "C" void Port_PPU_PresentFrame(void) {
@@ -458,6 +506,7 @@ extern "C" void Port_PPU_PresentFrame(void) {
     virtuappu_mode1_pre_line_callback =
         port_hdma_has_active_channels() ? port_hdma_step_line : nullptr;
 
+    Port_PPU_OamYProbe();
     virtuappu_render_frame();
     Port_PPU_ComposeCanvas();
 

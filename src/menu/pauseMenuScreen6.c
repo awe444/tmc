@@ -159,7 +159,7 @@ void sub_080A67C4(u32 param_1) {
 
     LoadGfxGroup(iVar4);
     ptr = &gUnk_08128E94[param_1];
-    puVar2 = &gUnk_02017AA0[gUnk_03003DE4[0] * 0x500];
+    puVar2 = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16];
 
     for (i = 0; i <= 7; puVar2++, i++) {
         *puVar2 = 0x1e0a;
@@ -169,11 +169,11 @@ void sub_080A67C4(u32 param_1) {
         *puVar2 = 0x1e0b;
     }
 
-    for (; i < 0xa0; puVar2++, i++) {
+    for (; i < VIEWPORT_HEIGHT; puVar2++, i++) {
         *puVar2 = 0x1e0a;
     }
 
-    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * 0x500], (u16*)REG_ADDR_BG3CNT,
+    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16], (u16*)REG_ADDR_BG3CNT,
                  ((DMA_ENABLE | DMA_START_HBLANK | DMA_16BIT | DMA_REPEAT | DMA_SRC_INC | DMA_DEST_RELOAD) << 16) +
                      0x1);
     gMenu.field_0xa = ptr->unk2 >> 1;

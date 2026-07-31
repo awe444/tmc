@@ -44,7 +44,7 @@ void RollingBarrelManager_Main(RollingBarrelManager* this) {
     u32 tmp;
     RollingBarrelManager_Actions[super->action](this);
     sub_08058BC8(this);
-    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * 0xA0], (u16*)REG_ADDR_BG2PA,
+    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_AFFINE], (u16*)REG_ADDR_BG2PA,
                  ((DMA_ENABLE | DMA_START_HBLANK | DMA_16BIT | DMA_REPEAT | DMA_SRC_INC | DMA_DEST_RELOAD) << 16) +
                      0x8);
 }
@@ -210,7 +210,7 @@ void sub_08058B5C(RollingBarrelManager* this, u32 unk1) {
 }
 
 void sub_08058BC8(RollingBarrelManager* this) {
-    struct BgAffineDstData* tmp = &gUnk_02017AA0[gUnk_03003DE4[0] * 0xA0];
+    struct BgAffineDstData* tmp = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_AFFINE];
     struct BgAffineSrcData tmp2;
     s32 tmp3;
     tmp2.texX = 0x10000;
@@ -229,8 +229,8 @@ void sub_08058BC8(RollingBarrelManager* this) {
         tmp2.texY = (this->unk_20 + tmp3) << 8;
         BgAffineSet(&tmp2, tmp, 1);
         tmp++;
-    } while (++tmp3 < 0xA0u);
-    tmp = &gUnk_02017BA0[gUnk_03003DE4[0] * 0xA0];
+    } while (++tmp3 < (s32)VIEWPORT_HEIGHT);
+    tmp = &gUnk_02017BA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_AFFINE];
     gScreen.controls.bg2.dx = tmp->pa;
     gScreen.controls.bg2.dmx = tmp->pb;
     gScreen.controls.bg2.dy = tmp->pc;

@@ -18,6 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gba/gba.h"
@@ -101,6 +102,27 @@ static int sMaxDyContinuous = 0; /* max dy among deltas <= 64 */
 static uint32_t sOamHighYFrames = 0;
 static uint32_t sOamHighYEntriesTotal = 0;
 static uint32_t sOamHighYEntriesMax = 0;
+
+/* --- Spike 8: does the OAM Y side channel cover every enabled sprite? -----
+ *
+ * The channel keeps attr0's 8-bit encoding hardware-faithful and carries the
+ * untruncated y beside it (port_gba_mem.h), so the census above still counts
+ * the same encodings after the fix — it measures the *encoding*, which was
+ * never the thing that was wrong. These measure the resolution instead:
+ *
+ *  - `rescued`: enabled entries where the wrap heuristic and the channel
+ *    disagree, i.e. sprites the channel is actively placing correctly. Must
+ *    be 0 at 160 lines — a non-zero count there means this change alters the
+ *    shipping build — and is expected to be non-zero at 240.
+ *  - `unresolved`: enabled entries the channel has no valid value for, which
+ *    fall back to the wrap heuristic. This is the number the Spike 8 DoD
+ *    wants at zero: it is the population still exposed to the 8-bit limit.
+ */
+static uint32_t sOamYRescued = 0;
+static uint32_t sOamYRescuedFrames = 0;
+static uint32_t sOamYUnresolved = 0;
+static uint32_t sOamYEnabledTotal = 0;
+static void spike8_sample(uint32_t frame);
 
 /* --- Spike 7: off-screen behaviour ---------------------------------------
  * Two things the wider viewport could break, counted rather than eyeballed:
@@ -192,6 +214,43 @@ static void spike2b_sample(void) {
             sOamHighYEntriesTotal += n;
             if (n > sOamHighYEntriesMax) sOamHighYEntriesMax = n;
         }
+    }
+}
+
+/* Read the published OAM the same way the PPU does, so this measures the
+ * pair the raster actually sees rather than the shadow one frame earlier. */
+static void spike8_sample(uint32_t frame) {
+    uint32_t rescued = 0;
+    int i;
+
+    for (i = 0; i < 0x80; i++) {
+        uint16_t attr0 = gOamMem[i * 4];
+        int packed, legacy, ext;
+
+        if ((attr0 & 0x0300) == 0x0200) {
+            continue; /* disabled, including the 0x2A0 parking pattern */
+        }
+        sOamYEnabledTotal++;
+
+        packed = attr0 & 0xFF;
+        legacy = (packed >= MODE1_GBA_HEIGHT) ? (packed - 256) : packed;
+        ext = gOamYExt[i];
+        if ((ext & 0xFF) != packed) {
+            sOamYUnresolved++;
+            continue;
+        }
+        if (ext != legacy) {
+            rescued++;
+            if (getenv("TMC_OAMY_TRACE") != NULL) {
+                fprintf(stderr,
+                        "[oamy] frame=%u slot=%d packed=%3d legacy=%4d ext=%4d\n",
+                        frame, i, packed, legacy, ext);
+            }
+        }
+    }
+    if (rescued > 0) {
+        sOamYRescuedFrames++;
+        sOamYRescued += rescued;
     }
 }
 
@@ -355,6 +414,7 @@ void Port_MapCheck_OnFrame(uint32_t frame) {
     sFramesSeen++;
     spike2b_sample();
     spike7_sample();
+    spike8_sample(frame);
 
     if (gRoomControls.area != sLastArea || gRoomControls.room != sLastRoom) {
         sLastArea = gRoomControls.area;
@@ -481,6 +541,11 @@ void Port_MapCheck_Report(void) {
             "[mapcheck] spike2b: OAM high-Y (enabled, y in 161..239): frames=%u "
             "entries-total=%u max-simultaneous=%u\n",
             sOamHighYFrames, sOamHighYEntriesTotal, sOamHighYEntriesMax);
+    fprintf(stderr,
+            "[mapcheck] spike8: OAM y at %d lines: enabled=%u rescued=%u "
+            "(over %u frames) unresolved=%u\n",
+            MODE1_GBA_HEIGHT, sOamYEnabledTotal, sOamYRescued,
+            sOamYRescuedFrames, sOamYUnresolved);
     for (int i = 0; i < 6; i++) {
         if (sFramesSkipped[i]) {
             fprintf(stderr, "[mapcheck]   skipped (%s): %u frames\n",

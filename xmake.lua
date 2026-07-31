@@ -442,18 +442,26 @@ target("tmc_pc")
     add_includedirs(".")
     add_includedirs("build/" .. pc_game_version) -- For assets/map_offsets.h etc (USA or EU)
     add_includedirs("libs/ViruaPPU/include")     -- ViruaPPU PPU renderer
-    -- Spike 3 experiment hook: the viewport width must reach BOTH the port
-    -- and the ViruaPPU sources, which compile into this same target — a
-    -- define that reaches only one of them renders sheared garbage.
-    -- Milestone 1 replaces this with a real build option.
-    --   TMC_VIEW_W=320 xmake f -c -y -m release && TMC_VIEW_W=320 xmake build tmc_pc
-    -- NOTE the -c: `xmake f` alone does NOT drop a previously configured
-    -- define, so returning to the 240 default needs `xmake f -c -y -m release`
-    -- or the next build silently stays wide.
+    -- Viewport size. Each axis must reach BOTH the port and the ViruaPPU
+    -- sources, which compile into this same target — a define that reaches
+    -- only one of them renders sheared garbage. Three names per axis because
+    -- three layers each own one: the PPU raster (MODE1_GBA_*), the canvas
+    -- composite (PORT_VIEW_CONTENT_*), and the engine camera (VIEWPORT_*).
+    --   TMC_VIEW_W=320 TMC_VIEW_H=240 xmake f -c -y -m release
+    --   TMC_VIEW_W=320 TMC_VIEW_H=240 xmake build tmc_pc
+    -- Unset defaults to GBA-native on that axis, so the shipping build is
+    -- plain `xmake f -c -y -m release`. NOTE the -c: `xmake f` alone does NOT
+    -- drop a previously configured define, so returning to the default needs
+    -- `xmake f -c -y -m release` or the next build silently stays expanded.
     if os.getenv("TMC_VIEW_W") then
         add_defines("MODE1_GBA_WIDTH=" .. os.getenv("TMC_VIEW_W"),
                     "PORT_VIEW_CONTENT_WIDTH=" .. os.getenv("TMC_VIEW_W"),
                     "VIEWPORT_WIDTH=" .. os.getenv("TMC_VIEW_W"))
+    end
+    if os.getenv("TMC_VIEW_H") then
+        add_defines("MODE1_GBA_HEIGHT=" .. os.getenv("TMC_VIEW_H"),
+                    "PORT_VIEW_CONTENT_HEIGHT=" .. os.getenv("TMC_VIEW_H"),
+                    "VIEWPORT_HEIGHT=" .. os.getenv("TMC_VIEW_H"))
     end
     add_includedirs("libs/VirtuaAPU/include")
     add_includedirs("libs/agbplay_core")

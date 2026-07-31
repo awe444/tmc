@@ -211,13 +211,13 @@ void LightRayManager_Action3(LightRayManager* this) {
 
 void sub_0805732C(u32 param_1, u32 param_2) {
     u32 index;
-    u16* ptr = &gUnk_02017AA0[gUnk_03003DE4[0] * 0x500];
+    u16* ptr = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16];
 
-    for (index = 0; index < 0xa0; ptr++, index++) {
+    for (index = 0; index < VIEWPORT_HEIGHT; ptr++, index++) {
         *ptr = gSineTable[(param_2 + index) & 0xff] * param_1 / 0x100 + gScreen.bg3.xOffset;
     }
 
-    SetVBlankDMA(&gUnk_02017AA0[gUnk_03003DE4[0] * 0x500], (u16*)REG_ADDR_BG3HOFS,
+    SetVBlankDMA(&gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16], (u16*)REG_ADDR_BG3HOFS,
                  ((DMA_ENABLE | DMA_START_HBLANK | DMA_16BIT | DMA_REPEAT | DMA_SRC_INC | DMA_DEST_RELOAD) << 16) +
                      0x1);
 }

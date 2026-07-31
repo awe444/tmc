@@ -25,6 +25,8 @@
 #include "structures.h"
 #include "vram.h"
 
+#include "port_gba_mem.h" /* gOamYExtShadow — the untruncated sprite y */
+
 #include <setjmp.h>
 #include <stdio.h>
 #include <string.h>
@@ -387,6 +389,13 @@ static void RenderSpritePieces(const u8* data, /* pointer to frame data (count b
         oamWord |= flags;                         /* base flags */
         oamWord |= (u32)(shapeInfo & 0xC0) << 8;  /* shape → attr0 bits 14-15 */
         oamWord ^= (u32)(shapeInfo & 0x3C) << 26; /* flip/size → attr1 bits 12-15 */
+
+        /* attr0 keeps the hardware 8-bit encoding above; the untruncated y
+         * goes beside it, because at a 240-line viewport the wrap band is
+         * too narrow to recover a sprite straddling the top edge. The slot
+         * index is `updated`, which is also the OAM index `ip` is walking.
+         * See port_gba_mem.h. */
+        gOamYExtShadow[updated] = (s16)y;
 
         memcpy(ip, &oamWord, sizeof(oamWord));
         ip += 4;

@@ -10,23 +10,26 @@ decision**, not outstanding blockers. This document stays the authoritative
 record of what the widening actually did to the engine, and §"Carry-forward
 items" is the list Milestone 2 inherits.
 
-Anything at 240 is a release blocker. Anything at 320 blocked the Milestone 1
-exit criteria but not the shipping build, which is still GBA-native.
+Anything at 240x160 is a release blocker. Anything at 320x160 blocked the
+Milestone 1 exit criteria but not the shipping build, which is still
+GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
+(Milestone 1), 320x240 (Milestone 2).
 
 ## Status
 
 | ID | Summary | Status |
 |---|---|---|
-| B1 | Save/erase popups' text garbled | **Fixed** (verified 320) |
-| B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320, in situ) |
-| B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320, in situ) |
+| B1 | Save/erase popups' text garbled | **Fixed** (verified 320x160) |
+| B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320x160, in situ) |
+| B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320x160, in situ) |
 | B4 | Smith-room sprites/layers wrong at first dialogue | **Deferred** — never reproduced; needs a recording |
 | B5 | Interior room-to-room scroll glitches | **Deferred** — never reproduced; needs a recording |
 | B6 | Zelda sprite in the left border | **Fixed** (confirmed by maintainer) |
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
-| B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320, pixel-exact vs 240) |
-| B9 | Legend card artwork dimmed right of a vertical seam | **Fixed** (verified 320, pixel-exact vs 240) |
+| B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320x160, pixel-exact vs 240x160) |
+| B9 | Legend card artwork dimmed right of a vertical seam | **Fixed** (verified 320x160, pixel-exact vs 240x160) |
 | B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
+| B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
 
 ---
 
@@ -80,7 +83,7 @@ alongside `mapsrc_mask` so "which layer is it on, and did the rule reach it"
 is answerable in one line. The legend runs as `SUBTASK_AUXCUTSCENE` with
 `mapsrc_mask=0x6 clip_mask=0x9`: the artwork is on BG0/BG3 and is clipped.
 
-**Verified 320:** all legend frames in `scripts/sweep.script` (2000–4500)
+**Verified 320x160:** all legend frames in `scripts/sweep.script` (2000–4500)
 have single-colour border bands, and the whole opening sweep (2000–11750,
 40 frames) has **0 columns that repeat at the 256 px wrap period**.
 
@@ -103,7 +106,7 @@ Reported first as centred-240-with-borders, then after a partial fix as
    `WORLDEVENT`/`FASTTRAVEL` are world. Cutscene subtasks call
    `UpdateScrollVram` (`subtaskAuxCutscene.c:85`, `subtaskWorldEvent.c:57`),
    so the special maps are live during them and may be map-sourced. **That
-   relaxation is gated to wide builds** — applying it at 240 changed what the
+   relaxation is gated to expanded builds** — applying it at 240x160 changed what the
    shipping build renders (audit 0 → 179 136 mismatches).
 2. **An ordering bug that made the diagnostics look like liars.**
    `mapsource_bind_ui()` applied its "no map source ⇒ clip" rule *before* the
@@ -117,14 +120,14 @@ Reported first as centred-240-with-borders, then after a partial fix as
    the real fix; the 6400/6400 measurement was taken while nothing was
    clipping and did not distinguish the two.
 
-**Verified 320, in situ:** the cutscene renders full 320 width with world
+**Verified 320x160, in situ:** the cutscene renders full 320 width with world
 content edge to edge and Zelda correctly placed in world space
 (`scripts/sweep.script` frames 4750–5750, right band 6286–6400/6400 px).
 
 ## B4 — smith-room sprites/layers wrong at first dialogue *(deferred)*
 
 **Never reproduced.** Captures of that room *with* dialogue render correctly
-at 320 (`scripts/bugs.script` waypoint `B4_smith_dialogue`, and the smith-room
+at 320x160 (`scripts/bugs.script` waypoint `B4_smith_dialogue`, and the smith-room
 frames in `sweep.script`). The report specifies "the very first character
 dialogue", and the scripted run lands on a later one.
 
@@ -236,10 +239,10 @@ border band and the OBJ clip **deletes it entirely**. Same defect, and the
 "missing large heart" it would have become is worth recognising as this bug
 rather than a new one.
 
-**Verified 320:** with the fix, the whole f11000 frame (smith's house, a
-240-wide room) shifted by 40 px is **pixel-identical to the 240 build's frame
+**Verified 320x160:** with the fix, the whole f11000 frame (smith's house, a
+240-wide room) shifted by 40 px is **pixel-identical to the 240x160 frame
 — 0 mismatches over all 38 400 pixels**, HUD included. `UI_HUD_SPRITE_DX` is
-0 at native width, and both 240 gates still pass.
+0 at native width, and both 240x160 gates still pass.
 
 **Lesson.** The stale comment on `UI_CENTER_DX` in `include/viewport.h` still
 said "unlike the in-game HUD which is edge-anchored" — three weeks after D1
@@ -276,9 +279,9 @@ menu still cannot be entered cold (pre-existing crash chain, CHANGELOG #16),
 so the fix is unverified at runtime, but the defect is identical and visible
 by inspection.
 
-**Verified 320:** all 11 captured legend frames are now **pixel-identical to
-the 240 build shifted by 40 px — 0 mismatches each**, against 1134–4636
-mismatched pixels per frame before the fix. Both 240 gates still pass.
+**Verified 320x160:** all 11 captured legend frames are now **pixel-identical to
+240x160 shifted by 40 px — 0 mismatches each**, against 1134–4636
+mismatched pixels per frame before the fix. Both 240x160 gates still pass.
 
 **This is a third distinct centring channel.** The BG clip moves layers, the
 `UI_HUD_SPRITE_DX` sites move HUD sprites (B8), and PPU windows are a third
@@ -311,7 +314,7 @@ mismatched pixels against Spike 0 through the centre 240 columns; both are now
 **0**. A warp-tour probe of `SouthHyruleField` went 6197 → **0**. I had
 previously written those differences off as camera clamping — they were this.
 UI waypoints (cutscene, fileselect, pause, figurine) stay at 0 with solid
-borders. 240 unaffected: 11/11 and 0/265,497,600.
+borders. 240x160 unaffected: 11/11 and 0/265,497,600.
 
 `lightray` moved the other way, 29453 → 31673, and that is expected rather
 than a regression: it is the screen-fixed family, so unclipping changes the
@@ -328,9 +331,50 @@ reaching it needs the warp tour built from `data/map/entity_headers.s`
 0x1C rain, 0x22 light, 0x23 light-level).
 
 **Unrelated crash noticed while sweeping:** the generated warp tour segfaults
-after ~16 rooms **at both 240 and 320**, so it is not a widening bug. It warps
+after ~16 rooms **at both 240x160 and 320x160**, so it is not a widening bug. It warps
 to arbitrary rooms at fixed coordinates (0x1E0, 0x1E0) that are out of bounds
 for interiors. Not chased.
+
+## B11 — circular-window transitions render as a near-black screen *(fixed)*
+
+Found in Milestone 2's Spike 9, by sweeping the carry-forward item
+"per-scanline circular windows have not been widened". They had a worse
+problem than width: **they were not being drawn at all.**
+
+**Cause.** Spike 4 widened the window registers by handing full-width bounds
+to the PPU through `Port_Screen_CommitWindows`, since the packed 8-bit
+registers cannot express an edge past 255. The PPU prefers those bounds
+whenever they have been supplied — and `UpdateScreenRegs` supplies them every
+frame, so the flag is true from the first frame and never cleared. The
+HBlank DMA's per-line writes to `WIN0H` went into a register nothing read, and
+every line got whatever whole-frame bounds were last committed. With
+`winin=3F3F winout=0000` — all layers inside, none outside — that renders the
+screen almost entirely black.
+
+**This was a defect in the shipping 240x160 build**, not a widening bug.
+
+**Fix.** `virtuappu_mode1_set_window_h_bounds()` replaces only a window's
+horizontal pair; `port_hdma_step_line` calls it per line for any channel
+targeting WIN0H.
+
+**Evidence.** On the canonical route at 240×160, 4879 frames drive the
+channel, 111 have WIN0 enabled, and **64 have a right edge that varies
+between lines** — genuine circular windows. An A/B over 300 sampled frames
+(`TMC_HDMA_NOWIN=1` restores the old behaviour) differs on 19, with the
+differing pixel count sweeping 38151 → 518 and back: an iris animating. The
+frame shows a clean circle of world content with the fix and a near-black
+screen without it.
+
+**Why four rounds of playtesting and the gate both missed it.** The gate is
+11 still frames; the defect lives in a ~1 second transition between them, and
+still reports 11/11 with the fix in. Playtesting would have shown it — this
+is the fade between rooms — which suggests it was introduced after the
+playtest rounds, i.e. by Spike 4 itself.
+
+**Lesson (7).** *A gate made of still frames cannot see a defect that only
+exists mid-transition.* When a change alters a mechanism rather than a
+surface, ask which frames exercise the mechanism and count them, rather than
+reading the gate's pass as coverage.
 
 ---
 
@@ -397,9 +441,9 @@ to add between bug fixes.
 |---|---|
 | 240 route pixel-identical | **11/11, 0 differences** |
 | 240 map-source audit | **0 mismatched in 265 497 600 fetches** |
-| No layer wraps/repeats at 320 | **0 wrap-period columns**, 40-frame opening sweep + 11-waypoint route |
+| No layer wraps/repeats at 320x160 | **0 wrap-period columns**, 40-frame opening sweep + 11-waypoint route |
 | Rooms narrower than 320 centred with borders | **verified** on every room tested; borders are a uniform colour (see D3 below) |
-| Frame time at 320 within +25% | **present 7.19 ms mean** vs the 6.48 ms Spike 1 canvas baseline = **+10.9%** |
+| Frame time at 320x160 within +25% | **present 7.19 ms mean** vs the 6.48 ms Spike 1 canvas baseline = **+10.9%** |
 | Go/no-go for Milestone 2 | **GO** — maintainer approval, 2026-07-30 |
 
 Frame time measured the same way as the baseline: canonical route (12 700
@@ -423,7 +467,7 @@ is dominated by a texture upload whose size did not change.
   outside every layer anyway. Accepted as-is rather than forced.
 - **World-space window sites deferred** (carry-forward below).
 
-The 240 gates above were re-run after every change in this document and are
+The 240x160 gates above were re-run after every change in this document and are
 the standing regression gate; keep running both before any viewport commit
 (`tools/capture/README.md`, "Regression gate").
 
@@ -433,11 +477,16 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 
 | Item | Lands in |
 |---|---|
-| Title screen affine sword | Spike 9 (affine) |
-| Per-scanline circular windows | Spike 9 (HDMA) |
+| Title screen affine sword | Spike 9 (affine) — **still open**, see below |
+| ~~Per-scanline circular windows~~ | **Done — Spike 9.** See B11 and `docs/spike9-hdma-240.md` |
 | World-space window x masked to 8 bits | Spike 9, or sooner if a scene is reported |
 | Kinstone menu unverified | any real playthrough |
 | Quicksave state files not portable | nothing — recorded as a dead end |
+
+The per-scanline windows turned out to be a live defect rather than an
+unwidened one — recorded as B11 below. The affine half of Spike 9 (barrel,
+tornado, title sword) is **not** done: those scenes have not been reached at
+240 lines and their per-line reference points are unconverted.
 
 None of these blocks starting Milestone 2. The two Spike 9 items are the ones
 that will actually be *worked*; the rest are notes.
@@ -448,7 +497,7 @@ that will actually be *worked*; the rest are notes.
   affine *reference point*, which is not a plain pixel shift and risks the
   gameplay affine scenes (barrel, tornado).
 - **Kinstone menu** never runtime-verified: it crashes on cold scripted entry
-  at *both* 240 and 320, so it is the pre-existing kinstone crash chain
+  at *both* 240x160 and 320x160, so it is the pre-existing kinstone crash chain
   (CHANGELOG #16) rather than a widening bug. Verify during a real
   playthrough with fusions available.
 - **Per-scanline circular windows** (lantern, fade iris, white-triangle) use
@@ -485,7 +534,7 @@ that will actually be *worked*; the rest are notes.
   reproduced before it is touched. The light door is the cheapest to reach.
 - ~~**BG3 gameplay overlays** were never swept for wrap past 256 px.~~
   **Swept — see B10.** Wrap was not the defect; the centring clip was.
-- ~~**Milestone 1 frame time at 320** is unmeasured.~~ **Measured** — see the
+- ~~**Milestone 1 frame time at 320x160** is unmeasured.~~ **Measured** — see the
   exit-criteria table above. Note the baseline for any future comparison is
   the Spike 1 canvas build (present 6.48 ms mean), *not* the Spike 0 240
   baseline: the canvas cost is paid once and must not be charged twice.

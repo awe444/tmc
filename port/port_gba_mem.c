@@ -4,6 +4,7 @@
 #include "port_audio.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
@@ -17,6 +18,28 @@ u16 gBgPltt[256];
 u16 gObjPltt[256];
 u16 gOamMem[0x400 / 2];
 u8 gVram[0x18000];
+
+/* See port_gba_mem.h for why the sprite y needs a channel of its own. */
+s16 gOamYExtShadow[0x80];
+s16 gOamYExt[0x80];
+
+void Port_OamYExt_Latch(void) {
+    memcpy(gOamYExt, gOamYExtShadow, sizeof(gOamYExt));
+}
+
+s16 gWin0hExtLeft[VIEWPORT_HEIGHT];
+s16 gWin0hExtRight[VIEWPORT_HEIGHT];
+
+/* Invalidate every line. The fill that follows writes only the lines it
+ * covers, so lines it skips must not present a stale value as current —
+ * -1 cannot match any byte the DMA writes, so they fall back to hardware. */
+void Port_Win0hExt_Reset(void) {
+    int i;
+    for (i = 0; i < VIEWPORT_HEIGHT; i++) {
+        gWin0hExtLeft[i] = -1;
+        gWin0hExtRight[i] = -1;
+    }
+}
 
 void gba_write8(uint32_t addr, uint8_t v) {
     if (addr >= 0x02000000u && addr < 0x02040000u) {

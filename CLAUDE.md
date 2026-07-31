@@ -24,23 +24,26 @@ write-ups are a historical record and several carry inline corrections.
 ## Building
 
 ```bash
-xmake f -c -y -m release && xmake build tmc_pc     # 240 build -> build/pc/tmc_pc
+xmake f -c -y -m release && xmake build tmc_pc     # 240x160 build -> build/pc/tmc_pc
 ```
 
-For the wide build prefix **both** commands with `TMC_VIEW_W=320`. The `-c` is
-required — a plain `xmake f` will not drop a previously configured width, and
-the next build silently stays wide.
+For 320x160 prefix **both** commands with `TMC_VIEW_W=320`; for 320x240 add
+`TMC_VIEW_H=240` as well. The `-c` is required — a plain `xmake f` will not
+drop a previously configured size, and the next build silently stays expanded.
+
+Name builds WxH (240x160, 320x160, 320x240), never "the 240 build" — with two
+axes in play a bare number no longer says which.
 
 ## Regression gate — run before any viewport commit
 
-At the **default 240 build**, both must hold:
+At the **default 240x160 build**, both must hold:
 
 - canonical route: 11/11 waypoints pixel-identical
 - map-source audit: 0 mismatches in 265,497,600 fetches
 
 Exact commands in `tools/capture/README.md` ("Regression gate"). Both have
-caught real regressions, including a change intended for the wide build that
-altered what the shipping build renders. The 240 build is the shipping build.
+caught real regressions, including a change intended for an expanded build
+that altered what the shipping build renders. 240x160 is the shipping build.
 
 ## Conventions
 
