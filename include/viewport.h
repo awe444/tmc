@@ -74,6 +74,22 @@
 #define UI_CENTER_DX ((VIEWPORT_WIDTH - DISPLAY_WIDTH) / 2)
 #define UI_CENTER_TILE_DX (UI_CENTER_DX / 8)
 
+/* The vertical counterpart, and it applies to *less* than DX does.
+ *
+ * A full-screen 240x160 surface — title, file select, pause, the figurine
+ * gallery — is centred on both axes, so it takes both shifts. The in-game
+ * HUD is not: it is anchored to the top of the screen, and the top of a
+ * taller screen is still the top, so shifting it down would be wrong. That
+ * is why this is applied only where the surface is a whole authored screen,
+ * while DX is applied to every 240-authored layer.
+ *
+ * The text box is the case this does not settle: it is authored near the
+ * bottom of 160 rows and, unshifted, floats mid-screen at 240. It rides BG0
+ * along with the top-anchored HUD, so neither a uniform shift nor none is
+ * right for both, and moving it needs a shift at its own source. Left alone
+ * here and recorded rather than guessed at. Zero at GBA-native height. */
+#define UI_CENTER_DY ((VIEWPORT_HEIGHT - DISPLAY_HEIGHT) / 2)
+
 /* HUD sprites are positioned in engine coordinates and must move with the
  * centred BG0 layer they sit on, so they take the same shift. World sprites
  * must NOT — that is why this is applied at each HUD source site rather than

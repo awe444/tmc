@@ -121,7 +121,12 @@ void FigurineMenu_080A4608(void) {
     MemClear(&gBG0Buffer, sizeof(gBG0Buffer));
     MemClear(&gBG3Buffer, sizeof(gBG3Buffer));
     gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
-    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0x78, 0x98);
+    /* B9 class, vertical: a 240x160-authored window on a centred UI screen.
+     * The PPU applies windows in screen coordinates and cannot see the BG
+     * clip that does the centring, so the shift has to be added here or the
+     * band lands 40 px above the artwork it belongs to. Zero at native. */
+    gScreen.controls.window0VerticalDimensions =
+        WIN_RANGE(0x78 + UI_CENTER_DY, 0x98 + UI_CENTER_DY);
     gScreen.controls.windowInsideControl = 0x1f;
     gScreen.controls.windowOutsideControl = 0x1d;
     gScreen.bg1.updated = 1;
