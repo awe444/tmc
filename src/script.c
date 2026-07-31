@@ -1971,10 +1971,11 @@ void WaitForCameraTouchRoomBorder(Entity* entity, ScriptExecutionContext* contex
     if (gRoomControls.camera_target != NULL) {
         /* This predicts where the camera will come to rest and waits for
          * scroll_x/scroll_y to reach it exactly. It therefore has to apply
-         * the *same* clamp Scroll1 does — VIEWPORT_CAM_MIN_X/MAX_X — or the
-         * equality never holds and the script waits forever. That is a hard
-         * softlock, not a cosmetic issue: it is what hung the Hyrule Town
-         * bell-to-square camera pan at a wider viewport. */
+         * the *same* clamps Scroll1 does — VIEWPORT_CAM_MIN/MAX on both axes
+         * — or the equality never holds and the script waits forever. That is
+         * a hard softlock, not a cosmetic issue: it is what hung the Hyrule
+         * Town bell-to-square camera pan at a wider viewport (B7). The
+         * vertical pair is the same hazard at a taller one. */
         left = gRoomControls.camera_target->x.HALF.HI - VIEWPORT_HALF_WIDTH;
         bottom = gRoomControls.camera_target->y.HALF.HI - VIEWPORT_HALF_HEIGHT;
 
@@ -1982,10 +1983,10 @@ void WaitForCameraTouchRoomBorder(Entity* entity, ScriptExecutionContext* contex
             left = VIEWPORT_CAM_MIN_X(gRoomControls.origin_x, gRoomControls.width);
         if (left > VIEWPORT_CAM_MAX_X(gRoomControls.origin_x, gRoomControls.width))
             left = VIEWPORT_CAM_MAX_X(gRoomControls.origin_x, gRoomControls.width);
-        if (bottom < gRoomControls.origin_y)
-            bottom = gRoomControls.origin_y;
-        if (bottom > gRoomControls.origin_y + gRoomControls.height - VIEWPORT_HEIGHT)
-            bottom = gRoomControls.origin_y + gRoomControls.height - VIEWPORT_HEIGHT;
+        if (bottom < VIEWPORT_CAM_MIN_Y(gRoomControls.origin_y, gRoomControls.height))
+            bottom = VIEWPORT_CAM_MIN_Y(gRoomControls.origin_y, gRoomControls.height);
+        if (bottom > VIEWPORT_CAM_MAX_Y(gRoomControls.origin_y, gRoomControls.height))
+            bottom = VIEWPORT_CAM_MAX_Y(gRoomControls.origin_y, gRoomControls.height);
 
         if (left == gRoomControls.scroll_x && bottom == gRoomControls.scroll_y)
             gActiveScriptInfo.flags |= 1;
@@ -2308,8 +2309,8 @@ void sub_0807FB94(Entity* entity, ScriptExecutionContext* context) {
 }
 
 void sub_0807FBA0(Entity* entity, ScriptExecutionContext* context) {
-    entity->x.HALF.HI = gRoomControls.scroll_x + 120;
-    entity->y.HALF.HI = gRoomControls.scroll_y + 80;
+    entity->x.HALF.HI = gRoomControls.scroll_x + VIEWPORT_HALF_WIDTH;
+    entity->y.HALF.HI = gRoomControls.scroll_y + VIEWPORT_HALF_HEIGHT;
 }
 
 void sub_0807FBB4(Entity* entity, ScriptExecutionContext* context) {

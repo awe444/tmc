@@ -125,4 +125,23 @@
     (((int)(width) <= VIEWPORT_WIDTH) ? VIEWPORT_CAM_MIN_X(origin_x, width)                        \
                                       : ((int)(origin_x) + (int)(width) - VIEWPORT_WIDTH))
 
+/* Vertical camera limits, the exact twin of the horizontal pair above.
+ *
+ * At GBA-native height the narrow branch reduces to the original
+ * `origin_y` / `origin_y + height - 160`: the shortest room in the game is
+ * 160 tall, so `height <= VIEWPORT_HEIGHT` can only be an equality there and
+ * the centring term is zero. At 240 it is the common case — 356 of 617 rooms
+ * are shorter than 240 (§6), against 443 of 617 narrower than 320.
+ *
+ * The engine wrote the vertical clamps as bare `origin_y`, without the
+ * "narrower than the viewport" branch the horizontal side needed, because on
+ * hardware a room could never be shorter than the screen.
+ */
+#define VIEWPORT_CAM_MIN_Y(origin_y, height)                                                       \
+    ((int)(origin_y) -                                                                             \
+     (((int)(height) <= VIEWPORT_HEIGHT) ? ((VIEWPORT_HEIGHT - (int)(height)) / 2) : 0))
+#define VIEWPORT_CAM_MAX_Y(origin_y, height)                                                       \
+    (((int)(height) <= VIEWPORT_HEIGHT) ? VIEWPORT_CAM_MIN_Y(origin_y, height)                     \
+                                        : ((int)(origin_y) + (int)(height) - VIEWPORT_HEIGHT))
+
 #endif // VIEWPORT_H

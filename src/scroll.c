@@ -139,12 +139,13 @@ void Scroll1(RoomControls* controls) {
 
         // Scroll in y direction.
         unused = controls->scroll_y;
-        targetValue = controls->camera_target->y.HALF.HI - 0x50;
+        targetValue = controls->camera_target->y.HALF.HI - VIEWPORT_HALF_HEIGHT;
         diff = controls->scroll_y - (targetValue);
         if (diff != 0) {
             uVar5 = controls->scroll_y & 7;
             if (diff >= 1) {
-                if (controls->origin_y < controls->scroll_y) {
+                s32 minY = VIEWPORT_CAM_MIN_Y(controls->origin_y, controls->height);
+                if (minY < controls->scroll_y) {
                     if (controls->scrollSpeed <= diff) {
                         diff = controls->scrollSpeed;
                         controls->scroll_flags |= 4;
@@ -153,12 +154,12 @@ void Scroll1(RoomControls* controls) {
                     if (uVar5 - diff < 1) {
                         gUpdateVisibleTiles = 1;
                     }
-                    if (controls->origin_y >= controls->scroll_y) {
-                        controls->scroll_y = controls->origin_y;
+                    if (minY >= controls->scroll_y) {
+                        controls->scroll_y = minY;
                     }
                 }
             } else {
-                uVar2 = controls->origin_y + controls->height - VIEWPORT_HEIGHT;
+                uVar2 = VIEWPORT_CAM_MAX_Y(controls->origin_y, controls->height);
                 if (controls->scroll_y < uVar2) {
                     if (-controls->scrollSpeed >= diff) {
                         diff = -controls->scrollSpeed;
@@ -513,7 +514,7 @@ u32 sub_080803D0(void) {
         xy49 = delta_x * delta_yy / delta_xx; // = x * 4/9
         while (delta_y <= xy49) {
 
-            if (scroll_y + 0xa8 > pos_y + delta_y) {
+            if (scroll_y + VIEWPORT_REGION_HEIGHT > pos_y + delta_y) {
                 if (scroll_x + VIEWPORT_REGION_WIDTH > delta_x + pos_x) {
                     r7 |= 1;
                 }
@@ -546,7 +547,7 @@ u32 sub_080803D0(void) {
         r4 = delta_yy * 2 + (delta_y * -2 + 1) * delta_xx;
         xy49 = delta_y * delta_xx / delta_yy; // y * 9 / 4
         while (delta_x <= xy49) {
-            if (scroll_y + 0xa8 > pos_y + delta_y) {
+            if (scroll_y + VIEWPORT_REGION_HEIGHT > pos_y + delta_y) {
                 if (scroll_x + VIEWPORT_REGION_WIDTH > pos_x + delta_x) {
                     r7 |= 0x10;
                 }
@@ -808,15 +809,21 @@ void sub_08080974(u32 arg0, u32 arg1) {
     }
 
     var0 = roomControls->origin_y;
-    if (arg1 <= var0 + 80) {
-        roomControls->scroll_y = var0;
+    if (arg1 <= var0 + VIEWPORT_HALF_HEIGHT) {
+        roomControls->scroll_y = VIEWPORT_CAM_MIN_Y(var0, roomControls->height);
     } else {
         var0 += roomControls->height;
-        var1 = var0 - 80;
+        var1 = var0 - VIEWPORT_HALF_HEIGHT;
         if (arg1 < var1) {
             var1 = arg1;
         }
-        roomControls->scroll_y = var1 - 80;
+        roomControls->scroll_y = var1 - VIEWPORT_HALF_HEIGHT;
+        if ((s32)roomControls->scroll_y < VIEWPORT_CAM_MIN_Y(roomControls->origin_y, roomControls->height)) {
+            roomControls->scroll_y = VIEWPORT_CAM_MIN_Y(roomControls->origin_y, roomControls->height);
+        }
+        if ((s32)roomControls->scroll_y > VIEWPORT_CAM_MAX_Y(roomControls->origin_y, roomControls->height)) {
+            roomControls->scroll_y = VIEWPORT_CAM_MAX_Y(roomControls->origin_y, roomControls->height);
+        }
     }
 
     sub_080809D4();
@@ -850,15 +857,21 @@ void sub_080809D4(void) {
 
     y = roomControls->camera_target->y.HALF.HI;
     var0 = roomControls->origin_y;
-    if (y <= var0 + 80) {
-        roomControls->scroll_y = var0;
+    if (y <= var0 + VIEWPORT_HALF_HEIGHT) {
+        roomControls->scroll_y = VIEWPORT_CAM_MIN_Y(var0, roomControls->height);
     } else {
         var0 += roomControls->height;
-        var1 = var0 - 80;
+        var1 = var0 - VIEWPORT_HALF_HEIGHT;
         if (y < var1) {
             var1 = (u16)roomControls->camera_target->y.HALF.HI;
         }
-        roomControls->scroll_y = var1 - 80;
+        roomControls->scroll_y = var1 - VIEWPORT_HALF_HEIGHT;
+        if ((s32)roomControls->scroll_y < VIEWPORT_CAM_MIN_Y(roomControls->origin_y, roomControls->height)) {
+            roomControls->scroll_y = VIEWPORT_CAM_MIN_Y(roomControls->origin_y, roomControls->height);
+        }
+        if ((s32)roomControls->scroll_y > VIEWPORT_CAM_MAX_Y(roomControls->origin_y, roomControls->height)) {
+            roomControls->scroll_y = VIEWPORT_CAM_MAX_Y(roomControls->origin_y, roomControls->height);
+        }
     }
 
     UpdateScreenShake();

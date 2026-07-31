@@ -1348,11 +1348,13 @@ Milestone 1 (bug-tracker lessons 1, 5 and 6):
 the two that land in Spike 9 are the per-scanline window tables and the affine
 paths (title sword, barrel, tornado).
 
-> **Progress.** The `TMC_VIEW_H` plumbing, Spike 8 and Spike 9's height work
-> are **done** — write-ups in `docs/spike8-oam-y.md` and
-> `docs/spike9-hdma-240.md`, which win over the sketches below. Spike 9's
-> affine half is **not** done (barrel, tornado, title sword: unreached at 240
-> lines). Spikes 10 and 11 are untouched. Both 240 gates pass.
+> **Progress.** The `TMC_VIEW_H` plumbing and Spikes 8, 9 (height half) and
+> 10 are **done** — write-ups in `docs/spike8-oam-y.md`,
+> `docs/spike9-hdma-240.md` and `docs/spike10-vertical-camera.md`, which win
+> over the sketches below. Still open: Spike 9's affine half (barrel, tornado,
+> title sword — unreached at 240 rows), the vertical twin of Spike 6's UI
+> centring (UI screens are top-anchored), and Spike 11. Both 240x160 gates
+> pass.
 
 ### Spike 8 — OAM Y widening (2–3 days) — **DONE**, `docs/spike8-oam-y.md`
 **Questions:** Can sa2's `EXTENDED_OAM` split-field approach be ported given its
@@ -1388,7 +1390,7 @@ affine scenes (Vaati's tornado, rolling barrel, screen-shrink cinematic).
       exists only in the *unapplied* widescreen patch — reference material per
       D4, not a symbol in any build.)
 
-### Spike 10 — Camera and clamping, vertical (1–2 days)
+### Spike 10 — Camera and clamping, vertical (1–2 days) — **DONE**, `docs/spike10-vertical-camera.md`
 **Method:** As Spike 5, for `0x50`/`0xa8` and the height clamp. Test across §6
 height clusters: 160, 192, 208, 240, 320.
 

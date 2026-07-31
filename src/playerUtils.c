@@ -4405,13 +4405,13 @@ void InitializeCamera() {
     }
     roomControls->scroll_x += roomControls->origin_x;
 
-    if (targetY < 0x50) {
-        roomControls->scroll_y = 0;
+    if (targetY < VIEWPORT_HALF_HEIGHT) {
+        roomControls->scroll_y = VIEWPORT_CAM_MIN_Y(0, roomControls->height);
     } else {
-        if ((roomControls->height - 0x50) < targetY) {
-            roomControls->scroll_y = roomControls->height - 0x50 - 0x50;
+        if ((roomControls->height - VIEWPORT_HALF_HEIGHT) < targetY) {
+            roomControls->scroll_y = VIEWPORT_CAM_MAX_Y(0, roomControls->height);
         } else {
-            roomControls->scroll_y = targetY - 0x50;
+            roomControls->scroll_y = targetY - VIEWPORT_HALF_HEIGHT;
         }
     }
     roomControls->scroll_y += roomControls->origin_y;
