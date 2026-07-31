@@ -1352,12 +1352,13 @@ paths (title sword, barrel, tornado).
 > and 11 are **done** — write-ups in `docs/spike8-oam-y.md`,
 > `docs/spike9-hdma-240.md`, `docs/spike10-vertical-camera.md` and
 > `docs/spike11-vertical-culling.md`, which win over the sketches below.
-> Vertical UI centring is also done — `docs/ui-vertical-centring.md`. Still
-> open before Milestone 2 can be signed off: Spike 9's affine half (barrel,
-> tornado, and the title sword, which now sits 40 px high as well as 40 px
-> left), the iris still being a 240-wide circle, where the in-game text box
-> should sit on a taller screen, and a decision on peak frame time. Both
-> 240x160 gates pass; go/no-go is in `spike11-vertical-culling.md` §7.
+> Vertical UI centring and the affine layers are also done —
+> `docs/ui-vertical-centring.md`, `docs/affine-viewport.md`. Still open before
+> Milestone 2 can be signed off: the iris is still a 240-wide circle, where
+> the in-game text box should sit on a taller screen, a decision on peak frame
+> time, and two affine scenes that remain unreached (Vaati's tornado, the
+> screen-shrink cinematic — see `affine-viewport.md` §5). Both 240x160 gates
+> pass; go/no-go is in `spike11-vertical-culling.md` §7.
 
 ### Spike 8 — OAM Y widening (2–3 days) — **DONE**, `docs/spike8-oam-y.md`
 **Questions:** Can sa2's `EXTENDED_OAM` split-field approach be ported given its

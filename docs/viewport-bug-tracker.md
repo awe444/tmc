@@ -511,7 +511,7 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 
 | Item | Lands in |
 |---|---|
-| Title screen affine sword | Spike 9 (affine) — **still open**, see below |
+| ~~Title screen affine sword~~ | **Done** — `docs/affine-viewport.md`; verified pixel-exact |
 | ~~Per-scanline circular windows~~ | **Done — Spike 9.** See B11 and `docs/spike9-hdma-240.md` |
 | World-space window x masked to 8 bits | Spike 9, or sooner if a scene is reported |
 | Kinstone menu unverified | any real playthrough |
@@ -525,11 +525,13 @@ tornado, title sword) is **not** done: those scenes have not been reached at
 None of these blocks starting Milestone 2. The two Spike 9 items are the ones
 that will actually be *worked*; the rest are notes.
 
-- **Title screen affine sword** sits ~40 px left. It renders through
-  `mode2.c`'s affine path, which neither the BG clip nor the OBJ offset
-  reaches. Belongs with Spike 9's affine work; fixing it means offsetting the
-  affine *reference point*, which is not a plain pixel shift and risks the
-  gameplay affine scenes (barrel, tornado).
+- ~~**Title screen affine sword** sits ~40 px left.~~ **Fixed** —
+  `docs/affine-viewport.md`. `mode2.c`'s affine path now honours the same
+  centring clip the text path does, which was the missing channel rather than
+  a reference-point calculation. At 320x240 the title's centred 240x160 box is
+  pixel-identical to the 240x160 reference. The rolling barrel turned out to
+  be reachable by warp (Deepwood Shrine room 32) and is verified too; the
+  tornado's per-line effect is a BG3 scroller rather than affine.
 - **Kinstone menu** never runtime-verified: it crashes on cold scripted entry
   at *both* 240x160 and 320x160, so it is the pre-existing kinstone crash chain
   (CHANGELOG #16) rather than a widening bug. Verify during a real
