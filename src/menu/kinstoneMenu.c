@@ -295,7 +295,8 @@ void KinstoneMenu_Type3_Overlay1(void) {
          * at both widths (pre-existing, CHANGELOG #16). Zero at GBA-native. */
         gScreen.controls.window0HorizontalDimensions =
             WIN_RANGE(0x68 + UI_CENTER_DX, 0x87 + UI_CENTER_DX);
-        gScreen.controls.window0VerticalDimensions = WIN_RANGE(0x40, 0x5f);
+        gScreen.controls.window0VerticalDimensions =
+            WIN_RANGE(0x40 + UI_CENTER_DY, 0x5f + UI_CENTER_DY);
         gScreen.controls.windowInsideControl = 0x3f;
         gScreen.controls.windowOutsideControl = 0x1f;
         gScreen.controls.layerFXControl = 0x3f90;

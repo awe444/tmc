@@ -305,7 +305,7 @@ int Port_MapSource_MessageTileShift(void) {
  * at all, and whether sprites should travel with a shifted layer.
  */
 static void mapsource_bind_ui(void) {
-#if UI_CENTER_DX > 0
+#if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
     bool ui_screen = mapsource_is_ui_screen();
     VirtuaPPUMode1BgClip clip;
     int bg;
@@ -324,6 +324,13 @@ static void mapsource_bind_ui(void) {
      * relationship to each other intact. */
     clip.offset_x = UI_CENTER_DX;
     clip.content_width = DISPLAY_WIDTH;
+    /* Vertically the rule is *not* uniform, and this is the one place the two
+     * axes differ. A whole authored screen is centred, so it takes the shift.
+     * A world view's BG0 carries the HUD, which is anchored to the top of the
+     * screen — and the top of a taller screen is still the top — so it keeps
+     * offset_y = 0 and is allowed the full frame. See UI_CENTER_DY. */
+    clip.offset_y = ui_screen ? UI_CENTER_DY : 0;
+    clip.content_height = ui_screen ? DISPLAY_HEIGHT : MODE1_GBA_HEIGHT;
     sClippedBgMask = 0;
     for (bg = 0; bg < 4; bg++) {
         /* BG3 during a world view is a *gameplay overlay* — hole parallax,
@@ -357,12 +364,15 @@ static void mapsource_bind_ui(void) {
      * the HUD's own sprites are shifted at their source instead
      * (UI_HUD_SPRITE_DX in ui.c), so they travel with the HUD layer without
      * dragging Link along with them. */
-    virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0, 0);
+    virtuappu_mode1_set_obj_offset(ui_screen ? UI_CENTER_DX : 0,
+                                   ui_screen ? UI_CENTER_DY : 0);
 
     if (ui_screen) {
         virtuappu_mode1_set_obj_clip(UI_CENTER_DX, UI_CENTER_DX + DISPLAY_WIDTH);
+        virtuappu_mode1_set_obj_clip_v(UI_CENTER_DY, UI_CENTER_DY + DISPLAY_HEIGHT);
         return;
     }
+    virtuappu_mode1_set_obj_clip_v(0, MODE1_GBA_HEIGHT);
 
     /* World view: confine sprites to the room's on-screen span so the border
      * stays border. A room narrower than the viewport is centred, so the
