@@ -521,17 +521,33 @@ typedef struct {
 
 static DeferredDrawList sDeferredList;
 
-/* ---- CheckOnScreen (port of ASM at 0x080040A8) ---- */
+/* ---- CheckOnScreen (port of ASM at 0x080040A8) ----
+ *
+ * The engine's per-entity visibility test, and the gate on whether an entity
+ * is drawn at all. It biases the screen coordinate by a 0x3F slack margin and
+ * rejects anything past the far edge plus the same margin, so the original
+ * literals are the *screen size plus twice the margin*: 240+126 = 0x16E and
+ * 160+126 = 0x11E. Both reduce to those at GBA-native size.
+ *
+ * Written as literals, they cull a band at the far edge of an expanded
+ * viewport that is genuinely on screen — 17 px at the right at width 320, and
+ * 17 px at the bottom at height 240 — which presents as entities blinking out
+ * shortly before they reach the edge. The margin is deliberately left as 0x3F:
+ * it is slack for a sprite whose origin has left the screen while its body has
+ * not, which is a property of sprite size, not of the viewport.
+ */
+#define ONSCREEN_MARGIN 0x3F
+
 u32 CheckOnScreen(Entity* entity) {
     s32 x = (s32)entity->x.HALF.HI - (s32)gRoomControls.scroll_x;
-    x += 0x3F;
-    if ((u32)x >= 0x16E)
+    x += ONSCREEN_MARGIN;
+    if ((u32)x >= (u32)(VIEWPORT_WIDTH + ONSCREEN_MARGIN * 2))
         return 0;
 
     s32 y = (s32)entity->y.HALF.HI - (s32)gRoomControls.scroll_y;
     y += (s32)entity->z.HALF.HI;
-    y += 0x3F;
-    if ((u32)y >= 0x11E)
+    y += ONSCREEN_MARGIN;
+    if ((u32)y >= (u32)(VIEWPORT_HEIGHT + ONSCREEN_MARGIN * 2))
         return 0;
 
     return 1;

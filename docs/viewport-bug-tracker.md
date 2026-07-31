@@ -30,6 +30,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B9 | Legend card artwork dimmed right of a vertical seam | **Fixed** (verified 320x160, pixel-exact vs 240x160) |
 | B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
 | B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
+| B12 | Entities culled in a band at the far viewport edge | **Fixed** (Milestone 2 Spike 11; horizontal half was live through Milestone 1) |
 
 ---
 
@@ -375,6 +376,39 @@ playtest rounds, i.e. by Spike 4 itself.
 exists mid-transition.* When a change alters a mechanism rather than a
 surface, ask which frames exercise the mechanism and count them, rather than
 reading the gate's pass as coverage.
+
+## B12 — entities culled in a band at the far viewport edge *(fixed)*
+
+Found by re-auditing Spike 7's culling conversions rather than trusting its
+"vertical siblings were converted at the same time" note.
+
+**Cause.** `CheckOnScreen` (`port/port_draw.c`) — the per-entity visibility
+test that gates whether an entity is drawn at all — compared against raw
+literals `0x16E` and `0x11E`. Those are *screen size plus twice the 0x3F slack
+margin* (240+126, 160+126), so at an expanded viewport they cull a band at the
+far edge that is genuinely on screen: **17 px at the right at width 320, 17 px
+at the bottom at height 240.** Entities blink out shortly before the edge.
+
+**The horizontal half was live for the whole of Milestone 1.** Spike 7 walked
+12 wide rooms and did not catch it because its two artifact scans looked for
+wrap-shaped repetition and black columns, and a missing sprite produces
+neither.
+
+**Fix.** Both bounds are now `VIEWPORT_WIDTH/HEIGHT + ONSCREEN_MARGIN * 2`.
+The margin stays `0x3F` — it is slack for a sprite whose origin has left the
+screen while its body has not, a property of sprite size rather than of the
+viewport.
+
+**Evidence.** A/B over the canonical route at 320x240 differs on exactly two
+waypoints, both inside the predicted bands: `woods` at rows 227-239 and
+`textbox` at columns 294-313. The woods difference is a heart object whose
+sprite was culled, leaving only its background pedestal.
+
+**Lesson (8).** *A conversion sweep's own report of what it converted is not
+evidence.* Spike 7 said the vertical siblings were done; one of the two most
+important sites had neither axis converted. The same shape as B7, and as the
+five `WIN_RANGE(0, 160)` sites found alongside it — where Milestone 1 had
+converted one of four in a single file.
 
 ---
 
