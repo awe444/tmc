@@ -162,12 +162,12 @@ void sub_0805D9D8(VaatiAppearingManager* this) {
 
 void sub_0805DA08(u32 x, u32 y, u32 param_3) {
     u32 i;
-    struct BgAffineDstData* affineDstData = &gUnk_02017AA0[gUnk_03003DE4[0] * 0xa0];
-    for (i = 0; i < 0xa0; ++i, y += 0x17) {
+    struct BgAffineDstData* affineDstData = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_AFFINE];
+    for (i = 0; i < VIEWPORT_HEIGHT; ++i, y += 0x17) {
         affineDstData->pa = ((gSineTable[(param_3 + i + y) & 0xff] * x) >> 8) + gScreen.bg3.xOffset;
         affineDstData = (struct BgAffineDstData*)&affineDstData->pb;
     }
-    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * 0xa0], (u16*)REG_ADDR_BG3HOFS,
+    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_AFFINE], (u16*)REG_ADDR_BG3HOFS,
                  ((DMA_ENABLE | DMA_START_HBLANK | DMA_16BIT | DMA_REPEAT | DMA_SRC_INC | DMA_DEST_RELOAD) << 16) +
                      0x1);
 }

@@ -146,8 +146,8 @@ void SteamOverlayManager_Action3(SteamOverlayManager* this) {
 
 void sub_0805A114(u32 unk0, u32 unk1) {
     s32 i;
-    u16* p = &gUnk_02017AA0[gUnk_03003DE4[0] * 0x500];
-    for (i = 0; i < 0xA0; i++) {
+    u16* p = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16];
+    for (i = 0; i < VIEWPORT_HEIGHT; i++) {
         s32 tmp = i + gScreen.bg3.yOffset;
         switch ((tmp >> 3) & 7) {
             case 4:
@@ -166,7 +166,7 @@ void sub_0805A114(u32 unk0, u32 unk1) {
         }
         *p++ = gScreen.bg3.xOffset + ((gSineTable[(unk1 + tmp) & 0xFF] * unk0) >> 8);
     }
-    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * 0x500], (u16*)REG_ADDR_BG3HOFS,
+    SetVBlankDMA((u16*)&gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16], (u16*)REG_ADDR_BG3HOFS,
                  ((DMA_ENABLE | DMA_START_HBLANK | DMA_16BIT | DMA_REPEAT | DMA_SRC_INC | DMA_DEST_RELOAD) << 16) +
                      0x1);
 }

@@ -44,6 +44,7 @@ Build-time:
 | Var | Effect |
 |---|---|
 | `TMC_VIEW_W=320` | build a wide viewport. Must be set for **both** `xmake f` and `xmake build`, and **needs `xmake f -c`** — a plain `xmake f` will not drop a previously configured width, so the next build silently stays wide |
+| `TMC_VIEW_H=240` | build a tall viewport. Same rules as `TMC_VIEW_W`, and independent of it — the full Milestone 2 build is `TMC_VIEW_W=320 TMC_VIEW_H=240` on both commands |
 
 Run-time (all off unless set):
 
@@ -56,6 +57,11 @@ Run-time (all off unless set):
 | `TMC_MAPSRC_DIAG=1` | periodic per-layer agreement sample between the special map and the screenblock |
 | `TMC_MAPSRC_LAYERS=0\|1\|2` | bind only the bottom layer, only the top, or both. Bisection aid — this is how the layer→BG mapping was pinned down |
 | `TMC_WINTRACE=1` | widest window edge committed during the run; proves the >255 window path is live |
+| `TMC_HDMA_TRACE=1` | one line per distinct HBlank-DMA registration (destination register, halfwords per line, bytes the table needs at this height), then a per-frame report for the WIN0H channel: lines driven, right-edge range, DISPCNT window bits, WININ/WINOUT, and `PER-LINE` when the edge actually varies between lines. This is how B11 was found. **Its frame counter is VBlanks, not the capture's presented frames — the two do not line up** |
+| `TMC_HDMA_NOWIN=1` | stop forwarding per-scanline WIN0H to the raster, i.e. restore the pre-B11 behaviour. The A/B for circular windows |
+| `TMC_OAMY_TRACE=1` | every enabled sprite whose y the 8-bit encoding cannot express at this height, with the packed byte, what the wrap heuristic reads, and the true y. Needs `--mapcheck` |
+| `TMC_OAMY_LEGACY=1` | unbind the untruncated OAM y channel, leaving the PPU on the 8-bit wrap heuristic. The A/B for Spike 8 |
+| `TMC_OAMY_PROBE=<y>` | park a 64×64 sprite at signed screen y in OAM slot 127, x=128, published through the y channel. Renders rows `y..y+63`, so the visible portion is predictable — the fixture for "a sprite above the top edge" without needing a scene that has one |
 
 ## Script format
 
@@ -266,7 +272,7 @@ wrongly clipped to native width.
 ## Regression gate
 
 Before committing any viewport change, both of these must hold at the
-**default 240 build**:
+**default 240x160 build**:
 
 ```bash
 xmake f -c -y -m release && xmake build -y --rebuild tmc_pc
@@ -284,4 +290,4 @@ tmc_pc --no-audio --uncapped --mapsource-audit --script=tools/capture/route.scri
 Expected: `fetches=265497600 mismatched=0`.
 
 Both have caught real regressions — including one where a change intended
-for the wide build altered what the shipping 240 build renders.
+for an expanded build altered what the shipping 240x160 build renders.

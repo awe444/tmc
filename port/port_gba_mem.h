@@ -1,4 +1,5 @@
 #pragma once
+#include "viewport.h"
 #include "port_types.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -15,6 +16,46 @@ extern u16 gBgPltt[256];       // 0x200 bytes
 extern u16 gObjPltt[256];      // 0x200 bytes
 extern u16 gOamMem[0x400 / 2]; // 0x400 bytes (OAM)
 extern u8 gVram[0x18000];      // 96 KB VRAM GBA (0x06000000-0x06017FFF)
+
+/* OAM Y side channel — the sprite y that attr0's 8 bits cannot hold.
+ *
+ * A GBA OBJ stores y in 8 bits and hardware resolves "above the top edge"
+ * by wrapping mod 256, which an emulator recovers as "values >= the screen
+ * height are negative". That recovery needs the off-screen band [height,255]
+ * to be wide enough for the most negative y a sprite can have. At 160 lines
+ * the band is 96 px and every sprite fits; at 240 it is 16 px and sprites
+ * straddling the top edge land back on the visible screen instead (measured:
+ * docs/spike2b-height-probe.md §3 — 103 frames / 118 entries on the route).
+ *
+ * The port owns both ends of this path — RenderSpritePieces (port_draw.c)
+ * is the only writer of an *enabled* OAM entry, everything else parks 0x2A0
+ * — so the untruncated y travels beside OAM rather than inside it. Two
+ * arrays because OAM itself is double-buffered: the shadow is filled as
+ * sprites are rendered, and latched to the hardware-side copy by the same
+ * conditional DmaCopy32 that publishes gOAMControls.oam, so a frame that
+ * skips the DMA keeps a matched pair rather than a fresh y against a stale
+ * attr0. Indices match OAM slots 1:1.
+ */
+extern s16 gOamYExtShadow[0x80]; /* written by RenderSpritePieces */
+extern s16 gOamYExt[0x80];       /* published to the PPU; read during raster */
+void Port_OamYExt_Latch(void);
+
+/* Per-scanline WIN0H side channel — the same problem one register along.
+ *
+ * The circular windows (lantern, fade iris, white triangle) rasterise a
+ * per-line table of window edges that an HBlank DMA feeds to WIN0H. That
+ * table is byte pairs, because WIN0H is byte pairs, so an edge past 255 has
+ * nowhere to go — and the visible width is now 320. sub_0801E290 fills this
+ * alongside the hardware table, indexed by scanline, and port_hdma_step_line
+ * hands it to the PPU for the line it is about to draw.
+ *
+ * Validity is self-checking against the byte the DMA just wrote, exactly as
+ * for the OAM y channel: a line whose low byte disagrees is one this channel
+ * did not produce, and the hardware bytes are used instead.
+ */
+extern s16 gWin0hExtLeft[VIEWPORT_HEIGHT];
+extern s16 gWin0hExtRight[VIEWPORT_HEIGHT];
+void Port_Win0hExt_Reset(void);
 
 // ROM data (loaded from baserom.gba)
 extern u8* gRomData;

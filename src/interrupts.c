@@ -15,6 +15,10 @@
 #include "structures.h"
 #include "ui.h"
 
+#ifdef PC_PORT
+#include "port_gba_mem.h"
+#endif
+
 extern void CreateSparkle(Entity* entity);
 extern void sub_080ADD70(void);
 
@@ -93,6 +97,13 @@ void UpdateDisplayControls(void) {
 
         DmaCopy32(3, &gOAMControls.oam, OAM, OAM_SIZE);
 
+#ifdef PC_PORT
+        /* Publish the untruncated sprite y alongside the OAM it belongs to.
+         * Inside the same branch on purpose: a frame that skips this copy
+         * keeps last frame's OAM, and the y channel must go stale with it.
+         * See port_gba_mem.h. */
+        Port_OamYExt_Latch();
+#endif
     }
     sub_08016CA8(&gScreen.bg0);
     sub_08016CA8(&gScreen.bg1);

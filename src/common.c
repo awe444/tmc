@@ -70,7 +70,7 @@ typedef struct {
 } GfxItem;
 
 typedef struct {
-    u8 filler[0xA00];
+    u8 filler[VIEWPORT_HDMA_HALF_BYTES];
 } struct_02017AA0;
 extern struct_02017AA0 gUnk_02017AA0[];
 
@@ -1015,9 +1015,11 @@ void sub_0801E290(u32 param_1, u32 param_2, u32 count) {
      * (param_2=0xFFFFFFFF) works. On 64-bit, that produces an invalid address.
      * Use index-based access instead of pointer incrementing. */
     u8* base = gUnk_02017AA0[gUnk_03003DE4[0]].filler;
+    s32 wideRight;
     uVar5 = uVar7 = param_2;
     puVar6 = gUnk_02018EE0;
 
+    Port_Win0hExt_Reset();
     while (count-- > 0) {
         uVar1 = *puVar6++;
         iVar2 = param_1 - uVar1;
@@ -1025,16 +1027,25 @@ void sub_0801E290(u32 param_1, u32 param_2, u32 count) {
         if (iVar2 < 0) {
             iVar2 = 0;
         }
-        if (iVar4 > 0xef) {
-            iVar4 = 0xf0;
+        /* Two clamps for two consumers. The hardware table is byte pairs and
+         * cannot hold an edge past 255, so it keeps the authored 240 ceiling;
+         * the side channel carries the real one. Identical at native width,
+         * which is why the byte written below is unchanged there. */
+        wideRight = (iVar4 > VIEWPORT_WIDTH) ? VIEWPORT_WIDTH : iVar4;
+        if (iVar4 > DISPLAY_WIDTH - 1) {
+            iVar4 = DISPLAY_WIDTH;
         }
-        if (((u16)uVar5 & 0xffff) < 0xa0) {
+        if (((u16)uVar5 & 0xffff) < VIEWPORT_HEIGHT) {
             base[uVar5 * 2]     = iVar4;
             base[uVar5 * 2 + 1] = iVar2;
+            gWin0hExtRight[uVar5] = wideRight;
+            gWin0hExtLeft[uVar5]  = iVar2;
         }
-        if (((u16)uVar7 & 0xffff) < 0xa0) {
+        if (((u16)uVar7 & 0xffff) < VIEWPORT_HEIGHT) {
             base[uVar7 * 2]     = iVar4;
             base[uVar7 * 2 + 1] = iVar2;
+            gWin0hExtRight[uVar7] = wideRight;
+            gWin0hExtLeft[uVar7]  = iVar2;
         }
         uVar5--;
         uVar7++;
@@ -1052,14 +1063,17 @@ void sub_0801E290(u32 param_1, u32 param_2, u32 count) {
         if (iVar2 < 0) {
             iVar2 = 0;
         }
-        if (iVar4 > 0xef) {
-            iVar4 = 0xf0;
+        /* The table is byte pairs, so an edge past 255 cannot be stored
+         * here at all — widening the circular windows needs the wide
+         * per-line channel below, not a bigger clamp. */
+        if (iVar4 > DISPLAY_WIDTH - 1) {
+            iVar4 = DISPLAY_WIDTH;
         }
-        if (((u16)uVar5 & 0xffff) < 0xa0) {
+        if (((u16)uVar5 & 0xffff) < VIEWPORT_HEIGHT) {
             backwardAccess[0] = iVar4;
             backwardAccess[1] = iVar2;
         }
-        if (((u16)uVar7 & 0xffff) < 0xa0) {
+        if (((u16)uVar7 & 0xffff) < VIEWPORT_HEIGHT) {
             forwardAccess[0] = iVar4;
             forwardAccess[1] = iVar2;
         }
@@ -1080,7 +1094,7 @@ void sub_0801E31C(u32 sp00, u32 sp04, s32 r10, s32 r9) {
     s32 r7;
     s32 r8; // the lower one of param3 and param4
 
-    MemClear(&gUnk_02017AA0[gUnk_03003DE4[0]], 0xa00);
+    MemClear(&gUnk_02017AA0[gUnk_03003DE4[0]], VIEWPORT_HDMA_HALF_BYTES);
     if (r10 < r9) {
         r6 = 0;
         r7 = r8 = r10;
@@ -1147,7 +1161,7 @@ void sub_0801E49C(s32 baseX, s32 baseY, s32 radius, u32 baseAngle) {
     sub_0801E64C(x1, y1, x2, y2, 0);
     sub_0801E64C(x1, y1, x3, y3, 1);
     sub_0801E64C(x2, y2, x3, y3, 2);
-    MemClear(gUnk_02017AA0[gUnk_03003DE4[0]].filler, 0xa00);
+    MemClear(gUnk_02017AA0[gUnk_03003DE4[0]].filler, VIEWPORT_HDMA_HALF_BYTES);
     ptr1 = (u32*)gUnk_02018EE0;
     ptr2 = gUnk_02017AA0[gUnk_03003DE4[0]].filler;
     for (y1 = 0xa0; y1 > 0; y1--, ptr2 += 2) {

@@ -1,4 +1,6 @@
 
+#include "viewport.h"
+
 #include "area.h"
 #include "backgroundAnimations.h"
 #include "beanstalkSubtask.h"
@@ -65,8 +67,11 @@ Palette gUnk_02001A3C;
 u8 gUnk_02006F00[0x4000] __attribute__((aligned(4))); /* BG tilemap buffer (16 KB) */
 u16 gUnk_0200B640;                                    /* scroll state scalar */
 u16 gUnk_02017830[0x138] __attribute__((aligned(4))); /* palette rotation buffer (624 bytes) */
-u8 gUnk_02017AA0[0x1400] __attribute__((aligned(4))); /* HBlank DMA double buffer, 2×0xA00 */
-u8 gUnk_02017BA0[0x1400]
+/* HBlank DMA double buffer. One entry per rendered scanline, so the size
+ * follows the viewport height — see VIEWPORT_HDMA_* in include/viewport.h.
+ * 2×0xA00 at GBA-native height, which is what this was written as. */
+u8 gUnk_02017AA0[VIEWPORT_HDMA_BYTES] __attribute__((aligned(4)));
+u8 gUnk_02017BA0[VIEWPORT_HDMA_BYTES]
     __attribute__((aligned(4))); /* BG2 affine ref lines (TODO: aliases gUnk_02017AA0+0x100 on GBA) */
 void* gUnk_02018EA0 = NULL;      /* LinkedList2* pointer */
 struct_02018EB0 gUnk_02018EB0;

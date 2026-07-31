@@ -3,7 +3,7 @@
 **Status: Milestone 1 is DONE — signed off by the maintainer 2026-07-30, go
 for Milestone 2.** A 320×160 viewport builds, runs the canonical route, centres
 narrower rooms with borders, and costs +10.9% present time against the Spike 1
-canvas baseline. The 240 build is verified pixel-identical to the
+canvas baseline. The 240x160 build is verified pixel-identical to the
 pre-expansion references and stays that way — that is the standing regression
 gate.
 
@@ -971,7 +971,7 @@ PPU-side window clamps at `libs/ViruaPPU/src/mode1.c:563-570` (§4).
       `MODE1_GBA_WIDTH/HEIGHT`, which now track the build viewport, and
       the wrap semantics (`left > right`) are preserved for overrides.
 - [x] **>255 proven live, not merely compiled:** with `TMC_WINTRACE=1` at
-      a 320 build the widest committed edge is **320**. Sites whose
+      a 320x160 build the widest committed edge is **320**. Sites whose
       meaning is "the whole screen" now use new `WIN_VIEWPORT_WIDTH/HEIGHT`
       extents (which resolve to `DISPLAY_WIDTH/HEIGHT` by default, so 240
       is unchanged by construction); the figurine menu visibly uses the
@@ -1253,7 +1253,7 @@ Town, Minish Woods, Castor Wilds.
 **Harness note:** `--mapsource-audit` is now explicitly gated to
 GBA-native width. It is an *equivalence* check against the hardware path,
 and beyond 240 there is nothing valid to compare against: the engine still
-streams a 32-tile screenblock, but from a camera the wide build clamps
+streams a 32-tile screenblock, but from a camera the expanded build clamps
 differently, so the buffer-column↔map-column relation it checks no longer
 holds, and past the streamed window there is no data at all. Run at 320 it
 reported a meaningless 6.6% mismatch; it now reports nothing there rather
@@ -1268,7 +1268,7 @@ than a misleading number. **The 240 regression gate is unaffected: still
       backdrop, which is green on the pause menu. **D3 amended to accept a
       uniform colour** (§0).
 - [x] No visual regression versus Spike 0 captures in the central 240 columns.
-      The 240 build is pixel-identical on all 11 waypoints and the map-source
+      The 240x160 build is pixel-identical on all 11 waypoints and the map-source
       audit is 0/265 497 600.
 
       At 320 the centre-240 also matches Spike 0 exactly on every
@@ -1298,16 +1298,16 @@ and signed off; this is what it left behind.
 
 **Build.** `xmake f -c -y -m release && xmake build tmc_pc` gives the 240
 build at `build/pc/tmc_pc`. Prefix **both** commands with `TMC_VIEW_W=320` for
-the wide build — and `xmake f -c` is required, a plain `xmake f` will not drop
-a previously configured width. Height has no equivalent switch yet; adding
-`TMC_VIEW_H` alongside it is Milestone 2's first plumbing job
-(`include/viewport.h`, `xmake.lua:453`).
+320x160 — and `xmake f -c` is required, a plain `xmake f` will not drop
+a previously configured width. `TMC_VIEW_H=240` is the height switch, same
+rules and independent of the width one, so the full Milestone 2 build is
+`TMC_VIEW_W=320 TMC_VIEW_H=240` on both commands.
 
 **The regression gate is not optional.** Before any viewport commit, at the
-default 240 build: the canonical route must be 11/11 pixel-identical and the
+default 240x160 build: the canonical route must be 11/11 pixel-identical and the
 map-source audit 0 mismatches in 265,497,600 fetches. Exact commands in
 `tools/capture/README.md`. Both have caught real regressions, including a
-change intended for the wide build that altered what the shipping build
+change intended for an expanded build that altered what the shipping build
 renders.
 
 **How width was actually achieved**, since height will mirror it:
@@ -1348,7 +1348,13 @@ Milestone 1 (bug-tracker lessons 1, 5 and 6):
 the two that land in Spike 9 are the per-scanline window tables and the affine
 paths (title sword, barrel, tornado).
 
-### Spike 8 — OAM Y widening (2–3 days)
+> **Progress.** The `TMC_VIEW_H` plumbing, Spike 8 and Spike 9's height work
+> are **done** — write-ups in `docs/spike8-oam-y.md` and
+> `docs/spike9-hdma-240.md`, which win over the sketches below. Spike 9's
+> affine half is **not** done (barrel, tornado, title sword: unreached at 240
+> lines). Spikes 10 and 11 are untouched. Both 240 gates pass.
+
+### Spike 8 — OAM Y widening (2–3 days) — **DONE**, `docs/spike8-oam-y.md`
 **Questions:** Can sa2's `EXTENDED_OAM` split-field approach be ported given its
 "not yet functional" TODO? How many TMC sites write OAM attrs raw?
 **Method:** Read `sa2/include/gba/types.h:95-300` and
@@ -1366,7 +1372,7 @@ fork with `OAM_SET_GBA_ATTR*`-style shims.
       correctly in a 240-tall viewport — the specific case 8-bit Y cannot express.
 - [ ] The Spike 2B unrepresentable-sprite count drops to zero.
 
-### Spike 9 — HDMA at 240 lines (2 days)
+### Spike 9 — HDMA at 240 lines (2 days) — **height half done**, `docs/spike9-hdma-240.md`
 **Questions:** Which effects use per-scanline tables, how long are they, and do
 they resample or need extension?
 **Method:** Inventory HDMA registrations. Test water FX, `BLDY` fades, and
