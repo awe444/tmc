@@ -95,6 +95,20 @@ static int sMaxDx = 0, sMaxDy = 0;
 static uint32_t sDyBand[5], sDxBand[5];
 static int sMaxDyContinuous = 0; /* max dy among deltas <= 64 */
 
+/* --- Spike 10: is the camera ever outside its own legal range? -----------
+ *
+ * TMC_CAMTRACE reports the range once per room, which catches a wrong
+ * resting place but not a clamp that fails while scrolling. This asserts the
+ * same invariant on every gameplay frame: the camera must sit within
+ * [VIEWPORT_CAM_MIN, VIEWPORT_CAM_MAX] on both axes, which for a room
+ * smaller than the viewport is a single pinned value and for a larger one is
+ * the scrollable span. Any frame outside it is either a clamp that did not
+ * apply or a scroll that overshot. */
+static uint32_t sCamFramesChecked = 0;
+static uint32_t sCamOutOfRangeX = 0;
+static uint32_t sCamOutOfRangeY = 0;
+static int sCamWorstY = 0;
+
 /* OAM entries whose attr0.y sits in [161,239] while enabled: at 160-line
  * height these are sprites partially above the top edge (wrapped
  * negatives); at 240-line height the same encoding renders on-screen at
@@ -123,6 +137,7 @@ static uint32_t sOamYRescuedFrames = 0;
 static uint32_t sOamYUnresolved = 0;
 static uint32_t sOamYEnabledTotal = 0;
 static void spike8_sample(uint32_t frame);
+static void spike10_sample(uint32_t frame);
 
 /* --- Spike 7: off-screen behaviour ---------------------------------------
  * Two things the wider viewport could break, counted rather than eyeballed:
@@ -219,6 +234,46 @@ static void spike2b_sample(void) {
 
 /* Read the published OAM the same way the PPU does, so this measures the
  * pair the raster actually sees rather than the shadow one frame earlier. */
+static void spike10_sample(uint32_t frame) {
+    int cx, cy, mnx, mxx, mny, mxy;
+
+    /* Only assert while the world is actually being drawn from this room's
+     * map. Room setup leaves gRoomControls.origin and scroll briefly
+     * inconsistent, and a transition scroller deliberately drives the camera
+     * between two rooms' coordinate systems — in both the single-room
+     * invariant is meaningless, and asserting through them reports the same
+     * ~2700 frames at every viewport size, i.e. pure noise. The map-source
+     * predicate already encodes exactly "this room's map is authoritative
+     * right now", so reuse it rather than re-deriving the conditions. */
+    if (gMain.task != TASK_GAME || gRoomControls.width == 0 ||
+        gRoomControls.height == 0 || !Port_MapSource_LayerAuthoritative(0)) {
+        return;
+    }
+    cx = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
+    cy = (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y;
+    mnx = VIEWPORT_CAM_MIN_X(0, gRoomControls.width);
+    mxx = VIEWPORT_CAM_MAX_X(0, gRoomControls.width);
+    mny = VIEWPORT_CAM_MIN_Y(0, gRoomControls.height);
+    mxy = VIEWPORT_CAM_MAX_Y(0, gRoomControls.height);
+
+    sCamFramesChecked++;
+    if (cx < mnx || cx > mxx) {
+        sCamOutOfRangeX++;
+    }
+    if (cy < mny || cy > mxy) {
+        int over = (cy < mny) ? (mny - cy) : (cy - mxy);
+        sCamOutOfRangeY++;
+        if (over > sCamWorstY) {
+            sCamWorstY = over;
+            fprintf(stderr,
+                    "[cam10] frame=%u area=0x%02X room=0x%02X %ux%u camy=%d "
+                    "range=[%d,%d] over=%d\n",
+                    frame, gRoomControls.area, gRoomControls.room,
+                    gRoomControls.width, gRoomControls.height, cy, mny, mxy, over);
+        }
+    }
+}
+
 static void spike8_sample(uint32_t frame) {
     uint32_t rescued = 0;
     int i;
@@ -415,6 +470,7 @@ void Port_MapCheck_OnFrame(uint32_t frame) {
     spike2b_sample();
     spike7_sample();
     spike8_sample(frame);
+    spike10_sample(frame);
 
     if (gRoomControls.area != sLastArea || gRoomControls.room != sLastRoom) {
         sLastArea = gRoomControls.area;
@@ -541,6 +597,10 @@ void Port_MapCheck_Report(void) {
             "[mapcheck] spike2b: OAM high-Y (enabled, y in 161..239): frames=%u "
             "entries-total=%u max-simultaneous=%u\n",
             sOamHighYFrames, sOamHighYEntriesTotal, sOamHighYEntriesMax);
+    fprintf(stderr,
+            "[mapcheck] spike10: camera in range on %u gameplay frames: "
+            "x-out=%u y-out=%u (worst y overshoot %d px)\n",
+            sCamFramesChecked, sCamOutOfRangeX, sCamOutOfRangeY, sCamWorstY);
     fprintf(stderr,
             "[mapcheck] spike8: OAM y at %d lines: enabled=%u rescued=%u "
             "(over %u frames) unresolved=%u\n",

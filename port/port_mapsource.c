@@ -562,15 +562,23 @@ void Port_MapSource_CamTrace(void) {
     lastArea = gRoomControls.area; lastRoom = gRoomControls.room;
     {
         int cx = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
-        int mn = VIEWPORT_CAM_MIN_X(0, gRoomControls.width);
-        int mx = VIEWPORT_CAM_MAX_X(0, gRoomControls.width);
-        int narrow = ((int)gRoomControls.width <= VIEWPORT_WIDTH);
+        int mnx = VIEWPORT_CAM_MIN_X(0, gRoomControls.width);
+        int mxx = VIEWPORT_CAM_MAX_X(0, gRoomControls.width);
+        int narrowx = ((int)gRoomControls.width <= VIEWPORT_WIDTH);
+        int cy = (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y;
+        int mny = VIEWPORT_CAM_MIN_Y(0, gRoomControls.height);
+        int mxy = VIEWPORT_CAM_MAX_Y(0, gRoomControls.height);
+        int shorty = ((int)gRoomControls.height <= VIEWPORT_HEIGHT);
         fprintf(stderr,
-                "[camtrace] area=0x%02X room=0x%02X w=%u viewport=%d cam=%d range=[%d,%d] %s%s\n",
-                gRoomControls.area, gRoomControls.room, gRoomControls.width,
-                VIEWPORT_WIDTH, cx, mn, mx,
-                narrow ? "NARROW(centred)" : "scrollable",
-                (cx < mn || cx > mx) ? "  ** OUT OF RANGE **" : "");
+                "[camtrace] area=0x%02X room=0x%02X %ux%u viewport=%dx%d "
+                "camx=%d rangex=[%d,%d] %s%s | camy=%d rangey=[%d,%d] %s%s\n",
+                gRoomControls.area, gRoomControls.room,
+                gRoomControls.width, gRoomControls.height,
+                VIEWPORT_WIDTH, VIEWPORT_HEIGHT,
+                cx, mnx, mxx, narrowx ? "NARROW(centred)" : "scrollable",
+                (cx < mnx || cx > mxx) ? "  ** X OUT OF RANGE **" : "",
+                cy, mny, mxy, shorty ? "SHORT(centred)" : "scrollable",
+                (cy < mny || cy > mxy) ? "  ** Y OUT OF RANGE **" : "");
     }
 }
 

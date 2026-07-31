@@ -50,7 +50,7 @@ Run-time (all off unless set):
 
 | Var | Effect |
 |---|---|
-| `TMC_CAMTRACE=1` | per room: width, camera position, the legal camera range, and an explicit **out-of-range assertion**. This is what caught the scripted-camera clamp bug |
+| `TMC_CAMTRACE=1` | per room, **both axes**: room size, camera position, the legal camera range, and an explicit **out-of-range assertion** per axis. This is what caught the scripted-camera clamp bug. Fires once per room — for a mid-scroll clamp failure use the per-frame assertion in `--mapcheck` (`spike10:` line) instead |
 | `TMC_REJECT_TRACE=1` | why each world layer was refused a map source, printed on change, with task/substate/subtask/room/flags |
 | `TMC_LAYER_TRACE=1` | which BG indices have a map source (`mapsrc_mask`) and which the centring clip caught (`clip_mask`), with DISPCNT and all four BGxCNT. Printed on change. This is how B2's layer was identified |
 | `TMC_BG3_TRACE=1` | every BG3 on/off transition, with frame, room, BGxCNT, offsets and whether the centring clip caught it. BG3 is off in ordinary rooms and carries the gameplay overlays (hole, cloud, light, weather, steam, POW) — this is how B10 was found |
