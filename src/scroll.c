@@ -296,7 +296,7 @@ void Scroll5Sub0(RoomControls* controls) {
     gScreen.controls.windowInsideControl = (u8)gScreen.controls.windowInsideControl | 0x1700;
     gScreen.controls.windowOutsideControl = (gScreen.controls.windowOutsideControl & 0xff00) | 7;
     gScreen.controls.window1HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
-    gScreen.controls.window1VerticalDimensions = WIN_RANGE(0, 0xf0);
+    gScreen.controls.window1VerticalDimensions = WIN_RANGE(0, WIN_VIEWPORT_HEIGHT);
     ResetActiveItems();
     ResetPlayerAnimationAndAction();
     if (gDiggingCaveEntranceTransition.isDiggingCave) {

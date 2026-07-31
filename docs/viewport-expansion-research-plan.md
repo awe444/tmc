@@ -1348,13 +1348,16 @@ Milestone 1 (bug-tracker lessons 1, 5 and 6):
 the two that land in Spike 9 are the per-scanline window tables and the affine
 paths (title sword, barrel, tornado).
 
-> **Progress.** The `TMC_VIEW_H` plumbing and Spikes 8, 9 (height half) and
-> 10 are **done** — write-ups in `docs/spike8-oam-y.md`,
-> `docs/spike9-hdma-240.md` and `docs/spike10-vertical-camera.md`, which win
-> over the sketches below. Still open: Spike 9's affine half (barrel, tornado,
-> title sword — unreached at 240 rows), the vertical twin of Spike 6's UI
-> centring (UI screens are top-anchored), and Spike 11. Both 240x160 gates
-> pass.
+> **Progress.** The `TMC_VIEW_H` plumbing and Spikes 8, 9 (height half), 10
+> and 11 are **done** — write-ups in `docs/spike8-oam-y.md`,
+> `docs/spike9-hdma-240.md`, `docs/spike10-vertical-camera.md` and
+> `docs/spike11-vertical-culling.md`, which win over the sketches below.
+> Still open before Milestone 2 can be signed off: **UI screens are
+> top-anchored** (the vertical twin of Spike 6, and the largest remaining
+> gap), Spike 9's affine half (barrel, tornado, title sword — unreached at
+> 240 rows), the iris still being a 240-wide circle, and a decision on peak
+> frame time. Both 240x160 gates pass; go/no-go is in
+> `spike11-vertical-culling.md` §7.
 
 ### Spike 8 — OAM Y widening (2–3 days) — **DONE**, `docs/spike8-oam-y.md`
 **Questions:** Can sa2's `EXTENDED_OAM` split-field approach be ported given its
@@ -1401,7 +1404,7 @@ height clusters: 160, 192, 208, 240, 320.
 - [ ] Vertical streaming verified against the 16 px slack finding from Spike 2B —
       no tile tearing at maximum scroll speed.
 
-### Spike 11 — Vertical culling and integration (2–3 days)
+### Spike 11 — Vertical culling and integration (2–3 days) — **DONE**, `docs/spike11-vertical-culling.md`
 **Method:** As Spike 7, for the 261 rooms ≥240 tall. Then a full canonical-route
 playthrough at 320×240.
 
