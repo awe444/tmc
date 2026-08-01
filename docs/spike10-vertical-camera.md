@@ -108,11 +108,12 @@ pan, where a torn band would spike.
 
 ## 6. Not done here
 
-- **UI screens are still top-anchored.** Title, file select, pause and the
-  figurine gallery are 240x160-authored surfaces centred horizontally by
-  `UI_CENTER_DX`; there is no `UI_CENTER_DY`, so they sit in the top 160 rows
-  with backdrop beneath. That is Spike 6's vertical twin, not the camera's
-  job, and it is the most visible remaining gap at 320x240.
+- ~~**UI screens are still top-anchored.**~~ **Done** —
+  `docs/ui-vertical-centring.md`. They were 240x160-authored surfaces centred
+  horizontally by `UI_CENTER_DX` with no vertical counterpart, so they sat in
+  the top 160 rows with backdrop beneath. `UI_CENTER_DY` now exists and
+  applies to whole authored screens only — the in-game HUD is top-anchored and
+  must not move.
 - **BG3 fills the out-of-room bands.** In a room shorter than the viewport the
   world layers correctly stop at the room edge, but BG3 is deliberately
   unclipped during a world view (B10) and covers the full frame, so the bands

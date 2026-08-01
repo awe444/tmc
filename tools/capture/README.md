@@ -186,7 +186,11 @@ Three things make this work, and breaking any of them breaks replay:
 - **The starting save must accompany the script.** The live `tmc.sav` is
   overwritten as you play, which is why a copy is taken at launch.
 
-`build/play-320x160/record-bug.sh` wraps this for playtesters.
+`build/play-320x160/record-bug.sh` and its 320x240 twin wrap this for
+playtesters. **This is the highest-yield diagnostic in the toolbox**: B13 (town
+NPCs popping in and out) was located in one pass from a recording, after
+instrumenting five plausible mechanisms against a scripted repro found nothing
+— because the scripted repro could not reach the state the bug needed.
 
 ### Reaching the BG3 gameplay overlays
 

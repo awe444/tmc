@@ -1,7 +1,8 @@
 # Spike 9 — HDMA and per-scanline tables at 240 lines
 
-**Date:** 2026-07-30 · **Status:** height work complete; two follow-ups
-recorded in §6. Milestone 2, research plan §10.2.
+**Date:** 2026-07-30 · **Status:** complete; the two follow-ups in §6 were
+resolved later and §6 records where this spike's diagnosis of them was wrong.
+Milestone 2, research plan §10.2.
 
 The spike found more than the plan expected. The height problem was real and
 mechanical. The larger finding is that **the per-scanline window path had been
@@ -137,21 +138,30 @@ width.
 - 240x160 map-source audit: **0 mismatched in 265 497 600 fetches**.
 - 320×240: tables drive 240 lines; the iris renders as a full-height circle.
 
-## 6. Follow-ups, not done here
+## 6. Follow-ups — resolved after this spike
 
-- **The iris is still a 240-wide circle on a 320-wide screen.** The channel
-  that can carry a wider edge is in place, but the centre and radius
-  `sub_0801E290` is handed are 240-authored screen coordinates and are not
-  shifted or scaled. Measured at 320×240: `right=0..240`, never past 240.
-  This is the same class as B9 — a 240-authored coordinate on a wider
-  surface — and wants the same treatment at the call sites that compute the
-  centre.
-- **Affine reference points are untouched.** `rollingBarrelManager.c:216`
-  sets `scrX=0x78, scrY=0x80` per line, and `vaatiAppearingManager` the same
-  shape. These are the affine carry-forward items (with the title sword);
-  the barrel and tornado scenes have not been reached at 240 lines, so the
-  DoD item "all three affine scenes verified at 240 lines" is **not met** —
-  reaching them needs a save at those points or a recording.
+- ~~**The iris is a 240-wide circle on a 320-wide screen.**~~ **Fixed
+  2026-07-31, and this spike's own diagnosis of it was wrong.** The note here
+  originally said the centre and radius `sub_0801E290` is handed are
+  240-authored and need shifting like B9. They are not the problem: the
+  measured `right=0..240` came from **this spike's validity key**. The side
+  channel is trusted only where it matches the byte the DMA wrote, and that
+  check compared the wide value's *own low byte* — correct for a truncated
+  value, wrong for a clamped one. The hardware table clamps to 240, so an edge
+  of 286 stored 240 there and 286 here, the low bytes disagreed, and the check
+  rejected exactly the value the channel exists to carry. Each line now records
+  the byte it wrote as the key; the right edge goes 239→251/267/279 across the
+  iris opening. Worth keeping as a record: a self-validating scheme is only as
+  good as its assumption about *why* the two values could differ.
+
+- ~~**Affine reference points are untouched.**~~ **Done for the reachable
+  scenes** — `docs/affine-viewport.md`. The cause was not the reference points
+  either: `mode2.c`'s affine path honoured no clip at all, and making it honour
+  the same one the text path uses fixed the title screen pixel-exactly. The
+  rolling barrel, recorded here as unreachable, is one warp away (Deepwood
+  Shrine room 32) and is verified too. Vaati's tornado and the screen-shrink
+  cinematic remain unreached.
+
 - **A per-scanline IO snapshot** sized for 240 lines was not needed: the port
   applies HDMA writes directly to `gIoMem` from the pre-line callback rather
   than snapshotting IO per line, so there is no `io_snapshots[160][…]` to

@@ -152,16 +152,16 @@ viewport edge.
 
 **Known not done**, each recorded with its reasoning:
 
-1. **UI screens are top-anchored** — no `UI_CENTER_DY`. The most visible gap,
-   and the one a player meets first: title, file select, pause and the
-   figurine gallery all sit in the top 160 rows.
-2. **Affine scenes unconverted** — barrel, tornado, screen-shrink, and the
-   title sword, which is the one measured artifact on the route. None has been
-   reached at 240 rows.
-3. **The iris is a 240-wide circle** on a 320-wide screen.
+1. ~~**UI screens are top-anchored**~~ — **done**, `docs/ui-vertical-centring.md`.
+2. ~~**Affine scenes unconverted**~~ — **done for the title and the barrel**
+   (`docs/affine-viewport.md`); the barrel turned out to be one warp away.
+   Vaati's tornado and the screen-shrink cinematic remain unreached.
+3. ~~**The iris is a 240-wide circle** on a 320-wide screen.~~ — **fixed**; it
+   was Spike 9's validity key, not the authored radius (see B11's neighbour in
+   `spike9-hdma-240.md` §6).
 4. **Peak frame time** now exceeds the 60 fps deadline occasionally (§4).
 
-My reading: **not shippable yet, and the blocker is (1)**, which is bounded
-work of the same shape as Spike 6 rather than a research question. (2) and (3)
-are cosmetic in scenes most players see once. (4) deserves a decision before
-shipping regardless of the rest.
+My reading at the time: not shippable, blocker (1). **Superseded — (1), (2)
+for the reachable scenes, and (3) all landed after this was written, along
+with B13 from playtesting. Only (4), frame time, is still open.** See the
+research plan's Milestone 2 status for the current picture.

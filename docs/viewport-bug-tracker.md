@@ -1,14 +1,19 @@
 # Viewport expansion — bug tracker
 
-Bugs found playtesting the 320×160 build (`docs/viewport-expansion-research-plan.md`
-Milestone 1). Reported by the maintainer over four rounds of testing; IDs are
-theirs, except B10 which came from a sweep.
+Bugs found across both viewport milestones. B1–B9 came from the maintainer
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13
+from the maintainer playtesting 320×240, with a recording.
 
-**Status: Milestone 1 is done — signed off by the maintainer 2026-07-30.**
-Eight of ten bugs are fixed and verified; B4 and B5 are **deferred by
-decision**, not outstanding blockers. This document stays the authoritative
-record of what the widening actually did to the engine, and §"Carry-forward
-items" is the list Milestone 2 inherits.
+**Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
+complete — see `docs/milestone2-status.md`.** Eleven of thirteen bugs are
+fixed and verified; B4 and B5 remain **deferred by decision**, not blockers,
+and both are now reachable with `record-bug.sh`.
+
+**Four of these were live in the shipping 240×160 build or through all of
+Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
+iris veto. The expansion exposed them; it did not cause them. This document
+stays the authoritative record of what the expansion actually did to the
+engine.
 
 Anything at 240x160 is a release blocker. Anything at 320x160 blocked the
 Milestone 1 exit criteria but not the shipping build, which is still
@@ -31,7 +36,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
 | B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
 | B12 | Entities culled in a band at the far viewport edge | **Fixed** (Milestone 2 Spike 11; horizontal half was live through Milestone 1) |
-| B13 | Town NPCs pop in and out inside the visible frame | **Fixed** (reported by the maintainer with a recording; horizontal half was live through Milestone 1) |
+| B13 | Town NPCs pop in and out inside the visible frame | **Fixed**, confirmed by maintainer 2026-08-01 (reported with a recording; horizontal half was live through Milestone 1) |
 
 ---
 
@@ -161,6 +166,10 @@ design change rather than a fix and has not been made.
 **Deferred at Milestone 1 sign-off.** See "Reproducing B4 and B5" below.
 
 ## Reproducing B4 and B5
+
+**This works — B13 was found with it in one pass**, after a round of inferring
+from the prose found nothing. B4 and B5 have now been open since Milestone 1
+for want of a recording, which is the cheapest thing on this list to obtain.
 
 Both need a human at the controls, which is why they survived four rounds.
 `--record=FILE` exists for exactly this and turns a human-reached moment into
@@ -575,12 +584,21 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 | Quicksave state files not portable | nothing — recorded as a dead end |
 
 The per-scanline windows turned out to be a live defect rather than an
-unwidened one — recorded as B11 below. The affine half of Spike 9 (barrel,
-tornado, title sword) is **not** done: those scenes have not been reached at
-240 lines and their per-line reference points are unconverted.
+unwidened one — recorded as B11 below.
 
-None of these blocks starting Milestone 2. The two Spike 9 items are the ones
-that will actually be *worked*; the rest are notes.
+**The affine half is done for the scenes that can be reached.** The title
+sword and the rolling barrel are both fixed and verified
+(`docs/affine-viewport.md`); the barrel was one warp away from the scripted
+tester the whole time, which is why "unreachable" was worth re-testing rather
+than believing. Vaati's tornado and the screen-shrink cinematic are still
+unreached — the tornado's per-line effect turns out to be a BG3 scroller
+rather than affine, so it is probably already covered, but that is reasoning
+and not observation.
+
+Of the list above, only the 8-bit world-space window masks remain genuinely
+untouched, and they still want their scene reproduced before anyone edits
+them — `include/screen.h` warns that several rely on the wrap to produce an
+*inverted* window.
 
 - ~~**Title screen affine sword** sits ~40 px left.~~ **Fixed** —
   `docs/affine-viewport.md`. `mode2.c`'s affine path now honours the same

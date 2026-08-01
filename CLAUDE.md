@@ -6,20 +6,34 @@ unexplained literals as load-bearing until proven otherwise.
 
 ## Current work: viewport expansion (240×160 → 320×240)
 
-**Milestone 1 (width, 320×160) is complete and signed off. Milestone 2
-(height, 320×240) is next.**
+**Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
+complete — every spike landed and every reported bug fixed. The one open item
+is a decision, not work: frame time is +41% over the canvas baseline and peak
+frames exceed the 16.67 ms deadline. No go/no-go is recorded.**
 
 Read in this order:
 
-1. `docs/viewport-bug-tracker.md` — authoritative for current state. Ten bugs,
-   the decisions taken, the carry-forward list Milestone 2 inherits, and the
-   lessons that cost the most to learn.
-2. `docs/viewport-expansion-research-plan.md` §10.2 "State of the code entering
-   Milestone 2" — how width was achieved and what to mirror vertically.
+1. `docs/milestone2-status.md` — where things stand, what is left, and the
+   frame-time numbers the shipping decision rests on.
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirteen
+   bugs, the decisions taken, and the lessons that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
+4. `docs/viewport-expansion-research-plan.md` — the original plan and the
+   per-spike write-ups, a historical record.
 
-The tracker wins wherever the plan disagrees with it; the plan's spike
-write-ups are a historical record and several carry inline corrections.
+The tracker wins wherever the plan disagrees with it; several spike write-ups
+carry inline "superseded" notes pointing at later work.
+
+**Four of this milestone's defects were live in the shipping 240×160 build or
+through all of Milestone 1** — the expansion exposed them rather than causing
+them. The regression gate proves the shipping build did not *move*; it cannot
+prove it was right. When a change alters a mechanism rather than a surface,
+count the frames that exercise the mechanism instead of reading a gate pass as
+coverage.
+
+**When a bug needs a human at the controls, ask for a recording early.**
+`record-bug.sh` found B13 in one pass after a round of inference found
+nothing. B4 and B5 have been open since Milestone 1 for want of using it.
 
 ## Building
 
