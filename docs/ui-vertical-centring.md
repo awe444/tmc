@@ -70,8 +70,11 @@ MODE1_GBA_HEIGHT`, so the clip is the identity either way.
 
 ## 4. Two cases left, both on purpose
 
-**The title screen's affine sword takes neither shift.** It is a BG2 affine
-layer drawn by `mode2.c`, which the BG clip and the OBJ offset both miss —
+~~**The title screen's affine sword takes neither shift.**~~ **Fixed** —
+`docs/affine-viewport.md`; the affine path now honours the same clip, and the
+title's centred box is pixel-identical to 240x160. Original note: it is a BG2
+affine layer drawn by `mode2.c`, which the BG clip and the OBJ offset both
+missed —
 the long-standing carry-forward that had it sitting ~40 px left. It now sits
 40 px high as well, and that is why `title` measures 24–199 rather than
 40–199. This change did not create the gap; it made the existing gap visible
@@ -80,13 +83,12 @@ and after**, unchanged. Fixing it means offsetting the affine reference point,
 which is not a plain pixel shift and risks the gameplay affine scenes — the
 deferred Spike 9 affine work.
 
-**The in-game text box still floats.** It is authored near the bottom of 160
-rows and rides BG0 with the top-anchored HUD, so at 240 rows it sits
-mid-screen. Neither a uniform shift nor none is right for both surfaces on
-that layer; moving it needs a shift at its own source, the way
-`UI_HUD_SPRITE_DX` handles HUD sprites. Not attempted here — it is a
-different decision (where *should* a text box sit on a taller screen?) rather
-than a missing conversion, and it wants an answer before an implementation.
+~~**The in-game text box still floats.**~~ **Decided and fixed 2026-07-31.**
+The maintainer chose "keep its authored position within the centred 240x160
+frame" over bottom-anchoring, so it takes `UI_CENTER_DY` at its own source
+(`UI_TEXTBOX_DY`), routed through `Port_MapSource_MessageTileShiftY()` so a
+popup on an already-centred UI screen does not move twice. Measured at rows
+101..138 relative to the centred frame — the original position exactly.
 
 **The legend cutscene panels stay top-anchored**, following from §1: they are
 classified world, so they take the horizontal shift but not the vertical.

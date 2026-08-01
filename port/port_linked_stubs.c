@@ -1758,15 +1758,24 @@ u32 GetRandomByWeight(const u8* weights) {
  * CheckRectOnScreen — test if a rectangle (centred at x,y with
  * half-extents halfW, halfH) overlaps the visible screen.
  * Port of 0x0800290E from code_08001A7C.s.
+ *
+ * This is the gate DelayedEntityLoadManager uses to decide which NPCs exist:
+ * a clear bit makes NPCUpdate delete the entity, and a set bit re-creates it.
+ * So the screen size here is not a drawing detail — it is the radius at which
+ * townspeople blink out of existence. Written as literals it culled them at
+ * the *authored* screen bounds, which at 320x240 falls inside the visible
+ * area: with the manager's halfH of 0x20 the band was screen y in [-32, 192),
+ * so an NPC vanished 48 px above the bottom edge and reappeared on the way
+ * back. Both axes reduce to the original 0xF0/0xA0 at GBA-native size.
  */
 u32 CheckRectOnScreen(s32 x, s32 y, u32 halfW, u32 halfH) {
     s32 sx = gRoomControls.scroll_x - gRoomControls.origin_x;
     u32 dx = (u32)(x - sx + halfW);
-    if (dx >= halfW * 2 + 0xF0)
+    if (dx >= halfW * 2 + VIEWPORT_WIDTH)
         return 0;
     s32 sy = gRoomControls.scroll_y - gRoomControls.origin_y;
     u32 dy = (u32)(y - sy + halfH);
-    if (dy >= halfH * 2 + 0xA0)
+    if (dy >= halfH * 2 + VIEWPORT_HEIGHT)
         return 0;
     return 1;
 }

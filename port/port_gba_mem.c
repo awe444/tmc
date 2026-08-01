@@ -29,6 +29,8 @@ void Port_OamYExt_Latch(void) {
 
 s16 gWin0hExtLeft[VIEWPORT_HEIGHT];
 s16 gWin0hExtRight[VIEWPORT_HEIGHT];
+s16 gWin0hExtLeftKey[VIEWPORT_HEIGHT];
+s16 gWin0hExtRightKey[VIEWPORT_HEIGHT];
 
 /* Invalidate every line. The fill that follows writes only the lines it
  * covers, so lines it skips must not present a stale value as current —
@@ -38,6 +40,8 @@ void Port_Win0hExt_Reset(void) {
     for (i = 0; i < VIEWPORT_HEIGHT; i++) {
         gWin0hExtLeft[i] = -1;
         gWin0hExtRight[i] = -1;
+        gWin0hExtLeftKey[i] = -1;
+        gWin0hExtRightKey[i] = -1;
     }
 }
 

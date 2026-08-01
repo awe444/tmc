@@ -1,14 +1,19 @@
 # Viewport expansion — bug tracker
 
-Bugs found playtesting the 320×160 build (`docs/viewport-expansion-research-plan.md`
-Milestone 1). Reported by the maintainer over four rounds of testing; IDs are
-theirs, except B10 which came from a sweep.
+Bugs found across both viewport milestones. B1–B9 came from the maintainer
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13
+from the maintainer playtesting 320×240, with a recording.
 
-**Status: Milestone 1 is done — signed off by the maintainer 2026-07-30.**
-Eight of ten bugs are fixed and verified; B4 and B5 are **deferred by
-decision**, not outstanding blockers. This document stays the authoritative
-record of what the widening actually did to the engine, and §"Carry-forward
-items" is the list Milestone 2 inherits.
+**Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
+complete — see `docs/milestone2-status.md`.** Eleven of thirteen bugs are
+fixed and verified; B4 and B5 remain **deferred by decision**, not blockers,
+and both are now reachable with `record-bug.sh`.
+
+**Four of these were live in the shipping 240×160 build or through all of
+Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
+iris veto. The expansion exposed them; it did not cause them. This document
+stays the authoritative record of what the expansion actually did to the
+engine.
 
 Anything at 240x160 is a release blocker. Anything at 320x160 blocked the
 Milestone 1 exit criteria but not the shipping build, which is still
@@ -31,6 +36,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
 | B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
 | B12 | Entities culled in a band at the far viewport edge | **Fixed** (Milestone 2 Spike 11; horizontal half was live through Milestone 1) |
+| B13 | Town NPCs pop in and out inside the visible frame | **Fixed**, confirmed by maintainer 2026-08-01 (reported with a recording; horizontal half was live through Milestone 1) |
 
 ---
 
@@ -160,6 +166,10 @@ design change rather than a fix and has not been made.
 **Deferred at Milestone 1 sign-off.** See "Reproducing B4 and B5" below.
 
 ## Reproducing B4 and B5
+
+**This works — B13 was found with it in one pass**, after a round of inferring
+from the prose found nothing. B4 and B5 have now been open since Milestone 1
+for want of a recording, which is the cheapest thing on this list to obtain.
 
 Both need a human at the controls, which is why they survived four rounds.
 `--record=FILE` exists for exactly this and turns a human-reached moment into
@@ -410,6 +420,62 @@ important sites had neither axis converted. The same shape as B7, and as the
 five `WIN_RANGE(0, 160)` sites found alongside it — where Milestone 1 had
 converted one of four in a single file.
 
+## B13 — town NPCs pop in and out inside the visible frame *(fixed)*
+
+Reported by the maintainer playing the 320x240 build: NPCs in the Hyrule Town
+square appear and disappear as Link moves vertically, while Zelda is
+unaffected.
+
+**Cause.** `CheckRectOnScreen` (`port/port_linked_stubs.c`) is not a drawing
+predicate — it is the gate `DelayedEntityLoadManager` uses to decide which
+NPCs *exist*. A cleared bit makes `NPCUpdate` call `DeleteThisEntity`, and a
+set bit re-creates the NPC from `gNPCData`. Its bounds were the literals
+`0xF0` and `0xA0`:
+
+```c
+if (dx >= halfW * 2 + 0xF0) return 0;   /* 240 */
+if (dy >= halfH * 2 + 0xA0) return 0;   /* 160 */
+```
+
+With the manager's `halfH` of `0x20` that puts the live band at screen
+y ∈ [-32, 192) — so an NPC was destroyed **48 px above the bottom edge of a
+240-row screen** and rebuilt on the way back. Zelda survives because
+`RecycleEntities` and this path both spare `ENT_PERSIST` entities; ordinary
+townspeople are streamed.
+
+**The horizontal half was equally wrong and live through all of Milestone 1**:
+the band was x ∈ [-24, 264) on a 320-wide screen, so NPCs blinked in the
+rightmost 56 columns too.
+
+**Fix.** Both bounds become `VIEWPORT_WIDTH` / `VIEWPORT_HEIGHT`, which reduce
+to the original literals at 240x160.
+
+**Evidence.** Replaying the maintainer's recording and tracing NPC list
+membership, the window around the reported movement had five
+appear/disappear events; three were an NPC at screen y 190-193 — inside the
+visible frame — and they are gone after the fix. The two that remain are at
+y = -33/-30, outside the frame, which is the margin working as intended.
+All 130 sampled frames differ, with the missing townspeople restored in a
+consistent band below the old boundary.
+
+**Why the earlier sweeps missed it.** Spike 7 and Spike 11 both audited
+culling, and B12 fixed `CheckOnScreen` in `port_draw.c` — the *drawing* gate.
+This is a second, differently-named predicate in `port_linked_stubs.c`, a file
+of ported engine functions that the `src/`-focused greps never covered. It
+is the only viewport literal in that file, which is exactly why nothing
+flagged it.
+
+**Repro.** `build/play-320x240/recordings/npcpop.script` plus its `.sav`,
+replayed with `--script=`. The window worth watching is frames 11540–11800.
+It is not committed: `*.sav` is gitignored project-wide, so turning this into
+a permanent regression fixture needs a deliberate force-add.
+
+**Lesson (9).** *Ask what a predicate gates, not just what it is called.*
+`CheckOnScreen` and `CheckRectOnScreen` sound like the same kind of test; one
+decides whether to draw an entity this frame and the other decides whether the
+entity exists at all. The second is far more visible when it is wrong, and it
+lived in the file the audits treated as stubs.
+
 ---
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
@@ -518,12 +584,21 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 | Quicksave state files not portable | nothing — recorded as a dead end |
 
 The per-scanline windows turned out to be a live defect rather than an
-unwidened one — recorded as B11 below. The affine half of Spike 9 (barrel,
-tornado, title sword) is **not** done: those scenes have not been reached at
-240 lines and their per-line reference points are unconverted.
+unwidened one — recorded as B11 below.
 
-None of these blocks starting Milestone 2. The two Spike 9 items are the ones
-that will actually be *worked*; the rest are notes.
+**The affine half is done for the scenes that can be reached.** The title
+sword and the rolling barrel are both fixed and verified
+(`docs/affine-viewport.md`); the barrel was one warp away from the scripted
+tester the whole time, which is why "unreachable" was worth re-testing rather
+than believing. Vaati's tornado and the screen-shrink cinematic are still
+unreached — the tornado's per-line effect turns out to be a BG3 scroller
+rather than affine, so it is probably already covered, but that is reasoning
+and not observation.
+
+Of the list above, only the 8-bit world-space window masks remain genuinely
+untouched, and they still want their scene reproduced before anyone edits
+them — `include/screen.h` warns that several rely on the wrap to produce an
+*inverted* window.
 
 - ~~**Title screen affine sword** sits ~40 px left.~~ **Fixed** —
   `docs/affine-viewport.md`. `mode2.c`'s affine path now honours the same

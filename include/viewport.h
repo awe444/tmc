@@ -83,12 +83,30 @@
  * is why this is applied only where the surface is a whole authored screen,
  * while DX is applied to every 240-authored layer.
  *
- * The text box is the case this does not settle: it is authored near the
- * bottom of 160 rows and, unshifted, floats mid-screen at 240. It rides BG0
- * along with the top-anchored HUD, so neither a uniform shift nor none is
- * right for both, and moving it needs a shift at its own source. Left alone
- * here and recorded rather than guessed at. Zero at GBA-native height. */
+ * The text box needs it too but cannot get it from the layer, because it
+ * rides BG0 with the top-anchored HUD. It takes the same shift at its own
+ * source instead — see UI_TEXTBOX_DY. Zero at GBA-native height. */
 #define UI_CENTER_DY ((VIEWPORT_HEIGHT - DISPLAY_HEIGHT) / 2)
+
+/* The text box keeps its authored position *within the centred 240x160
+ * frame* — decided 2026-07-31, after trying bottom-anchoring and preferring
+ * this.
+ *
+ * So it takes UI_CENTER_DY, the same shift a whole authored screen takes,
+ * and lands at the same offset inside the centred band that it occupied on a
+ * 160-row screen. Bottom-anchoring — moving it by the full difference so it
+ * hugged the bottom edge — was the alternative and reads worse: it detaches
+ * the box from the frame the rest of the UI is composed against.
+ *
+ * The reason this is a separate constant from UI_CENTER_DY rather than a use
+ * of it: BG0 carries both the box and the HUD, the HUD must not move, so the
+ * layer cannot take the shift and the box has to take it individually.
+ *
+ * In tiles because that is the unit BG0 addresses, and applied to the
+ * window's yPos where it is computed so that drawing, clearing and
+ * RecoverUI all agree. Zero at GBA-native height. */
+#define UI_TEXTBOX_DY UI_CENTER_DY
+#define UI_TEXTBOX_TILE_DY (UI_TEXTBOX_DY / 8)
 
 /* HUD sprites are positioned in engine coordinates and must move with the
  * centred BG0 layer they sit on, so they take the same shift. World sprites
