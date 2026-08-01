@@ -31,6 +31,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B10 | BG3 gameplay overlays clipped and misaligned | **Fixed** (found by sweep, not by playtesting) |
 | B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
 | B12 | Entities culled in a band at the far viewport edge | **Fixed** (Milestone 2 Spike 11; horizontal half was live through Milestone 1) |
+| B13 | Town NPCs pop in and out inside the visible frame | **Fixed** (reported by the maintainer with a recording; horizontal half was live through Milestone 1) |
 
 ---
 
@@ -409,6 +410,62 @@ evidence.* Spike 7 said the vertical siblings were done; one of the two most
 important sites had neither axis converted. The same shape as B7, and as the
 five `WIN_RANGE(0, 160)` sites found alongside it — where Milestone 1 had
 converted one of four in a single file.
+
+## B13 — town NPCs pop in and out inside the visible frame *(fixed)*
+
+Reported by the maintainer playing the 320x240 build: NPCs in the Hyrule Town
+square appear and disappear as Link moves vertically, while Zelda is
+unaffected.
+
+**Cause.** `CheckRectOnScreen` (`port/port_linked_stubs.c`) is not a drawing
+predicate — it is the gate `DelayedEntityLoadManager` uses to decide which
+NPCs *exist*. A cleared bit makes `NPCUpdate` call `DeleteThisEntity`, and a
+set bit re-creates the NPC from `gNPCData`. Its bounds were the literals
+`0xF0` and `0xA0`:
+
+```c
+if (dx >= halfW * 2 + 0xF0) return 0;   /* 240 */
+if (dy >= halfH * 2 + 0xA0) return 0;   /* 160 */
+```
+
+With the manager's `halfH` of `0x20` that puts the live band at screen
+y ∈ [-32, 192) — so an NPC was destroyed **48 px above the bottom edge of a
+240-row screen** and rebuilt on the way back. Zelda survives because
+`RecycleEntities` and this path both spare `ENT_PERSIST` entities; ordinary
+townspeople are streamed.
+
+**The horizontal half was equally wrong and live through all of Milestone 1**:
+the band was x ∈ [-24, 264) on a 320-wide screen, so NPCs blinked in the
+rightmost 56 columns too.
+
+**Fix.** Both bounds become `VIEWPORT_WIDTH` / `VIEWPORT_HEIGHT`, which reduce
+to the original literals at 240x160.
+
+**Evidence.** Replaying the maintainer's recording and tracing NPC list
+membership, the window around the reported movement had five
+appear/disappear events; three were an NPC at screen y 190-193 — inside the
+visible frame — and they are gone after the fix. The two that remain are at
+y = -33/-30, outside the frame, which is the margin working as intended.
+All 130 sampled frames differ, with the missing townspeople restored in a
+consistent band below the old boundary.
+
+**Why the earlier sweeps missed it.** Spike 7 and Spike 11 both audited
+culling, and B12 fixed `CheckOnScreen` in `port_draw.c` — the *drawing* gate.
+This is a second, differently-named predicate in `port_linked_stubs.c`, a file
+of ported engine functions that the `src/`-focused greps never covered. It
+is the only viewport literal in that file, which is exactly why nothing
+flagged it.
+
+**Repro.** `build/play-320x240/recordings/npcpop.script` plus its `.sav`,
+replayed with `--script=`. The window worth watching is frames 11540–11800.
+It is not committed: `*.sav` is gitignored project-wide, so turning this into
+a permanent regression fixture needs a deliberate force-add.
+
+**Lesson (9).** *Ask what a predicate gates, not just what it is called.*
+`CheckOnScreen` and `CheckRectOnScreen` sound like the same kind of test; one
+decides whether to draw an entity this frame and the other decides whether the
+entity exists at all. The second is far more visible when it is wrong, and it
+lived in the file the audits treated as stubs.
 
 ---
 
