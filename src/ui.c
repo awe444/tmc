@@ -232,13 +232,18 @@ void DrawRupees(void) {
     if (gHUD.hideFlags & HUD_HIDE_RUPEES) {
         if (gHUD.unk_a != 0) {
             gHUD.unk_a = 0;
-            row1 = &gBG0Buffer[UI_BG0_AT(24, 18)];
+            /* Rows 18-19 are the bottom two tile rows of the authored screen;
+             * UI_HUD_LOWER_TILE_DY keeps them on the bottom edge of a taller
+             * one. The clear path has to move with the draw path below or it
+             * wipes the wrong rows and leaves the counter on screen. Zero at
+             * GBA-native height. */
+            row1 = &gBG0Buffer[UI_BG0_AT(24, 18 + UI_HUD_LOWER_TILE_DY)];
             row1[0] = 0;
             row1[1] = 0;
             row1[2] = 0;
             row1[3] = 0;
             row1[4] = 0;
-            row2 = &gBG0Buffer[UI_BG0_AT(24, 19)];
+            row2 = &gBG0Buffer[UI_BG0_AT(24, 19 + UI_HUD_LOWER_TILE_DY)];
             row2[0] = 0;
             row2[1] = 0;
             row2[2] = 0;
@@ -249,8 +254,8 @@ void DrawRupees(void) {
     } else {
         if (gHUD.unk_a == 0) {
             gHUD.unk_a = 2;
-            row1 = &gBG0Buffer[UI_BG0_AT(24, 18)];
-            row2 = &gBG0Buffer[UI_BG0_AT(24, 19)];
+            row1 = &gBG0Buffer[UI_BG0_AT(24, 18 + UI_HUD_LOWER_TILE_DY)];
+            row2 = &gBG0Buffer[UI_BG0_AT(24, 19 + UI_HUD_LOWER_TILE_DY)];
             row1[0] = temp2 = gWalletSizes[gSave.stats.walletType].iconStartTile;
             row1[1] = temp2 + 1;
             row2[0] = temp2 + 2;
@@ -544,7 +549,11 @@ void DrawKeys(void) {
     if (!(((gHUD.hideFlags & HUD_HIDE_KEYS) == 0) && (AreaHasKeys()))) {
         if (gHUD.unk_10 != 0) {
             gHUD.unk_10 = 0;
-            row1 = &gBG0Buffer[UI_BG0_AT(25, 16)];
+            /* Rows 16-17, the band above the rupee counter; same bottom
+             * anchoring, and the clear path has to track the draw path below.
+             * The 0x20 offsets are one tilemap row in entries, so they follow
+             * on their own. Zero at GBA-native height. */
+            row1 = &gBG0Buffer[UI_BG0_AT(25, 16 + UI_HUD_LOWER_TILE_DY)];
             row1[0] = 0;
             row1[1] = 0;
             row1[2] = 0;
@@ -557,8 +566,8 @@ void DrawKeys(void) {
         }
     } else {
         if (gHUD.unk_10 == 0) {
-            row1 = &gBG0Buffer[UI_BG0_AT(25, 16)];
-            row2 = &gBG0Buffer[UI_BG0_AT(25, 17)];
+            row1 = &gBG0Buffer[UI_BG0_AT(25, 16 + UI_HUD_LOWER_TILE_DY)];
+            row2 = &gBG0Buffer[UI_BG0_AT(25, 17 + UI_HUD_LOWER_TILE_DY)];
             temp = 0xf01c;
             row1[0] = temp;
             row1[1] = temp + 1;
@@ -885,7 +894,12 @@ void EzloNagUIElement_Action0(UIElement* element) {
          * appears when Ezlo has something to say — but it is the same one
          * line and would have been the next report. */
         element->x = 0x10 + UI_HUD_SPRITE_DX;
-        element->y = 0x90;
+        /* y=0x90 puts this in the lower HUD band, beside the counters rather
+         * than up with the hearts, so it takes the bottom anchoring they take
+         * (UI_HUD_LOWER_DY) and not the top band's zero. In pixels because
+         * this is an OBJ; the counters are BG0 tiles and use the tile form.
+         * Zero at GBA-native height. */
+        element->y = 0x90 + UI_HUD_LOWER_DY;
         element->unk_6 = 0;
         element->type = UI_ELEMENT_EZLONAGSTART;
         element->action = 1;

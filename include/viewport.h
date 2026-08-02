@@ -117,6 +117,31 @@
  * must not add it again. Zero at GBA-native width. */
 #define UI_HUD_SPRITE_DX UI_CENTER_DX
 
+/* The in-game HUD splits vertically, and the two halves anchor to opposite
+ * edges.
+ *
+ * On the authored 160-row screen the HUD is two bands with nothing between
+ * them: hearts, charge bar and the button/item sprites occupy y 8..31, and
+ * the key counter, rupee counter and the Ezlo nag occupy y 128..159. The top
+ * band is anchored to the top of the screen and the top of a taller screen is
+ * still the top, so it keeps its position (see UI_CENTER_DY, which is applied
+ * to whole authored screens and deliberately not to the HUD). The bottom band
+ * was authored against the bottom edge — the rupee counter's last tile row
+ * ends at y=159, exactly the last row of the screen — so leaving it where it
+ * sits strands it in the middle of the play area.
+ *
+ * This is the difference between the two edges, i.e. exactly the amount the
+ * viewport grew, which is what bottom-anchoring costs. Spelled that way rather
+ * than as the literal 80 so it stays correct at any height, and so it is
+ * visibly zero at GBA-native height: the shipping build cannot move.
+ *
+ * Applied at each lower-HUD source site, in tiles for the two BG0 counters and
+ * in pixels for the Ezlo nag OBJ, for the same reason UI_HUD_SPRITE_DX is: BG0
+ * carries both bands, so the layer cannot take a shift that only half of its
+ * content wants. */
+#define UI_HUD_LOWER_DY (VIEWPORT_HEIGHT - DISPLAY_HEIGHT)
+#define UI_HUD_LOWER_TILE_DY (UI_HUD_LOWER_DY / 8)
+
 /* Per-scanline (HBlank DMA) tables.
  *
  * Nine sites register a table that the DMA replays one entry per rendered
