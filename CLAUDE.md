@@ -48,6 +48,50 @@ drop a previously configured size, and the next build silently stays expanded.
 Name builds WxH (240x160, 320x160, 320x240), never "the 240 build" — with two
 axes in play a bare number no longer says which.
 
+## Always refresh the playable build at the end of a work cycle
+
+`build/play-320x240/` is the self-contained build the maintainer actually
+plays, and it is how every bug in the tracker that needed a human at the
+controls was found. **Rebuild and reinstall it before handing work back**, even
+when the change looks headless — a fix that is only in `build/pc/tmc_pc` is a
+fix nobody can playtest, and the maintainer has no way to tell the binary is
+stale short of not seeing their bug fixed.
+
+**Do this after the regression gate below, not before.** The gate needs a
+240x160 build and this needs a 320x240 one, and `xmake f -c` drops the previous
+size — running them the other way round means configuring twice and handing
+over a play binary you have not gated.
+
+```bash
+TMC_VIEW_W=320 TMC_VIEW_H=240 xmake f -c -y -m release
+TMC_VIEW_W=320 TMC_VIEW_H=240 xmake build -y tmc_pc
+cd build/play-320x240
+rm -f tmc_pc_320x240.prev            # older .prev is dropped, 45 MB apiece
+mv tmc_pc_320x240 tmc_pc_320x240.prev
+cp ../../build/pc/tmc_pc tmc_pc_320x240
+```
+
+Confirm what you installed rather than assuming the copy was the right binary:
+`cmp` it against `build/pc/tmc_pc`, and replay a capture script through it from
+a temp dir to check it renders what you verified.
+
+Then update that directory's `README.md`: it is written to the playtester and
+says what changed since the last binary, so a stale one is worse than none.
+Move the previous cycle's notes down a section rather than deleting them.
+
+Two ways to damage that directory, both already done once:
+
+- **Never run anything from inside it.** The game overwrites `tmc.sav` as it
+  plays, and that save is the maintainer's. Run captures from a `mktemp -d`
+  with `baserom.gba` and `assets/` symlinked in, the way
+  `tools/capture/run_route.sh` does.
+- **Do not symlink `rom_data/` into such a harness.** The port extracts ROM
+  pages into it on boot, and the write follows the link — one verification run
+  left 2789 files and 11 MB behind. Let the temp dir keep its own.
+
+`build/` is gitignored, so none of this appears in `git status` and no commit
+will remind you. It is only ever as fresh as the last time someone did it.
+
 ## Regression gate — run before any viewport commit
 
 At the **default 240x160 build**, both must hold:
