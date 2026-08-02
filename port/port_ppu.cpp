@@ -6,8 +6,6 @@
 #include "port_filter.h"
 #include "port_touch_controls.h"
 #include "port_viewport.h"
-#include "port_mapsource.h"
-#define DISPLAY_WIDTH 240 /* GBA-native content width; engine headers do not parse as C++ */
 
 #ifdef launcher
 #include "tmc_launcher.h"
@@ -168,23 +166,24 @@ static void Port_PPU_ComposeCanvas(void) {
                     (size_t)fw * sizeof(uint32_t));
     }
 
-    /* Centred UI (title, file select, menus) occupies a DISPLAY_WIDTH-wide
-     * band in the middle of a wider frame. The columns either side carry
-     * that screen's backdrop palette rather than nothing, so paint them the
-     * border colour to satisfy D3's solid-black borders. */
-    if (fw > DISPLAY_WIDTH && Port_MapSource_UiCentered()) {
-        const int bandL = ox + (fw - DISPLAY_WIDTH) / 2;
-        const int bandR = bandL + DISPLAY_WIDTH;
-        for (int y = 0; y < fh; ++y) {
-            uint32_t* row = &sCanvas[(oy + y) * cw];
-            for (int x = ox; x < bandL; ++x) {
-                row[x] = PORT_VIEW_BORDER_COLOR;
-            }
-            for (int x = bandR; x < ox + fw; ++x) {
-                row[x] = PORT_VIEW_BORDER_COLOR;
-            }
-        }
-    }
+    /* A centred UI screen (logo, title, file select, menus) occupies a
+     * DISPLAY_WIDTH-wide band in the middle of a wider frame, and the columns
+     * either side carry that screen's PPU backdrop. Those columns used to be
+     * repainted PORT_VIEW_BORDER_COLOR here, to satisfy the plan's original
+     * D3 "solid black borders".
+     *
+     * That repaint is gone, for two reasons. D3 was amended at Milestone 1
+     * sign-off — coloured borders are accepted, because the backdrop is what
+     * hardware shows outside every layer anyway. And the repaint only ever
+     * covered the *horizontal* band: the rows above and below a centred
+     * screen are PPU output too and were never touched, so a 320x240 UI
+     * screen came out with black bars left and right and its backdrop colour
+     * above and below. Leaving the PPU's own output alone is what makes the
+     * two axes agree — white around the Nintendo/Capcom logo, pale yellow
+     * around the title, green around file select.
+     *
+     * PORT_VIEW_BORDER_COLOR still fills the ring above, which is a
+     * different thing: canvas the PPU does not render into at all. */
 }
 
 // Largest canvas-aspect rect fitting inside (w, h), centered.

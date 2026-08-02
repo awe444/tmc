@@ -1,11 +1,11 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13
-from the maintainer playtesting 320×240, with a recording.
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13 and
+B14 from the maintainer playtesting 320×240.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Eleven of thirteen bugs are
+complete — see `docs/milestone2-status.md`.** Twelve of fourteen bugs are
 fixed and verified; B4 and B5 remain **deferred by decision**, not blockers,
 and both are now reachable with `record-bug.sh`.
 
@@ -37,6 +37,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B11 | Circular-window transitions render as a near-black screen | **Fixed** (Milestone 2 Spike 9; was live at 240x160) |
 | B12 | Entities culled in a band at the far viewport edge | **Fixed** (Milestone 2 Spike 11; horizontal half was live through Milestone 1) |
 | B13 | Town NPCs pop in and out inside the visible frame | **Fixed**, confirmed by maintainer 2026-08-01 (reported with a recording; horizontal half was live through Milestone 1) |
+| B14 | UI screens' side borders forced black while their top/bottom borders show the backdrop | **Fixed** 2026-08-02 |
 
 ---
 
@@ -476,6 +477,53 @@ decides whether to draw an entity this frame and the other decides whether the
 entity exists at all. The second is far more visible when it is wrong, and it
 lived in the file the audits treated as stubs.
 
+## B14 — UI side borders forced black, top/bottom borders not *(fixed)*
+
+Reported by the maintainer playing 320x240: the Nintendo/Capcom logo screen,
+the title screen and file select each had black bars left and right, while
+their top and bottom bands showed the screen's own colour — white, pale yellow
+and green respectively. Two borders around one surface, two different colours.
+
+**Cause.** `Port_PPU_ComposeCanvas` (`port/port_ppu.cpp`) repainted the columns
+either side of a centred UI screen with `PORT_VIEW_BORDER_COLOR`, to satisfy
+the plan's original D3 "solid black borders". Nothing did the equivalent for
+the rows above and below, so once the viewport grew a second axis the two
+disagreed by construction.
+
+**This was two decisions out of date, not a slip.** D3 was amended at Milestone
+1 sign-off to accept coloured borders — a clipped UI screen shows the PPU
+backdrop, which is what hardware shows outside every layer anyway — and the
+repaint that D3 had motivated stayed behind. Milestone 2 then added the
+vertical bands, which take the backdrop because they are ordinary PPU output
+that nothing overpaints. The horizontal repaint was the odd one out from that
+moment on.
+
+**Fix.** Delete the repaint and let the PPU's own output stand on both axes.
+`PORT_VIEW_BORDER_COLOR` still fills the canvas ring outside
+`PORT_VIEW_CONTENT_*`, which is a different thing — canvas the PPU never
+renders into, with no colour of its own.
+
+**Evidence.** Measured as distinct colours per band, per the D3 note below and
+lesson 6. Before: `L=000000 R=000000` with `T`/`B` two-coloured (backdrop
+across the middle 240 columns, black in the corners where the side repaint cut
+through). After, on every UI screen captured: **all four bands are a single
+colour and it is the same colour** — `f8f8f8` on the logo screen, `f8f8a8` on
+the title, `40b088` on file select.
+
+**Scope.** Against the same build without the change, the four UI waypoints
+(title, fileselect, pause, figurine) differ by exactly **19 200 px each = two
+40x240 bands**, confined to columns 0-39 and 280-319 — so nothing inside the
+centred screen moved. Every world waypoint is byte-identical. Both 240x160
+gates pass; at native width the block could not run at all (`fw > DISPLAY_WIDTH`
+is false), so the shipping build never had this defect.
+
+**Lesson (10).** *When a decision is reversed, grep for what it motivated.*
+D3's reversal is recorded twice in this document and the code it had justified
+outlived it by two milestones — in a file nobody re-read, because the border
+colour was not what anyone was working on. The same shape as B8's stale
+comment, one level up: there the wrong sentence survived the decision, here the
+wrong code did.
+
 ---
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
@@ -531,7 +579,11 @@ to add between bug fixes.
    check counts non-black pixels in the letterbox columns, which reads a
    correctly-clipped pause menu as 12 800 px of bleed because its backdrop is
    green. Count *distinct colours per column* instead: a clipped border is
-   uniform whatever its colour.
+   uniform whatever its colour. B14 is the same mistake made in *code* rather
+   than in a measurement — the border was painted black to match the metric.
+
+Lessons 7–10 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
+10 in B14.
 
 ---
 
