@@ -266,8 +266,30 @@ static bool mapsource_is_ui_screen(void) {
         case SUBTASK_FIGURINEMENU:
         case SUBTASK_LOCALMAPHINT:
             return true;
+        case SUBTASK_AUXCUTSCENE:
+            /* A cutscene is a view of the world and must fill the viewport
+             * (B3) — except that one of them spends its first half showing
+             * something else. The Picori legend's stained-glass cards are a
+             * whole 240x160 authored panel, and they run as states 0..10 of
+             * the *same* AUXCUTSCENE that later fades into Zelda walking
+             * through Hyrule Field. So the subtask cannot decide this; it is
+             * one subtask wearing two hats.
+             *
+             * What separates them is mechanical rather than a guess about
+             * which cutscene is playing: a story panel has no world behind
+             * it, and says so by detaching both map layers
+             * (cutscene.c:230-231, gMapBottom/gMapTop.bgSettings = NULL).
+             * With no layer bound there is no world view to fill, and what is
+             * on screen is a 240-authored surface like any menu. SetBGDefaults
+             * rebinds them when the cutscene switches to its world half, which
+             * is what puts the hat back.
+             *
+             * This is only about the *vertical* shift. The panels already took
+             * the horizontal one via the no-map-source clip rule, which is why
+             * B2 and B9 are about them. */
+            return gMapBottom.bgSettings == NULL && gMapTop.bgSettings == NULL;
         default:
-            /* AUXCUTSCENE, PORTALCUTSCENE, WORLDEVENT, FASTTRAVEL: world. */
+            /* PORTALCUTSCENE, WORLDEVENT, FASTTRAVEL: world. */
             return false;
     }
 }

@@ -240,7 +240,11 @@ void sub_08053758(void) {
     gScreen.controls.windowInsideControl = 0x1f;
     gScreen.controls.windowOutsideControl = 0x3f;
     gScreen.controls.window0HorizontalDimensions = WIN_RANGE(0, WIN_VIEWPORT_WIDTH);
-    gScreen.controls.window0VerticalDimensions = WIN_RANGE(0, 0x60);
+    /* The panel window's opening value, live until the first card overwrites
+     * it below. Its horizontal pair spans the whole viewport and so needs no
+     * shift; 0x60 is a 240-authored row bound and takes UI_CENTER_DY like
+     * every other one. Zero at GBA-native height. */
+    gScreen.controls.window0VerticalDimensions = WIN_RANGE(UI_CENTER_DY, 0x60 + UI_CENTER_DY);
     gScreen.bg1.control = 0x1c4e;
     gScreen.bg2.control = 0x1dc1;
     SoundReq(BGM_STORY);
@@ -275,7 +279,16 @@ void sub_08053800(void) {
          * and dimmed everything right of it. Zero at GBA-native width. */
         gScreen.controls.window0HorizontalDimensions = WIN_RANGE(
             (ptr->width >> 8) + UI_CENTER_DX, (ptr->width & 0xff) + UI_CENTER_DX);
-        gScreen.controls.window0VerticalDimensions = WIN_RANGE(ptr->height >> 8, ptr->height & 0xff);
+        /* ptr->height packs the same pair for rows (0..96 for the four wide
+         * cards, 0..160 for the two tall ones), and takes UI_CENTER_DY for
+         * exactly the reason the line above takes UI_CENTER_DX. The panels are
+         * now centred vertically as well as horizontally, so the window that
+         * bounds the undimmed artwork has to move with them — B9's rule is
+         * "shift the window exactly where the surface moves", and until the
+         * surface moved on this axis the right shift here was zero. Zero at
+         * GBA-native height. */
+        gScreen.controls.window0VerticalDimensions =
+            WIN_RANGE((ptr->height >> 8) + UI_CENTER_DY, (ptr->height & 0xff) + UI_CENTER_DY);
         SetFade(FADE_INSTANT, ptr->fadeSpeed);
     }
 }
