@@ -48,7 +48,14 @@ extern "C" {
 #define PORT_VIEW_CONTENT_X ((PORT_VIEW_WIDTH - PORT_VIEW_CONTENT_WIDTH) / 2)
 #define PORT_VIEW_CONTENT_Y ((PORT_VIEW_HEIGHT - PORT_VIEW_CONTENT_HEIGHT) / 2)
 
-/* D3: solid black. ABGR8888 to match virtuappu_frame_buffer. */
+/* Fill for canvas the PPU does not render into — the ring outside
+ * PORT_VIEW_CONTENT_*, which is empty by construction and has no colour of
+ * its own. ABGR8888 to match virtuappu_frame_buffer.
+ *
+ * This is *not* the colour of the bands around a centred UI screen. Those
+ * are inside the rendered region and carry that screen's PPU backdrop, which
+ * is what hardware shows outside every layer; D3 was amended at Milestone 1
+ * sign-off to accept them. */
 #define PORT_VIEW_BORDER_COLOR 0xFF000000u
 
 /* The composed canvas, PORT_VIEW_WIDTH * PORT_VIEW_HEIGHT pixels.

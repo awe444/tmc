@@ -1,7 +1,8 @@
 # Vertical UI centring — Spike 6's twin
 
-**Date:** 2026-07-31 · **Status:** complete for whole authored screens; two
-cases deliberately left, §4. Milestone 2, follow-on to Spike 11.
+**Date:** 2026-07-31, extended 2026-08-02 · **Status:** complete. Every
+240×160 authored surface is centred on both axes; the three cases §4 once left
+open are all decided and fixed. Milestone 2, follow-on to Spike 11.
 
 UI screens rendered in the top 160 rows of a 320×240 frame with the backdrop
 showing beneath. Milestone 1 built the horizontal centring in three channels
@@ -25,10 +26,11 @@ clip.offset_y = ui_screen ? UI_CENTER_DY : 0;
 clip.content_height = ui_screen ? DISPLAY_HEIGHT : MODE1_GBA_HEIGHT;
 ```
 
-`mapsource_is_ui_screen()` already draws exactly the needed line: title, file
-select, gameover and staffroll (not `TASK_GAME`), plus the five menu subtasks.
-Cutscenes and world events are world views and are excluded — which is correct
-for the camera but has a consequence, §4.
+`mapsource_is_ui_screen()` draws the line: title, file select, gameover and
+staffroll (not `TASK_GAME`), plus the five menu subtasks. World events and the
+other cutscenes are world views and are excluded, which is correct for the
+camera. `SUBTASK_AUXCUTSCENE` is the one entry that cannot be answered by
+subtask alone — see §5.
 
 ## 2. The three channels
 
@@ -38,10 +40,12 @@ for the camera but has a consequence, §4.
 | Sprites | `virtuappu_mode1_set_obj_offset(dx, …)` and `set_obj_clip(left, right)` | the `dy` argument, which already existed and was passed 0, and a new `set_obj_clip_v(top, bottom)` |
 | PPU windows | shifted by `UI_CENTER_DX` at each set site (B9) | shifted by `UI_CENTER_DY` at `figurineMenu.c:124` and `kinstoneMenu.c:298` |
 
-The two `cutscene.c` vertical windows are **deliberately not shifted**: the
-legend panels are classified world, so their surface takes no vertical shift,
-and shifting the window without the surface is precisely the B9 defect.
-Shift the window exactly where the surface moves.
+~~The two `cutscene.c` vertical windows are **deliberately not shifted**~~ —
+**both now take `UI_CENTER_DY`** (`cutscene.c:247`, `:290`), because the
+surface they bound moved. See §5: the legend panels are now centred
+vertically, so the rule is satisfied in the other direction. The rule itself
+is unchanged and is the thing to keep hold of: *shift the window exactly where
+the surface moves*, which is the B9 defect stated as a policy.
 
 The in-game HUD needed no `UI_HUD_SPRITE_DY`. Its sprites are positioned in
 screen coordinates and the layer they belong to does not move vertically, so
@@ -90,8 +94,61 @@ frame" over bottom-anchoring, so it takes `UI_CENTER_DY` at its own source
 popup on an already-centred UI screen does not move twice. Measured at rows
 101..138 relative to the centred frame — the original position exactly.
 
-**The legend cutscene panels stay top-anchored**, following from §1: they are
-classified world, so they take the horizontal shift but not the vertical.
-Whether a 240×160 authored *panel* inside a world-classified cutscene should
-be vertically centred is the same question as the text box, and is best
-answered with it.
+~~**The legend cutscene panels stay top-anchored**~~ **Decided and fixed
+2026-08-02** — the maintainer asked for them centred. See §5.
+
+## 5. The legend panels — centred 2026-08-02
+
+The Picori legend's stained-glass cards were the last surface left
+top-anchored, on the reasoning in §1: they run inside an AUXCUTSCENE, cutscenes
+are world views, and a world view keeps `offset_y = 0`. That reasoning was
+sound about cutscenes and wrong about these cards, and the reason is worth
+recording because it is not a thing the subtask can tell you.
+
+**The opening cutscene is one subtask wearing two hats.** Its dispatcher table
+(`gUnk_080FCCFC`, `cutscene.c:170`) runs the five story panels as overlay
+states 0–10 and *then* fades into Zelda walking through Hyrule Field as states
+11–14. Both halves are `SUBTASK_AUXCUTSCENE`, so classifying by subtask
+necessarily gets one of them wrong: centre the subtask and B3 comes back;
+leave it and the cards stay pinned to the top of a 240-row screen.
+
+What separates the halves is mechanical rather than a guess about which
+cutscene is playing. A story panel has no world behind it and says so, by
+detaching both map layers (`cutscene.c:230-231`, `gMapBottom.bgSettings` and
+`gMapTop.bgSettings` set to `NULL`). With no layer bound there is no world view
+to fill, and what is on screen is a 240×160 authored surface like any menu.
+`SetBGDefaults()` rebinds them when the cutscene switches to its world half,
+which is what puts the hat back — so the predicate flips at exactly the frame
+the content changes character, with no state of its own to get stale.
+
+`mapsource_is_ui_screen()` therefore answers `SUBTASK_AUXCUTSCENE` with "UI iff
+both map layers are detached". Everything else follows from machinery that
+already existed: the panels take `offset_y`/`content_height` from the same clip
+that was already centring them horizontally, the OBJ offset and vertical clip
+come with it, and `Port_MapSource_MessageTileShiftY()` returns 0 because the
+card's text rides the shifted BG0 rather than shifting itself — the same
+double-shift B1 was, avoided the same way.
+
+The WIN0 vertical pair in `cutscene.c` takes `UI_CENTER_DY` as of this change
+(§2), which is B9's rule applied on the axis that finally needed it.
+
+**Verification.** Every captured legend frame is now **pixel-identical to the
+240×160 build's rendering of the same frame, shifted 40 px on both axes — 0
+mismatches**, against 8 374–20 634 per frame before the change. That is one
+measurement covering artwork, text, window and blending together; a window
+left behind would have shown up as a brightness seam, which is exactly how B9
+presented.
+
+**Scope is exactly right**, checked the same way §3 checked this document's
+first pass. Diffing the 320×240 route against the same build without the
+change:
+
+| waypoint | class | changed px |
+|---|---|---|
+| 13 legend frames + `cutscene` | story panel | 11 418 – 25 603 each |
+| `zz_f04600` … `zz_f05900` (13 frames) | the **world half of the same cutscene** | **0** each |
+| field, textbox, woods, lightray, deepwood, town | world | **0** each |
+
+The middle row is the one that matters: the Zelda-walking segment is byte-
+identical with ~76 000 non-black pixels in it, so B3 is not regressed by
+centring the half of the cutscene that precedes it.

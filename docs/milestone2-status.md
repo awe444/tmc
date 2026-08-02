@@ -1,7 +1,7 @@
-# Milestone 2 — status at session close, 2026-08-01
+# Milestone 2 — status at session close, 2026-08-02
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-four items the plan did not anticipate. **One thing is still open and it is a
+six items the plan did not anticipate. **One thing is still open and it is a
 judgement, not work: frame time.**
 
 Read this first; the individual spike write-ups are the detail behind each row
@@ -21,6 +21,8 @@ and several carry inline "superseded" notes pointing back here.
 | Iris width | `spike9-hdma-240.md` §6 | Circle no longer sliced at x=240 |
 | Text box placement | `ui-vertical-centring.md` §4 | Keeps its authored position inside the centred frame |
 | **B13** — NPC pop-in | bug tracker | Found from a maintainer recording; confirmed fixed 2026-08-01 |
+| **B14** — UI side borders forced black | bug tracker | Reported by the maintainer 2026-08-02; all four bands now one colour |
+| Legend panels centred vertically | `ui-vertical-centring.md` §4-5 | The last deferred vertical case; decided and fixed 2026-08-02 |
 
 ## Gates
 
@@ -60,7 +62,7 @@ No go/no-go is recorded. That is the maintainer's call and it rests on this.
 |---|---|
 | **Vaati's tornado** | Unreached — needs a story state the scripted tester cannot produce. Its per-line effect is a BG3 scroller rather than affine, so it is probably already covered; that is reasoning, not observation. |
 | **The screen-shrink cinematic** | Named in the plan; no concrete site found in the source. Unidentified rather than done. |
-| **Picori legend panels** | Top-anchored. They are world-classified, so they take the horizontal centring but not the vertical. Left alone deliberately — "centred" is not obviously right for a full-screen story panel, and it is a separate call from the text box. |
+| ~~**Picori legend panels**~~ | **Centred 2026-08-02** at the maintainer's request — `ui-vertical-centring.md` §5. Pixel-identical to 240x160 shifted 40 px on both axes; the world half of the same cutscene is byte-identical, so B3 stands. |
 | **Kinstone menu** | Still never runtime-verified; it crashes on cold scripted entry at 240×160 too, so it is the pre-existing crash chain (CHANGELOG #16). |
 | **B4, B5** | Still deferred from Milestone 1. Both now have a viable route: `record-bug.sh`, which found B13 in one pass. |
 
