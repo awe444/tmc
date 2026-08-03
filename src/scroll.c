@@ -18,6 +18,8 @@
 #include "screen.h"
 #include "tileMap.h"
 #include "tiles.h"
+#include "fade.h"
+#include "viewport.h"
 
 #ifdef PC_PORT
 #include "port/port_generic_entity.h"
@@ -199,12 +201,18 @@ void Scroll2Sub1(RoomControls* controls) {
     controls->scrollSubAction = 2;
     controls->unk_18 = 0;
     gUpdateVisibleTiles = 2;
+    /* The fade out is started at the commit point in playerUtils.c, not here:
+     * by the time this runs the room has already been swapped and a few frames
+     * of the half-drawn result have been on screen. */
 }
 
-void Scroll2Sub2(RoomControls* controls) {
+/* One frame of the slide: 4 px of camera, the matching nudge of the player,
+ * and the end-of-scroll check. Split out of Scroll2Sub2 so the faded path can
+ * run it to completion in a single frame and land on exactly the state the
+ * sliding path would have reached, rather than re-deriving that state. */
+static void Scroll2Step(RoomControls* controls) {
     Entity* target;
 
-    gUpdateVisibleTiles = 2;
     controls->unk_18++;
     switch (controls->scroll_direction) {
         case 0:
@@ -246,7 +254,44 @@ void Scroll2Sub2(RoomControls* controls) {
             }
             break;
     }
+}
 
+void Scroll2Sub2(RoomControls* controls) {
+    gUpdateVisibleTiles = 2;
+#if VIEWPORT_SCROLL_FADE
+    /* Hold the outgoing room still while the screen goes black. */
+    if (!gFadeControl.active) {
+        /* Black. Run the slide out in one frame so the camera and the player
+         * land where they would have, then fade the new room in — it is
+         * already loaded and, being narrower than the viewport, already
+         * centred by the camera clamp.
+         *
+         * Bounded rather than "until the scroll ends": the step only counts
+         * down for scroll_direction 0-3, and an unexpected value would spin
+         * here forever with the screen black. 0x3c is the longest of the two
+         * limits the step uses. */
+        int guard = 0x3c + 1;
+        while (controls->scrollAction == 2 && guard-- > 0) {
+            Scroll2Step(controls);
+        }
+        controls->scrollAction = 0;
+        /* Repopulate the screenblock for the camera's final position while the
+         * screen is still black. Without this the fade in reveals the same
+         * half-drawn frame the slide used to show, and the room only completes
+         * once the fade has already finished. Same full refresh Scroll2Sub0
+         * does at the start of a slide. */
+        gUpdateVisibleTiles = 1;
+        UpdateScrollVram();
+        gUpdateVisibleTiles = 0;
+        /* The fade *in* is not started here. GameMain_ChangeRoom refuses to
+         * finish the transition while any fade is active, and the room cannot
+         * render until it has finished -- so starting it here deadlocks the
+         * two and the fade in reveals the same half-drawn frame. It is started
+         * once the transition completes instead (game.c). */
+    }
+#else
+    Scroll2Step(controls);
+#endif
     controls->shake_duration = 0;
     UpdateScreenShake();
 }

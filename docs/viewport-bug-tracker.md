@@ -5,9 +5,9 @@ playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13 an
 B14 from the maintainer playtesting 320×240.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twelve of fourteen bugs are
-fixed and verified; B4 and B5 remain **deferred by decision**, not blockers,
-and both are now reachable with `record-bug.sh`.
+complete — see `docs/milestone2-status.md`.** Thirteen of fourteen bugs are
+fixed and verified. Only B4 remains **deferred**, and it is reachable the same
+way B5 finally was: with `record-bug.sh`.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -28,7 +28,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320x160, in situ) |
 | B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320x160, in situ) |
 | B4 | Smith-room sprites/layers wrong at first dialogue | **Deferred** — never reproduced; needs a recording |
-| B5 | Interior room-to-room scroll glitches | **Deferred** — never reproduced; needs a recording |
+| B5 | Interior room-to-room scroll glitches | **Fixed** 2026-08-02 — reproduced from a recording; slide replaced by a fade above native size |
 | B6 | Zelda sprite in the left border | **Fixed** (confirmed by maintainer) |
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
 | B8 | Large heart offset left of the centred HUD | **Fixed** (verified 320x160, pixel-exact vs 240x160) |
@@ -143,28 +143,89 @@ dialogue", and the scripted run lands on a later one.
 "Reproducing B4 and B5" below. Do not spend more time inferring it from prose:
 three rounds of that produced no hit.
 
-## B5 — interior room-to-room scroll glitches *(deferred)*
+## B5 — interior room-to-room scroll glitches *(fixed)*
 
-Walking from the left interior room into the right one: visible glitching,
-scrolling not smooth.
+Walking from one interior room into an adjoining one: visible glitching,
+scrolling not smooth. **Reproduced 2026-08-02** from a maintainer recording,
+after being deferred since Milestone 1 for want of one.
 
-**Cause (understood, mitigation unverified).** Mid-transition the map-source
-predicate correctly declines to bind (the window blends two rooms, so
-`scrollAction >= 2` is rejected), and the layers fall back to a 32-tile
-screenblock that cannot fill 320 — so the extra columns show wrapped
-garbage. Mitigation applied: during a transition the world layers and their
-sprites are clipped to the authored width, giving a clean 240-wide slice with
-borders instead.
+**The cause recorded here for two milestones was wrong**, and wrong in a way
+that would have sent a fix to the wrong line. This entry said the map-source
+predicate declines to bind because "the window blends two rooms, so
+`scrollAction >= 2` is rejected". The trace says otherwise:
 
-**Never reproduced.** The scripted tester only presses buttons; this needs
-Link walked to a specific doorway. The mitigation has never been observed
-working, so it is unverified rather than known-good.
+```
+substate=2 ... sa=1 -> bottom=bound            top=bound            mapsrc=0x6 clip=0x1
+substate=1 ... sa=2 -> bottom=substate!=UPDATE  top=substate!=UPDATE  mapsrc=0x0 clip=0x7
+```
 
-Maintainer preference on record: *a fade transition would be acceptable, and
-preferable, if the borders cannot contain the adjacent room.* That is a
-design change rather than a fix and has not been made.
+Substate 1 is `GAMEMAIN_CHANGEROOM`. `mapsource_reason` admits only
+`GAMEMAIN_UPDATE` and, above native width, `GAMEMAIN_SUBTASK` — so the scroll
+is refused one clause *earlier* than this entry claimed, and `scrollAction`
+is never consulted. `sa=2` is right there in the trace and does nothing.
 
-**Deferred at Milestone 1 sign-off.** See "Reproducing B4 and B5" below.
+**The mitigation this entry claimed was applied did not exist.** It described
+world layers and sprites being clipped to the authored width during a
+transition, "giving a clean 240-wide slice with borders". The horizontal half
+was real; there was no vertical half, and a world view was handed
+`content_height = MODE1_GBA_HEIGHT`, so the rows above the room sampled a
+screenblock that holds no valid data there — the striped band over the HUD in
+the recording.
+
+**Neither half was fixable by clipping, which is the finding that settled the
+design.** Two probes, both reverted:
+
+| probe | striped band | the void |
+|---|---|---|
+| let `CHANGEROOM` bind a map source | **gone** | 12.0% → 14.5% |
+| complete the clip on both axes | **gone** | 12.0% → 12.5% |
+
+A map source renders one room; a slide is two rooms at once. The screenblock
+is 32x32 tiles = 256x256 px against a 320x240 viewport, so mid-slide there is
+genuinely no tile data for much of the frame. That meets the condition on the
+maintainer's standing preference, recorded at Milestone 1 sign-off: *a fade
+would be acceptable, and preferable, if the borders cannot contain the
+adjacent room.* They cannot.
+
+**Fix: above native size the slide is replaced by a fade** — see
+`VIEWPORT_SCROLL_FADE` in `include/viewport.h`. The outgoing room dims whole
+to black, the room swaps unseen, the incoming room fades up complete and
+centred. Modelled on a maintainer reference recording of the transition the
+engine already uses for doors. Gated, so 240x160 still slides.
+
+Three things had to be true at once and each cost a round to find:
+
+- **`FADE_INSTANT` is load-bearing and misnamed.** `FadeMain` only keeps a
+  fade alive if `type` carries one of `FADE_INSTANT`/`MOSAIC`/`IRIS`; with
+  none set, `active` is cleared on the first update and nothing renders. It is
+  the palette-fade handler, which is why `cutscene.c` always passes it.
+- **The whole commit has to be deferred, not just the reload.** Deferring only
+  the reload changed nothing: `sub_0807BD14` updates `gRoomControls.room` at
+  the commit point and `Scroll2Sub0` then refreshes VRAM against the *new*
+  room, so the tiles were swapped out from under the fade before the reload
+  ran. The transition is now queued and applied once black.
+- **The fade in cannot be started from `Scroll2`.** `GameMain_ChangeRoom`
+  refuses to finish while any fade is active and the room cannot render until
+  it finishes — starting it there deadlocks the two and the fade in reveals
+  the same half-drawn frame. It fires on completion instead, keyed on
+  `gRoomVars.didEnterScrolling`.
+
+**Evidence.** Replaying the maintainer's recording: **0 frames of the
+transition show a partially drawn room**, against 20 before. The outgoing room
+holds 98.7% fill while dimming, black for ~6 frames, the incoming room is
+96.8-99.7% filled from the first visible frame of the fade in. Both 240x160
+gates pass.
+
+**Carry-forward.** `Scroll2Sub2` still slides on the literals `0x3c` and
+`0x28` — 240 px and 160 px at 4 px per frame, the GBA screen. They no longer
+matter above native size, where the slide runs to completion in one frame
+behind the fade, but they are wrong for anyone restoring sliding.
+
+**Lesson (11).** *A recorded cause that was never reproduced is a hypothesis
+wearing a fact's clothing.* This entry carried a confident mechanism, a
+mitigation described in the past tense, and "never reproduced" — for two
+milestones. One recording overturned the mechanism and showed the mitigation
+had never been built. Mark unreproduced causes as unreproduced.
 
 ## Reproducing B4 and B5
 

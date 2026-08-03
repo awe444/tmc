@@ -1,4 +1,6 @@
 #include "area.h"
+#include "fade.h"
+#include "viewport.h"
 #include "asm.h"
 #include "beanstalkSubtask.h"
 #include "collision.h"
@@ -3833,35 +3835,74 @@ void CreateCollisionDataBorderAroundRoom(void) {
     }
 }
 
+/* Apply a room-to-room scroll transition: point gRoomControls at the new room
+ * and let Scroll2 and the reload take it from there. */
+static void ScrollTransitionApply(u32 room, u32 scrollDirection) {
+    gRoomControls.scrollAction = 2;
+    gRoomControls.scrollSubAction = 0;
+    gRoomControls.reload_flags = 1;
+    gRoomControls.room = room;
+    gRoomControls.scroll_direction = scrollDirection;
+    gArea.pCurrentRoomInfo = GetCurrentRoomInfo();
+    if (gArea.unk_0c_0 != 0) {
+        switch (scrollDirection) {
+            case 0:
+                gArea.pCurrentRoomInfo->map_y -= gArea.pCurrentRoomInfo->pixel_height;
+                break;
+            case 1:
+                gArea.pCurrentRoomInfo->map_x = gArea.pCurrentRoomInfo->map_x + gArea.pCurrentRoomInfo->pixel_width;
+                break;
+            case 2:
+                gArea.pCurrentRoomInfo->map_y =
+                    gArea.pCurrentRoomInfo->map_y + gArea.pCurrentRoomInfo->pixel_height;
+                break;
+            case 3:
+                gArea.pCurrentRoomInfo->map_x = gArea.pCurrentRoomInfo->map_x - gArea.pCurrentRoomInfo->pixel_width;
+                break;
+        }
+    }
+    gPlayerEntity.base.updatePriority = 6;
+    SetInitializationPriority();
+}
+
+#if VIEWPORT_SCROLL_FADE
+/* A scroll transition that has been decided but not yet applied, because the
+ * screen is still fading out. Nothing about the room may change until black:
+ * gRoomControls.room feeds the VRAM refresh Scroll2Sub0 does, so applying at
+ * the commit point swapped the room's tiles out from under the fade and what
+ * dimmed was the incoming room, half-drawn, rather than the one being left. */
+static bool8 sScrollFadePending;
+static u8 sScrollFadeRoom;
+static u8 sScrollFadeDirection;
+
+void ScrollTransitionApplyWhenBlack(void) {
+    if (sScrollFadePending && !gFadeControl.active) {
+        sScrollFadePending = FALSE;
+        ScrollTransitionApply(sScrollFadeRoom, sScrollFadeDirection);
+    }
+}
+#endif
+
 bool32 sub_0807BD14(Entity* this, u32 scrollDirection) {
     u32 room = sub_0807BEEC(this->x.HALF.HI, this->y.HALF.HI, scrollDirection);
     if (room != 0xff) {
-        gRoomControls.scrollAction = 2;
-        gRoomControls.scrollSubAction = 0;
-        gRoomControls.reload_flags = 1;
-        gRoomControls.room = room;
-        gRoomControls.scroll_direction = scrollDirection;
-        gArea.pCurrentRoomInfo = GetCurrentRoomInfo();
-        if (gArea.unk_0c_0 != 0) {
-            switch (scrollDirection) {
-                case 0:
-                    gArea.pCurrentRoomInfo->map_y -= gArea.pCurrentRoomInfo->pixel_height;
-                    break;
-                case 1:
-                    gArea.pCurrentRoomInfo->map_x = gArea.pCurrentRoomInfo->map_x + gArea.pCurrentRoomInfo->pixel_width;
-                    break;
-                case 2:
-                    gArea.pCurrentRoomInfo->map_y =
-                        gArea.pCurrentRoomInfo->map_y + gArea.pCurrentRoomInfo->pixel_height;
-                    break;
-                case 3:
-                    gArea.pCurrentRoomInfo->map_x = gArea.pCurrentRoomInfo->map_x - gArea.pCurrentRoomInfo->pixel_width;
-                    break;
-            }
+#if VIEWPORT_SCROLL_FADE
+        /* Queue it and fade out; ScrollTransitionApplyWhenBlack commits once
+         * the screen is black. Guarded against re-entry: Link keeps walking
+         * into the doorway while the fade runs, so this is reached again on
+         * later frames, and restarting the fade each time would stop it ever
+         * reaching black. See VIEWPORT_SCROLL_FADE. */
+        if (!sScrollFadePending) {
+            sScrollFadePending = TRUE;
+            sScrollFadeRoom = room;
+            sScrollFadeDirection = scrollDirection;
+            SetFade(FADE_IN_OUT | FADE_INSTANT, VIEWPORT_SCROLL_FADE_SPEED);
         }
-        gPlayerEntity.base.updatePriority = 6;
-        SetInitializationPriority();
         return TRUE;
+#else
+        ScrollTransitionApply(room, scrollDirection);
+        return TRUE;
+#endif
     } else {
         return FALSE;
     }

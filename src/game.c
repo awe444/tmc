@@ -5,6 +5,8 @@
  * @brief Game task
  */
 #include "game.h"
+#include "fade.h"
+#include "viewport.h"
 
 #include "area.h"
 #include "asm.h"
@@ -82,6 +84,12 @@ extern void LoadRoomGfx(void);
 extern void RecycleEntities(void);
 extern void sub_0804AF90(void);
 extern void CallRoomProp6(void);
+#if VIEWPORT_SCROLL_FADE
+/* playerUtils.c -- commits a queued room-to-room scroll once the screen is
+ * black. Declared here rather than in a header because it exists only for
+ * this one call site and only above GBA-native size. */
+extern void ScrollTransitionApplyWhenBlack(void);
+#endif
 
 static void UpdateWindcrests(void);
 static void InitializeEntities(void);
@@ -243,6 +251,17 @@ static void GameMain_ChangeRoom(void) {
     if (!gRoomVars.didEnterScrolling) {
         RequestPriorityDuration(NULL, 1);
     }
+#if VIEWPORT_SCROLL_FADE
+    /* A room entered by scrolling was faded out at the commit point
+     * (playerUtils.c) and has been sitting black while it loaded. Everything
+     * above has now run, so the room is complete and the camera is at rest --
+     * this is the first frame it is safe to show. didEnterScrolling is the
+     * engine's own mark for this entry path; a room entered through a door
+     * fades itself and must not be touched. See VIEWPORT_SCROLL_FADE. */
+    if (gRoomVars.didEnterScrolling) {
+        SetFade(FADE_INSTANT, VIEWPORT_SCROLL_FADE_SPEED);
+    }
+#endif
 }
 
 static void GameMain_Update(void) {
@@ -258,6 +277,13 @@ static void GameMain_Update(void) {
 
     if ((gMessage.state & MESSAGE_ACTIVE) || gPriorityHandler.priority_timer != 0)
         PausePlayer();
+
+#if VIEWPORT_SCROLL_FADE
+    /* Commit a queued room-to-room scroll now that the screen is black. Must
+     * run before the reload switch below, so the swap and the reload land on
+     * the same frame, all of it unseen. */
+    ScrollTransitionApplyWhenBlack();
+#endif
 
     FlushSprites();
     UpdateEntities();

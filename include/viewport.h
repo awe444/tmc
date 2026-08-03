@@ -142,6 +142,38 @@
 #define UI_HUD_LOWER_DY (VIEWPORT_HEIGHT - DISPLAY_HEIGHT)
 #define UI_HUD_LOWER_TILE_DY (UI_HUD_LOWER_DY / 8)
 
+/* Room-to-room scrolling is replaced by a fade above GBA-native size.
+ *
+ * Walking between adjoining rooms slides the camera from one to the next
+ * (Scroll2, scroll.c). That works on hardware because the screen *is* the
+ * room: a 32x32-tile screenblock covers 256x256 px, which holds a 240x160
+ * screen plus the slack the slide needs. At 320x240 it does not — the
+ * screenblock is 64 px short of the width, and mid-slide there is genuinely
+ * no tile data for much of the frame. Measured on the maintainer's B5
+ * recording: the play area drops to 12% filled, with entities from the
+ * incoming room drawn over bare backdrop.
+ *
+ * That is not a clipping bug and no clip fixes it — completing the clip on
+ * both axes was tried and moved the worst frame from 12.0% to 12.5%. One
+ * map source renders one room, and a slide is two rooms at once.
+ *
+ * So above native size the slide is replaced by the transition the engine
+ * already uses for doors, which is correct at any viewport because nothing
+ * is on screen while the room changes: fade out, swap, fade in. This is the
+ * maintainer's decision of 2026-08-02, taken against a reference recording,
+ * and it is the case the bug tracker's B5 entry left open — "a fade would be
+ * acceptable, and preferable, if the borders cannot contain the adjacent
+ * room." They cannot.
+ *
+ * Gated, not unconditional: Scroll2 is shipping-build code, and 240x160 must
+ * keep sliding or the regression gate is meaningless. */
+#define VIEWPORT_SCROLL_FADE (VIEWPORT_WIDTH > DISPLAY_WIDTH || VIEWPORT_HEIGHT > DISPLAY_HEIGHT)
+
+/* Fade rate for that transition, in fade progress per frame out of 0x100 —
+ * 8 gives 32 frames each way, matching the inter-card fade the Picori legend
+ * uses (cutscene.c) rather than inventing a new pace. */
+#define VIEWPORT_SCROLL_FADE_SPEED 8
+
 /* Per-scanline (HBlank DMA) tables.
  *
  * Nine sites register a table that the DMA replays one entry per rendered
