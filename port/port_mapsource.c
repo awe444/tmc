@@ -163,7 +163,28 @@ static int mapsource_reason(int layer) {
          * screenblock path already covers the whole screen, and it is the
          * behaviour verified bit-identical to the pre-expansion build, so
          * do not change what the shipping build renders. */
-        if (gMain.substate != GAMEMAIN_SUBTASK || mapsource_is_ui_screen()) {
+        /* The two room-change substates keep their map source above native
+         * size, and this is only safe because of the transition fade.
+         *
+         * Both render the room while a fade runs over it -- CHANGEROOM after
+         * the swap, CHANGEAREA before it -- and neither maintains the VRAM
+         * screenblock while doing so. At 240x160 that costs nothing: the
+         * screenblock covers the screen and holds the room. Above it, dropping
+         * the map source falls back to a screenblock that was never kept
+         * current, and what fades is a stale slice on black -- the room's
+         * furniture drawn as sprites over nothing, which is how it was
+         * reported.
+         *
+         * The reason this could not be done before VIEWPORT_SCROLL_FADE: a
+         * sliding CHANGEROOM has the camera between two rooms, and one map
+         * source renders one room, so binding filled part of the frame and
+         * left the rest backdrop (B5, measured at 14.5% against 12.0%). With
+         * the slide replaced by a fade the camera is always at rest on a
+         * single room by the time anything is visible, so the map source is
+         * exactly right. */
+        if (gMain.substate == GAMEMAIN_CHANGEROOM || gMain.substate == GAMEMAIN_CHANGEAREA) {
+            /* fall through to the geometry checks */
+        } else if (gMain.substate != GAMEMAIN_SUBTASK || mapsource_is_ui_screen()) {
             return REASON_SUBSTATE;
         }
 #else
