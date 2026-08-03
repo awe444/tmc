@@ -5,9 +5,9 @@ playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–
 from the maintainer playtesting 320×240, the last three with recordings.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fourteen of fifteen bugs are
-fixed and verified. Only B4 remains **deferred**, and it is reachable the same
-way B5 finally was: with `record-bug.sh`.
+complete — see `docs/milestone2-status.md`.** All fifteen bugs are closed.
+Fourteen were fixed with a root cause and evidence; B4 alone is closed as
+**no longer observed** rather than diagnosed — see its entry.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -27,7 +27,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B1 | Save/erase popups' text garbled | **Fixed** (verified 320x160) |
 | B2 | Legend artwork repeats past x=240 | **Fixed** (verified 320x160, in situ) |
 | B3 | Zelda-walking cutscene not full width | **Fixed** (verified 320x160, in situ) |
-| B4 | Smith-room sprites/layers wrong at first dialogue | **Deferred** — never reproduced; needs a recording |
+| B4 | Smith-room sprites/layers wrong at first dialogue | **Closed** 2026-08-02 — no longer observed in any build (maintainer) |
 | B5 | Interior room-to-room scroll glitches | **Fixed** 2026-08-02 — reproduced from a recording; slide replaced by a fade above native size |
 | B6 | Zelda sprite in the left border | **Fixed** (confirmed by maintainer) |
 | B7 | Camera-pan softlock in Hyrule Town | **Fixed** (confirmed by maintainer) |
@@ -133,16 +133,31 @@ Reported first as centred-240-with-borders, then after a partial fix as
 content edge to edge and Zelda correctly placed in world space
 (`scripts/sweep.script` frames 4750–5750, right band 6286–6400/6400 px).
 
-## B4 — smith-room sprites/layers wrong at first dialogue *(deferred)*
+## B4 — smith-room sprites/layers wrong at first dialogue *(closed, not diagnosed)*
 
-**Never reproduced.** Captures of that room *with* dialogue render correctly
-at 320x160 (`scripts/bugs.script` waypoint `B4_smith_dialogue`, and the smith-room
-frames in `sweep.script`). The report specifies "the very first character
-dialogue", and the scripted run lands on a later one.
+**Closed 2026-08-02 by the maintainer: no longer observed in any build.**
 
-**Deferred at Milestone 1 sign-off.** To pick it up, capture a recording — see
-"Reproducing B4 and B5" below. Do not spend more time inferring it from prose:
-three rounds of that produced no hit.
+Recorded precisely, because this is the one entry in this document that closed
+without a root cause. B4 was **never reproduced** — captures of that room with
+dialogue rendered correctly at 320x160 (`scripts/bugs.script` waypoint
+`B4_smith_dialogue`, and the smith-room frames in `sweep.script`), and the
+report specified "the very first character dialogue", which the scripted run
+never lands on. Four rounds of inferring from the prose produced nothing.
+
+So there is no fix to point at and no mechanism to name. Two readings are
+consistent with the evidence and nothing here distinguishes them:
+
+- it was fixed incidentally by one of B10–B15, several of which moved layer
+  binding, clipping and entity culling in ways that would plausibly cover it;
+- or it was reported from a build with a defect that no longer exists for some
+  other reason.
+
+**What that means for anyone reading this later.** A closed-as-unobserved entry
+is weaker than the rest of this document. If something in the smith room at
+first dialogue ever looks wrong again, this entry is not evidence that it is a
+new bug — reopen it rather than filing a fresh one, and get a recording, which
+is the step that was never taken here and which resolved B5, B13 and B15 in one
+pass each.
 
 ## B5 — interior room-to-room scroll glitches *(fixed)*
 
