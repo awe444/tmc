@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Framework theme, not AppCompat: this project pulls in no AndroidX.
+         No title bar, and a black window background so nothing flashes white
+         between launch and the first rendered frame.
+
+         The Fullscreen part of this theme does NOT survive on its own:
+         SDLActivity.onCreate calls setWindowStyle(false), which adds
+         FLAG_FORCE_NOT_FULLSCREEN and overrides it. What actually hides the
+         status bar is the SDL_WINDOW_FULLSCREEN flag port_main.c passes on
+         Android. This theme only covers the window before SDL takes over. -->
+    <style name="TmcTheme" parent="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
+</resources>
