@@ -15,6 +15,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+/* SDL.h deliberately does not pull in SDL_main.h. On Android there is no
+ * process main() to call: SDLActivity loads the game's .so and looks up
+ * "SDL_main" through JNI. SDL_main.h renames main() and exports it for us.
+ *
+ * Android-only on purpose. On Windows this same header defines
+ * SDL_MAIN_AVAILABLE, which renames main() there too and pulls in SDL's
+ * header-only WinMain shim -- a real change to a build this port already
+ * ships. Linux and macOS define neither macro, so they would be unaffected,
+ * but there is nothing to gain by including it for them either.
+ */
+#include <SDL3/SDL_main.h>
+#include <unistd.h>
+#endif
 #include "port_launcher_bootstrap.h"
 
 /*
@@ -269,7 +283,39 @@ static void Port_ReserveGbaAddressSpace(void) {
 static void Port_ReserveGbaAddressSpace(void) { /* not needed on Linux/macOS */ }
 #endif
 
+#ifdef __ANDROID__
+/* The port reaches the filesystem through relative paths throughout
+ * (config.json, tmc.sav, assets/, rom_data/, baserom.gba). An Android
+ * process starts with cwd "/", which is read-only, so every one of those
+ * would miss. Move to the app's private files directory -- where the
+ * activity has already staged the ROM and the baked assets tree -- and the
+ * whole existing path-probing logic works unchanged.
+ *
+ * PreferredAssetRoot() in port_asset_bootstrap.cpp also falls back to the
+ * cwd on Android, so this single chdir points the asset loader here too. */
+static void Port_Android_EnterStorageDir(void) {
+    const char* dir = SDL_GetAndroidInternalStoragePath();
+    if (!dir || dir[0] == '\0') {
+        fprintf(stderr, "ANDROID: internal storage path unavailable: %s\n", SDL_GetError());
+        return;
+    }
+    if (chdir(dir) != 0) {
+        fprintf(stderr, "ANDROID: chdir(%s) failed\n", dir);
+        return;
+    }
+    fprintf(stderr, "ANDROID: working directory is %s\n", dir);
+}
+#endif
+
 int main(int argc, char* argv[]) {
+
+#ifdef __ANDROID__
+    /* Before Port_Config_Load below, which is the first relative-path
+     * open in the run. Safe this early: SDLActivity.onCreate calls
+     * nativeSetupJNI (which caches the activity class this reads through)
+     * before it starts the thread that calls us. */
+    Port_Android_EnterStorageDir();
+#endif
 
     /* Must run before any std::vector / new / malloc that could land in
      * the GBA window. Static initializers in C++ files are constructed
@@ -358,12 +404,24 @@ int main(int argc, char* argv[]) {
      * closes, then second window opens." Confirmed by H9 logs:
      * window flags went from 0x220 → 0x222 across the first
      * SDL_CreateRenderer call, with driver=opengl. */
+    SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE;
+#ifdef __ANDROID__
+    /* Without this the Android status bar stays on top of the game.
+     * SDLActivity.onCreate calls setWindowStyle(false), which does not merely
+     * decline to go fullscreen -- it sets SYSTEM_UI_FLAG_VISIBLE and adds
+     * FLAG_FORCE_NOT_FULLSCREEN, overriding the activity's fullscreen theme.
+     * The only thing that undoes it is SDL's own fullscreen path: asking for
+     * the flag here makes SDL_CreateWindow call setWindowStyle(true), which
+     * applies the immersive-sticky flags. The window size below is ignored on
+     * Android either way; the surface is always the display. */
+    window_flags |= SDL_WINDOW_FULLSCREEN;
+#endif
     SDL_Window* window = NULL;
     SDL_Renderer* prerenderer = NULL;
     if (!SDL_CreateWindowAndRenderer(
             "The Minish Cap",
             PORT_VIEW_WIDTH * window_scale, PORT_VIEW_HEIGHT * window_scale,
-            SDL_WINDOW_RESIZABLE,
+            window_flags,
             &window, &prerenderer)) {
         fprintf(stderr, "SDL_CreateWindowAndRenderer Error: %s\n", SDL_GetError());
         SDL_Quit();
