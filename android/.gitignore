@@ -1,0 +1,7 @@
+# Gradle / AGP output. app/build/gamedata-root holds the extracted assets and
+# a copy of the ROM, so this must stay ignored -- see the note about
+# copyrighted ROM content in the root .gitignore.
+build/
+.gradle/
+local.properties
+.cxx/

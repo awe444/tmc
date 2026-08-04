@@ -7,7 +7,13 @@
 #include <cstdint>
 #include <vector>
 
-#ifdef __ANDROID__
+/* The on-screen control overlay is Android-only, and PORT_NO_TOUCH_CONTROLS
+ * opts an Android build out of it: the file still defines the whole
+ * Port_TouchControls_* API (a dozen call sites in port_main.c and
+ * port_runtime_config.cpp expect it) but every entry point becomes the no-op
+ * further down, exactly as on desktop. The android/ Gradle build sets this,
+ * so that build takes input from SDL gamepads only. */
+#if defined(__ANDROID__) && !defined(PORT_NO_TOUCH_CONTROLS)
 
 namespace {
 
