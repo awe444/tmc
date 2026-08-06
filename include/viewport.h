@@ -169,6 +169,26 @@
  * keep sliding or the regression gate is meaningless. */
 #define VIEWPORT_SCROLL_FADE (VIEWPORT_WIDTH > DISPLAY_WIDTH || VIEWPORT_HEIGHT > DISPLAY_HEIGHT)
 
+/* Length of a room-to-room slide, in steps of 4 px of camera travel.
+ *
+ * The engine spells these 0x3c and 0x28 (scroll.c, Scroll2Step). They are not
+ * arbitrary: 60 and 40 steps at 4 px each are 240 and 160 px, the GBA screen.
+ * They are the distance the camera must cover to bring the next room fully on,
+ * so they are viewport dimensions and scale with it.
+ *
+ * Getting this wrong does not look like a scrolling bug. The step also drifts
+ * the player 0.25 px per step, and a slide that terminates early leaves him
+ * short of where he belongs -- far enough to still be standing on the doorway
+ * tile he entered through, which routes him into the room-transition
+ * sub-state that has to walk him off it, and which he cannot always leave.
+ * The symptom is a softlock in the following cutscene with the player absent.
+ *
+ * At GBA-native size these reduce to the original literals exactly, so the
+ * shipping build is unchanged.
+ */
+#define VIEWPORT_SCROLL_STEPS_X (VIEWPORT_WIDTH / 4)
+#define VIEWPORT_SCROLL_STEPS_Y (VIEWPORT_HEIGHT / 4)
+
 /* Fade rate for that transition, in fade progress per frame out of 0x100 —
  * 8 gives 32 frames each way, matching the inter-card fade the Picori legend
  * uses (cutscene.c) rather than inventing a new pace. */

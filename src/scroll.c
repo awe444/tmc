@@ -221,7 +221,7 @@ static void Scroll2Step(RoomControls* controls) {
             if (target == &gPlayerEntity.base) {
                 target->y.WORD = gPlayerEntity.base.y.WORD - Q_16_16(0.375);
             }
-            if (controls->unk_18 == 0x28) {
+            if (controls->unk_18 == VIEWPORT_SCROLL_STEPS_Y) {
                 sub_0807FEC8(controls);
             }
             break;
@@ -230,7 +230,7 @@ static void Scroll2Step(RoomControls* controls) {
             if (controls->camera_target == &gPlayerEntity.base) {
                 gPlayerEntity.base.x.WORD += Q_16_16(0.25);
             }
-            if (controls->unk_18 == 0x3c) {
+            if (controls->unk_18 == VIEWPORT_SCROLL_STEPS_X) {
                 sub_0807FEC8(controls);
             }
             break;
@@ -240,7 +240,7 @@ static void Scroll2Step(RoomControls* controls) {
             if (target == &gPlayerEntity.base) {
                 target->y.WORD = gPlayerEntity.base.y.WORD + Q_16_16(0.375);
             }
-            if (controls->unk_18 == 0x28) {
+            if (controls->unk_18 == VIEWPORT_SCROLL_STEPS_Y) {
                 sub_0807FEC8(controls);
             }
             break;
@@ -249,7 +249,7 @@ static void Scroll2Step(RoomControls* controls) {
             if (controls->camera_target == &gPlayerEntity.base) {
                 gPlayerEntity.base.x.WORD -= Q_16_16(0.25);
             }
-            if (controls->unk_18 == 0x3c) {
+            if (controls->unk_18 == VIEWPORT_SCROLL_STEPS_X) {
                 sub_0807FEC8(controls);
             }
             break;
@@ -268,9 +268,12 @@ void Scroll2Sub2(RoomControls* controls) {
          *
          * Bounded rather than "until the scroll ends": the step only counts
          * down for scroll_direction 0-3, and an unexpected value would spin
-         * here forever with the screen black. 0x3c is the longest of the two
-         * limits the step uses. */
-        int guard = 0x3c + 1;
+         * here forever with the screen black. Sized on the longer axis, so it
+         * cannot cut a slide short -- doing so leaves the player short of
+         * where he belongs, which is what B16 was. */
+        int guard = (VIEWPORT_SCROLL_STEPS_X > VIEWPORT_SCROLL_STEPS_Y ? VIEWPORT_SCROLL_STEPS_X
+                                                                      : VIEWPORT_SCROLL_STEPS_Y) +
+                    1;
         while (controls->scrollAction == 2 && guard-- > 0) {
             Scroll2Step(controls);
         }

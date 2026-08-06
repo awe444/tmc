@@ -797,7 +797,37 @@ const s8* const gUnk_0811C0E8[] = {
 const u16 gUnk_0811C0F8[] = { 1024, 256, 2048, 512 };
 const s8 gUnk_0811C100[] = { 0, -8, 8, 0, 0, 3, -8, 0 };
 const u16 gUnk_0811C108[] = { 6, 24576, 96, 1536 };
+#ifdef PC_PORT
+/* Four real entries, then the ROM that follows them.
+ *
+ * sub_080797C4 indexes this with `direction >> 3`, and direction is a u8, so
+ * the index reaches 31 in a four-entry table. On hardware that simply reads on
+ * into the next bytes of ROM and is perfectly defined; here the array is its
+ * own object and everything past it is whatever the toolchain placed next.
+ * That differed between x86-64/GCC and arm64/Clang, which is how the same
+ * input released the player from a doorway on desktop and trapped him on
+ * Android (B16).
+ *
+ * Entries 4-31 are the bytes at 0x0811C110+2i in baserom.gba, so the read
+ * matches hardware for any direction. Reproduce with:
+ *   python3 -c "rom=open('baserom.gba','rb').read(); print([int.from_bytes(
+ *       rom[0x11C110+i*2:0x11C112+i*2],'little') for i in range(32)])"
+ *
+ * Note 4-7 are gUnk_0811C118's eight bytes read as u16 — the tables are
+ * adjacent in ROM. If that array is ever corrected, these must follow.
+ *
+ * PC_PORT only: the ROM build needs the original four-entry object or the
+ * data layout moves.
+ */
+const u16 gUnk_0811C110[32] = {
+    6,      24576,  96,     1536,   0x1213, 0x1012, 0x1110, 0x1311,
+    0x41FD, 0x0807, 0x4201, 0x0807, 0x0000, 0x0000, 0x0000, 0x0000,
+    0x422D, 0x0807, 0x4239, 0x0807, 0x42AD, 0x0807, 0x42E5, 0x0807,
+    0x4315, 0x0807, 0x4339, 0x0807, 0x435D, 0x0807, 0x4381, 0x0807,
+};
+#else
 const u16 gUnk_0811C110[] = { 6, 24576, 96, 1536 };
+#endif
 const u8 gUnk_0811C118[] = {
     19, 18, 18, 16, 16, 17, 17, 19,
 };
@@ -2227,6 +2257,9 @@ bool32 sub_08079778(void) {
 }
 
 u32 sub_080797C4(void) {
+    /* direction is a u8, so this index reaches 31 — past the four entries the
+     * decompilation has. gUnk_0811C110 carries the adjacent ROM for that range
+     * on PC; see the note on its definition. */
     u32 tmp = gUnk_0811C110[gPlayerEntity.base.direction >> 3];
     return tmp == (gPlayerEntity.base.collisions & tmp);
 }
@@ -3875,9 +3908,27 @@ static bool8 sScrollFadePending;
 static u8 sScrollFadeRoom;
 static u8 sScrollFadeDirection;
 
+/* The player's facing at the moment he crossed the boundary.
+ *
+ * The sliding path commits on that same frame, so the player still carries the
+ * direction he was walking. Deferring the commit 32 frames to fade out does
+ * not: he comes to rest while the screen darkens and his direction becomes
+ * 0xff, which LinearMoveDirectionOLD reads as "not moving" and refuses to act
+ * on. He then arrives in the new room standing on the doorway tile with no
+ * heading, and the sub-state whose job is to walk him off it cannot move him.
+ * Nothing else in the room can proceed either, because the cutscene there
+ * waits on a script he only runs once he is out of the doorway. That is B16.
+ *
+ * Carrying the direction across the deferral restores exactly what the slide
+ * had at the commit point. */
+static u8 sScrollFadePlayerDirection;
+
 void ScrollTransitionApplyWhenBlack(void) {
     if (sScrollFadePending && !gFadeControl.active) {
         sScrollFadePending = FALSE;
+        /* Before the apply, so the room change lands on a player who is still
+         * facing the way he was walking. See sScrollFadePlayerDirection. */
+        gPlayerEntity.base.direction = sScrollFadePlayerDirection;
         ScrollTransitionApply(sScrollFadeRoom, sScrollFadeDirection);
     }
 }
@@ -3896,6 +3947,7 @@ bool32 sub_0807BD14(Entity* this, u32 scrollDirection) {
             sScrollFadePending = TRUE;
             sScrollFadeRoom = room;
             sScrollFadeDirection = scrollDirection;
+            sScrollFadePlayerDirection = gPlayerEntity.base.direction;
             SetFade(FADE_IN_OUT | FADE_INSTANT, VIEWPORT_SCROLL_FADE_SPEED);
         }
         return TRUE;
