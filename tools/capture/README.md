@@ -74,12 +74,41 @@ the given frame number (input applies from the *next* input poll).
 <frame> dump NAME         # write NAME.ppm of the just-presented frame
 <frame> subtask N PARAM   # MenuFadeIn(N, PARAM): 1 = pause, 7 = figurine
 <frame> action NAME       # giveallitems | maxhearts | healfull
+                          # | equipsword | equipbombs
 <frame> quit
 ```
 
 Key names: `A B SELECT START RIGHT LEFT UP DOWN R L NONE`.
 Numbers accept `0x` hex. While a script is active, all human input and the
 title auto-START hack are suppressed.
+
+### Reaching the pause menu's map screens
+
+They are gated on inventory, not on story state: without `ITEM_MAP`,
+`PauseMenu_Variant2` (`src/menu/pauseMenu.c`) silently redirects every request
+for screens 4 (overworld map), 5 (dungeon map) and 6 (detail map) back to Items
+or Quest Status. Nothing fails and nothing is logged — the screens simply never
+appear in a capture. That is how **B18** survived both milestones, and why
+`giveallitems` now grants it.
+
+With `giveallitems` done first, the detail map is two `R` presses and an `A`
+away from an ordinary pause menu:
+
+```
+11420 action giveallitems
+11500 subtask 1 0
+11820 keys R      # ITEMS -> QUEST STATUS
+11824 keys NONE
+11920 keys R      # QUEST STATUS -> MAP
+11924 keys NONE
+12020 keys A      # MAP -> detail map (needs the cursor on an unlocked
+12024 keys NONE   #   windcrest; the map screen unlocks 7-10 and 16 itself)
+12100 dump detail
+12360 keys DOWN   # scroll it, to exercise the bottom of the map window
+```
+
+Hold `DOWN` on the detail map to scroll it — the up/down arrow sprites mark the
+top and bottom of the map window, which is what B18's band has to line up with.
 
 ## Canonical route (`route.script`)
 
