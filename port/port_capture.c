@@ -531,10 +531,19 @@ void Port_Capture_OnVBlank(uint64_t logicNs, uint64_t presentNs) {
     }
 
     if (sWarpPending) {
-        if (Port_DebugAction_Warp(sPendingWarp.area, sPendingWarp.room,
-                                  sPendingWarp.x, sPendingWarp.y,
-                                  sPendingWarp.layer)) {
+        /* 1 armed, 0 not yet (retry), -1 the destination does not exist.
+         * Tested against 1 rather than truthiness -- -1 is truthy. */
+        const int warped = Port_DebugAction_Warp(sPendingWarp.area, sPendingWarp.room,
+                                                 sPendingWarp.x, sPendingWarp.y,
+                                                 sPendingWarp.layer);
+        if (warped == 1) {
             fprintf(stderr, "[capture] warp armed at frame %u (area 0x%02X room 0x%02X)\n",
+                    sFrame, sPendingWarp.area, sPendingWarp.room);
+            sWarpPending = false;
+        } else if (warped < 0) {
+            /* Retrying cannot help, and the script author wants to know the
+             * warp was wrong rather than see it time out silently. */
+            fprintf(stderr, "[capture] warp skipped at frame %u: area 0x%02X room 0x%02X not mapped\n",
                     sFrame, sPendingWarp.area, sPendingWarp.room);
             sWarpPending = false;
         } else if (++sWarpAttempts >= WARP_MAX_ATTEMPTS) {

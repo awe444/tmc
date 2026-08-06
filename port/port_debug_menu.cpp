@@ -165,8 +165,11 @@ void ApplyPendingMutations(void) {
 void DoWarp(unsigned char area, unsigned char room,
             unsigned short x = 0x80, unsigned short y = 0x80,
             unsigned char layer = 0) {
-    if (!Port_DebugAction_Warp(area, room, x, y, layer)) {
-        Toast("Warp ignored: not in gameplay");
+    /* Tested against 1, not truthiness: -1 means the destination is not
+     * mapped and never will be, and `!(-1)` would read that as success. */
+    const int warped = Port_DebugAction_Warp(area, room, x, y, layer);
+    if (warped != 1) {
+        Toast(warped < 0 ? "Warp ignored: no such room" : "Warp ignored: not in gameplay");
         return;
     }
     char buf[64];
