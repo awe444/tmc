@@ -15,10 +15,15 @@
 #include "item.h"
 #include "transitions.h"
 
+#include <stdio.h>
+
 void DoExitTransition(const Transition* data);
 void LoadItemGfx(void);
 extern bool32 Port_IsRoomHeaderPtrReadable(const void* ptr);
 extern void Port_RefreshAreaData(unsigned int area);
+/* Defined below; the warp validates against it. */
+int Port_DebugQuery_RoomDimensions(unsigned char area, unsigned char room, unsigned short* w,
+                                   unsigned short* h);
 
 #define DEBUG_AREA_COUNT 0x90 /* matches kAreaCount in port_asset_loader.cpp */
 
@@ -139,6 +144,42 @@ int Port_DebugAction_Warp(unsigned char area, unsigned char room,
     }
     if (gSave.stats.health == 0 || gPlayerState.framestate == PL_STATE_DIE) {
         return 0;
+    }
+    /* Nothing downstream checks that the destination exists. DoExitTransition
+     * indexes the area's RoomHeader table by room, so a room past the end of
+     * that table reads whatever follows it and the room load then works from
+     * garbage dimensions -- a segfault, reproducibly, and the reason the
+     * screenblock sweep could only cover a fraction of the game's areas.
+     *
+     * Distinguished from the two checks above, which mean "not now, ask again
+     * next frame" and return 0. An unmapped destination will never become
+     * valid, so it returns -1 and the caller stops asking rather than
+     * retrying until it times out. Callers must test for 1, not truthiness. */
+    {
+        unsigned short rw = 0, rh = 0;
+        if (!Port_DebugQuery_RoomDimensions(area, room, &rw, &rh)) {
+            fprintf(stderr, "[warp] refused: area 0x%02X room 0x%02X is not mapped\n", area, room);
+            return -1;
+        }
+        /* And the destination has to be *inside* that room. A room index the
+         * table has is not enough: landing outside the map walks the room
+         * load off its own collision and tile data, which is the other half of
+         * the same crash. Clamped rather than refused, because a caller asking
+         * for the middle of a room it cannot measure -- a sweep, a script --
+         * wants the nearest valid spot, not a rejection. One tile of margin
+         * keeps the player off the boundary itself. */
+        if (rw > 16 && x > (unsigned short)(rw - 16)) {
+            x = (unsigned short)(rw - 16);
+        }
+        if (rh > 16 && y > (unsigned short)(rh - 16)) {
+            y = (unsigned short)(rh - 16);
+        }
+        if (x < 16) {
+            x = 16;
+        }
+        if (y < 16) {
+            y = 16;
+        }
     }
 
     t.warp_type = WARP_TYPE_AREA;

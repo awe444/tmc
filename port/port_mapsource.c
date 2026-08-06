@@ -192,7 +192,23 @@ static int mapsource_reason(int layer) {
 #endif
     }
     if (gRoomControls.scroll_flags & 1) {
+#if VIEWPORT_MAINTAIN_DEGRADED_MAP
+        /* A degraded room -- map built by the 0xffff sentinel path. Excluded
+         * on hardware because the tile mutators do not maintain that map, so
+         * sampling it would render a mutated tile as its original.
+         *
+         * Above native size the exclusion costs more than it saves: the
+         * screenblock covers 256 px and cannot fill the viewport, so refusing
+         * here draws the room as sprites over black (B17, measured at 5.4% of
+         * the frame against 99.5% outside). The mutators maintain the map at
+         * this viewport -- see VIEWPORT_MAINTAIN_DEGRADED_MAP -- which removes
+         * the reason for the exclusion, so bind it.
+         *
+         * sub_0807C5F4 builds this map into the same arrays at the same 0x80
+         * stride the sampler reads, which is why it renders correctly at all. */
+#else
         return REASON_SCROLL_FLAGS;
+#endif
     }
     if (gRoomControls.scrollAction >= 2) {
         return REASON_TRANSITION;
