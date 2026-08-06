@@ -7,11 +7,9 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Sixteen of seventeen bugs are
-closed: fifteen fixed with a root cause and evidence, and B4 closed as **no
-longer observed** rather than diagnosed. **B17 is open** — diagnosed, with a
-one-line change that renders it correctly and an unanswered question about
-whether that change is safe to make.
+complete — see `docs/milestone2-status.md`.** All seventeen bugs are
+closed: sixteen fixed with a root cause and evidence, and B4 closed as **no
+longer observed** rather than diagnosed.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -44,7 +42,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B14 | UI screens' side borders forced black while their top/bottom borders show the backdrop | **Fixed** 2026-08-02 |
 | B15 | Room furniture lit against black through a door/stair fade | **Fixed** 2026-08-02 |
 | B16 | Softlock entering the smith room after a scrolling transition | **Fixed** 2026-08-05 — reported from Android, reproduced on desktop once an out-of-bounds read stopped masking it |
-| B17 | Minish house interiors render as sprites over black | **Open** 2026-08-05 — diagnosed, not fixed; third instance of the screenblock being unable to cover 320 px |
+| B17 | Minish house interiors render as sprites over black | **Fixed** 2026-08-06 — third instance of the screenblock being unable to cover 320 px; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
 
 ---
 
@@ -765,7 +763,7 @@ desktop recover from a fault both platforms had. The question that ended it was
 not "what is different about the device" but "what does the device do that
 desktop does not", asked of a trace rather than of the code.
 
-## B17 — Minish house interiors render as sprites over black *(open — diagnosed, not fixed)*
+## B17 — Minish house interiors render as sprites over black *(fixed)*
 
 Entering a Picori/Minish building interior: the room is not drawn at all. Only
 sprites appear — Link, the NPC, the furniture drawn as OBJ — over a black
@@ -802,23 +800,39 @@ Letting the predicate bind these rooms above native size takes the frame from
 in a 320x240 viewport, and the room is visually correct. The probe was reverted
 rather than kept.
 
-**The question that decides it has not been asked.** The exclusion exists
-because the degraded map is *not updated by the tile mutators*. Binding it
-could trade a black room for a stale one: cut grass, a lifted pot or a pushed
-block might render as its pre-mutation tile. Rendering correctly on a room
-where nothing has been mutated is not evidence about that. Before this is
-fixed:
+**The question that decides it was answered from the engine, not by
+experiment.** The exclusion exists because the degraded map is not updated by
+the tile mutators — and that is literally true in the source. All three
+mutators (`SetTileType`, `SetTileByIndex`, `RestorePrevTileEntity`) wrap their
+special-map write in `if ((gRoomControls.scroll_flags & 1) == 0)`. In a
+degraded room that block is skipped entirely. Binding alone would have traded
+a black room for a stale one — cut grass rendering as uncut — so **the
+one-line relaxation was wrong**, confirmed rather than suspected.
 
-- get into a degraded room with a mutable tile, mutate it, and check whether
-  the bound map source reflects the change;
-- if it does, the exclusion is over-broad and the relaxation is simply right;
-- if it does not, scope it — bind only where the room has no mutators, or
-  refresh the special map on mutation for these rooms.
+**Fix.** Two halves, both behind `VIEWPORT_MAINTAIN_DEGRADED_MAP`:
 
-Lesson 12 applies in the direction it was written: this probe was rejected
-statically in Spike 2 for a reason that may or may not still hold, and it now
-passes the rendering test. That makes it worth re-running against the
-*mutation* test, not worth trusting.
+- the three mutators maintain the special map in degraded rooms as well, so
+  there is a current map to read;
+- with that true, the map-source predicate binds them.
+
+The map itself was never the problem: `sub_0807C5F4` builds it into the same
+arrays at the same 0x80 stride the sampler reads, which is why binding
+rendered a correct room in the first probe. Only its *maintenance* was missing.
+
+**Evidence.** The reject count for `scroll_flags&1` across the reporter's
+recording goes from **706 frames to zero**, and the frame from 5.4% filled to
+46.4% — about the ceiling for a 240x160 room centred in a 320x240 viewport,
+with the balance being the border the camera clamp produces. Regression gate at
+240x160 passes. `VIEWPORT_MAINTAIN_DEGRADED_MAP` is 0 at GBA-native, which is
+static-asserted while verifying, so every one of the four touched conditions
+reduces to the original expression and the shipping build cannot reach any of
+this.
+
+**Lesson 12 applies in the direction it was written, and the answer was no.**
+The probe was rejected statically in Spike 2, passed the rendering test two
+milestones later, and was still wrong — it needed the *other* test, the one it
+had been rejected for. A probe that passes the test you thought to run is not
+evidence about the test you did not.
 
 ## Screenblock-fallback sweep — 2026-08-06
 
@@ -861,13 +875,26 @@ rafters as its causes. Minish paths and rafters were reached — and produced
 reach that state, or it needs a room or phase this sweep did not hit. **It
 remains the most likely place for a fourth instance.**
 
-**What limited the sweep, recorded because it is the thing to fix first.**
-Warping to an out-of-range room or to fixed coordinates in an arbitrary area
-**segfaults**: 7 of 8 area-sweep chunks and all 3 per-room probes died that
-way. That is what stopped this from covering all ~128 areas, and it is worth
-its own investigation — the debug menu's "All areas (raw, by index)" warp is
-user-reachable, and while it computes per-area geometric centres, nothing
-appears to guard a room index past an area's room count.
+**What limited the sweep — and a correction to what this section first said.**
+Debug warps crash, and the first version of this entry attributed that to
+out-of-range room indices. **That was wrong, and a control run disproved it**:
+a script with a valid warp crashed 2 of 3 times, and a script with *no warp at
+all* also crashed 2 of 3 times. There are at least two distinct faults here.
+
+One is intermittent and warp-independent, near teardown, and it is the noise
+that made whole sweep chunks look like failures when their dumps and reports
+had in fact been written.
+
+The other is deterministic per area: particular destinations crash on arrival
+every time. Two real validation gaps were found and closed —
+`Port_DebugAction_Warp` checked neither that the room exists in its area's
+RoomHeader table nor that the coordinates fall inside the room, and it now does
+both (rejecting the first, clamping the second). That measurably widened
+coverage — one chunk went from 10 of 16 areas to 16 of 16 — **but it did not
+eliminate the crash**, which still kills other chunks at specific areas.
+
+So the sweep still covers a fraction of the ~128 areas, and the crash is still
+open. It is the thing to fix before this sweep can be finished.
 
 **Conclusion.** On everything reachable, **B17 is the only outstanding
 screenblock-fallback defect.** That is a narrower claim than "there are no
