@@ -161,11 +161,33 @@ void sub_080A67C4(u32 param_1) {
     ptr = &gUnk_08128E94[param_1];
     puVar2 = &gUnk_02017AA0[gUnk_03003DE4[0] * VIEWPORT_HDMA_HALF_U16];
 
-    for (i = 0; i <= 7; puVar2++, i++) {
+    /* BG3 is a per-scanline curtain over the map, and the band is in
+     * *physical* scanlines.
+     *
+     * BG2 carries the scrolling map at priority 3 (gUnk_08128AD8[4]). BG3
+     * holds the frame's parchment and this table flips its priority per line:
+     * 0x1e0b is priority 3, which loses the tie to the lower-numbered BG2 and
+     * shows the map; 0x1e0a is priority 2, which beats BG2 and covers it. So
+     * rows 8..unk5+unk4 are the window the map is seen through, and everything
+     * outside it is frame.
+     *
+     * Those two bounds are rows of the authored 240x160 screen, but the HBlank
+     * DMA replays one entry per rendered line from line 0, so the index is a
+     * physical scanline. A taller viewport centres the whole UI screen
+     * UI_CENTER_DY further down (port_mapsource.c, mapsource_bind_ui) while the
+     * table stays put, and the curtain then closes UI_CENTER_DY rows early —
+     * the bottom of the map is replaced by bare parchment. So the band takes
+     * the same shift every other 240-authored surface takes, the way the
+     * figurine gallery's and the kinstone menu's static window bounds already
+     * do (figurineMenu.c, kinstoneMenu.c).
+     *
+     * Zero at GBA-native height, where these reduce to exactly the original
+     * `i <= 7` and `i < unk5 + unk4`. B18. */
+    for (i = 0; i < 8 + UI_CENTER_DY; puVar2++, i++) {
         *puVar2 = 0x1e0a;
     }
 
-    for (i = 8; i < (int)(ptr->unk5 + ptr->unk4); puVar2++, i++) {
+    for (; i < (int)(ptr->unk5 + ptr->unk4) + UI_CENTER_DY; puVar2++, i++) {
         *puVar2 = 0x1e0b;
     }
 

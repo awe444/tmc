@@ -84,6 +84,16 @@ void Port_DebugAction_GiveAllItems(void) {
     SetItem(ITEM_LARGE_QUIVER, 1);
     SetItem(ITEM_KINSTONE_BAG, 1);
 
+    /* The overworld map. Without it PauseMenu_Variant2 bounces every request
+     * for screens 4/5/6 straight back to Items or Quest Status, so the whole
+     * map-screen family — including the detail map, which is the only UI
+     * screen driving a per-scanline HBlank DMA — is unreachable to a script.
+     * That is why B18 was found by a playtester rather than by the tooling.
+     * Its only other use in the engine is that gate (pauseMenu.c:139), so
+     * setting it cannot disturb the inventory grid the way the blanket
+     * patterns this function avoids would. */
+    SetItem(ITEM_MAP, 1);
+
     /* LoadItemGfx() chooses bomb/boomerang VRAM gfx based on the
      * upgraded-or-basic inventory bits and writes them to the slots
      * Link's item-use entities reference. Without this, the sprite

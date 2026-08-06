@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all seventeen tracked bugs closed. The one
+complete — every spike landed and all eighteen tracked bugs closed. The one
 open item is a decision, not work: frame time is +41% over the canvas baseline
 and peak frames exceed the 16.67 ms deadline. No go/no-go is recorded.**
 
@@ -18,7 +18,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Seventeen
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Eighteen
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -122,6 +122,31 @@ Two ways to damage that directory, both already done once:
 
 `build/` is gitignored, so none of this appears in `git status` and no commit
 will remind you. It is only ever as fresh as the last time someone did it.
+
+**The APK is the same rule on the other platform, and it drifts further.** The
+maintainer plays 320x240 on an Ayaneo as well as on the desktop, so a fix that
+is only in `build/play-320x240/` is a fix half the playtesting cannot see.
+Rebuild it in the same cycle:
+
+```bash
+cd android && ./gradlew assembleDebug     # APK in app/build/outputs/apk/debug/
+```
+
+Confirm the fix reached the artifact rather than the intermediate — the APK
+carries a *stripped* `libmain.so`, so read that one:
+
+```bash
+unzip -p android/app/build/outputs/apk/debug/app-debug.apk lib/arm64-v8a/libmain.so > /tmp/libmain.so
+```
+
+and disassemble the function you changed with the NDK's `llvm-objdump`. This is
+the same "confirm what you installed" step the desktop copy gets, and it is
+cheap: the Gradle build reuses its native cache and takes well under a minute
+when only a few files changed.
+
+`./gradlew installDebug` puts it on a connected device; with none attached the
+APK is all that can be produced here, and someone has to install it. Say so
+when handing back, because nothing else will.
 
 ## Regression gate — run before any viewport commit
 
