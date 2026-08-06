@@ -123,6 +123,31 @@ Two ways to damage that directory, both already done once:
 `build/` is gitignored, so none of this appears in `git status` and no commit
 will remind you. It is only ever as fresh as the last time someone did it.
 
+**The APK is the same rule on the other platform, and it drifts further.** The
+maintainer plays 320x240 on an Ayaneo as well as on the desktop, so a fix that
+is only in `build/play-320x240/` is a fix half the playtesting cannot see.
+Rebuild it in the same cycle:
+
+```bash
+cd android && ./gradlew assembleDebug     # APK in app/build/outputs/apk/debug/
+```
+
+Confirm the fix reached the artifact rather than the intermediate — the APK
+carries a *stripped* `libmain.so`, so read that one:
+
+```bash
+unzip -p android/app/build/outputs/apk/debug/app-debug.apk lib/arm64-v8a/libmain.so > /tmp/libmain.so
+```
+
+and disassemble the function you changed with the NDK's `llvm-objdump`. This is
+the same "confirm what you installed" step the desktop copy gets, and it is
+cheap: the Gradle build reuses its native cache and takes well under a minute
+when only a few files changed.
+
+`./gradlew installDebug` puts it on a connected device; with none attached the
+APK is all that can be produced here, and someone has to install it. Say so
+when handing back, because nothing else will.
+
 ## Regression gate — run before any viewport commit
 
 At the **default 240x160 build**, both must hold:

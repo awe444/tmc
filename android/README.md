@@ -51,6 +51,21 @@ connected device in one step:
 cd android && ./gradlew installDebug
 ```
 
+**Rebuild it in the same cycle as `build/play-320x240/`.** Nothing here is
+checked in and nothing in `git status` will mention it, so the APK is only as
+fresh as the last time someone ran the command — it had gone two fixes stale
+once, which is how this note came to exist. When you do rebuild, check the
+*packaged* library rather than the intermediate, since only the former is what
+ships:
+
+```bash
+unzip -p app/build/outputs/apk/debug/app-debug.apk lib/arm64-v8a/libmain.so > /tmp/libmain.so
+"$ANDROID_HOME"/ndk/*/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-objdump \
+    -d /tmp/libmain.so | less    # find the function you changed
+```
+
+The APK's copy is stripped, so disassemble by address rather than by symbol.
+
 Debug builds are signed with the standard debug key, so they install without
 any further setup. Release builds are unsigned — wire up a `signingConfig` if
 you want one.
