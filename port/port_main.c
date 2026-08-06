@@ -27,6 +27,9 @@
  * but there is nothing to gain by including it for them either.
  */
 #include <SDL3/SDL_main.h>
+#include <android/log.h>
+#include <pthread.h>
+#include <stdint.h>
 #include <unistd.h>
 #endif
 #include "port_launcher_bootstrap.h"
@@ -284,6 +287,66 @@ static void Port_ReserveGbaAddressSpace(void) { /* not needed on Linux/macOS */ 
 #endif
 
 #ifdef __ANDROID__
+/* Send stdout and stderr to logcat.
+ *
+ * Nothing does this for us -- SDL does not touch the process's stdio on
+ * Android -- so without it every diagnostic the port prints is written to a
+ * file descriptor pointing at nothing. That is most of what this port knows
+ * how to say about itself: the [AREA], [sync] and [ASSET] traces, the asset
+ * loader's status, the ROM probe, the fatal paths. A device with no way to
+ * read them can only be debugged by guessing, which this project has already
+ * paid for once (docs/viewport-bug-tracker.md B4).
+ *
+ *   adb logcat -s tmc:V
+ *
+ * Line-buffered so a trace appears as it happens rather than when a 4 KB
+ * block fills, which matters when the interesting frame is the last one
+ * before a hang. */
+static void* Port_Android_LogPump(void* arg) {
+    const int fd = (int)(intptr_t)arg;
+    char line[512];
+    size_t used = 0;
+    for (;;) {
+        char c;
+        const ssize_t n = read(fd, &c, 1);
+        if (n <= 0) {
+            break;
+        }
+        if (c == '\n' || used == sizeof(line) - 1) {
+            line[used] = '\0';
+            if (used > 0) {
+                __android_log_write(ANDROID_LOG_INFO, "tmc", line);
+            }
+            used = 0;
+            if (c != '\n') {
+                line[used++] = c;
+            }
+        } else {
+            line[used++] = c;
+        }
+    }
+    return NULL;
+}
+
+static void Port_Android_StartLogRedirect(void) {
+    int fds[2];
+    if (pipe(fds) != 0) {
+        return;
+    }
+    setvbuf(stdout, NULL, _IOLBF, 0);
+    setvbuf(stderr, NULL, _IOLBF, 0);
+    dup2(fds[1], STDOUT_FILENO);
+    dup2(fds[1], STDERR_FILENO);
+    close(fds[1]);
+
+    pthread_t pump;
+    if (pthread_create(&pump, NULL, Port_Android_LogPump, (void*)(intptr_t)fds[0]) != 0) {
+        close(fds[0]);
+        return;
+    }
+    pthread_detach(pump);
+}
+
 /* The port reaches the filesystem through relative paths throughout
  * (config.json, tmc.sav, assets/, rom_data/, baserom.gba). An Android
  * process starts with cwd "/", which is read-only, so every one of those
@@ -310,6 +373,8 @@ static void Port_Android_EnterStorageDir(void) {
 int main(int argc, char* argv[]) {
 
 #ifdef __ANDROID__
+    /* First, so the chdir's own report is the first thing in the log. */
+    Port_Android_StartLogRedirect();
     /* Before Port_Config_Load below, which is the first relative-path
      * open in the run. Safe this early: SDLActivity.onCreate calls
      * nativeSetupJNI (which caches the activity class this reads through)

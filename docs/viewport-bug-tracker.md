@@ -1,13 +1,17 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B15
-from the maintainer playtesting 320×240, the last three with recordings.
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B17
+from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
+reported from the Android build — which is the same viewport on other hardware,
+and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All fifteen bugs are closed.
-Fourteen were fixed with a root cause and evidence; B4 alone is closed as
-**no longer observed** rather than diagnosed — see its entry.
+complete — see `docs/milestone2-status.md`.** Sixteen of seventeen bugs are
+closed: fifteen fixed with a root cause and evidence, and B4 closed as **no
+longer observed** rather than diagnosed. **B17 is open** — diagnosed, with a
+one-line change that renders it correctly and an unanswered question about
+whether that change is safe to make.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -39,6 +43,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B13 | Town NPCs pop in and out inside the visible frame | **Fixed**, confirmed by maintainer 2026-08-01 (reported with a recording; horizontal half was live through Milestone 1) |
 | B14 | UI screens' side borders forced black while their top/bottom borders show the backdrop | **Fixed** 2026-08-02 |
 | B15 | Room furniture lit against black through a door/stair fade | **Fixed** 2026-08-02 |
+| B16 | Softlock entering the smith room after a scrolling transition | **Fixed** 2026-08-05 — reported from Android, reproduced on desktop once an out-of-bounds read stopped masking it |
+| B17 | Minish house interiors render as sprites over black | **Open** 2026-08-05 — diagnosed, not fixed; third instance of the screenblock being unable to cover 320 px |
 
 ---
 
@@ -158,6 +164,21 @@ first dialogue ever looks wrong again, this entry is not evidence that it is a
 new bug — reopen it rather than filing a fresh one, and get a recording, which
 is the step that was never taken here and which resolved B5, B13 and B15 in one
 pass each.
+
+**Possible retrospective identification: B16.** Recorded as a possibility, not
+a finding. B16 is a softlock in this same room, entered by scrolling, in which
+**the player is absent from the first dialogue with Zelda and the Smith** —
+which is one reading of "sprites wrong at the very first character dialogue".
+The B4 report predates the B5 fade by two milestones, and the scroll transition
+into that room existed the whole time, so the entry path matches. Against it:
+B4 described a rendering fault, not a hang, and nothing in B16's mechanism
+produces wrong *layers*.
+
+Nothing here distinguishes them and B4 was never reproduced, so this is not a
+claim that they are the same defect — only a note that the next person should
+read B16 before concluding B4 was fixed by something else. Both a recording and
+this identification are still missing, which is the same gap the paragraph
+above describes.
 
 ## B5 — interior room-to-room scroll glitches *(fixed)*
 
@@ -656,6 +677,149 @@ rather than trusting the earlier verdict.
 
 ---
 
+## B16 — softlock entering the smith room after a scrolling transition *(fixed)*
+
+Walking east from Link's house entrance into the room where Zelda and the
+Master Smith are: the room appears, Link never emerges from the doorway, and
+the game hangs. **Reported from the Android build, reproduced there 2 of 3
+times on a fresh save, and initially not reproducible on desktop at all.**
+
+Three defects in a row, each hiding the next. Only the third is the cause; the
+first two had to be fixed before it could be seen.
+
+**1. The one-frame slide stopped at the GBA screen width.** `Scroll2Step`
+terminates on `0x3c` and `0x28`. Those are not arbitrary: at 4 px of camera
+travel per step they are 240 and 160 px — the GBA screen, spelled as step
+counts. B5's fade runs that step to completion in a single frame, so at 320x240
+the camera stopped 80 px short and the player, who drifts 0.25 px per step,
+landed 5 px short of where he belonged. Both now scale with the viewport
+(`VIEWPORT_SCROLL_STEPS_X/Y`). Measured 60 steps / 240 px / 15 px drift before,
+80 / 320 / 20 after. **The B5 commit predicted this and dismissed it** — its
+carry-forward note says these literals "no longer matter above native size,
+where the slide completes in one frame behind the fade". They matter precisely
+*because* it completes in one frame: the loop still terminates on them.
+
+**2. An out-of-bounds table read was masking the bug on desktop.**
+`sub_080797C4` indexes `gUnk_0811C110` with `direction >> 3`, and `direction`
+is a `u8`, so the index reaches 31 in a **four-entry** table. On hardware that
+reads on into adjacent ROM and is perfectly defined — 0x0811C14E holds
+`0x0807`. On PC the array is its own object and everything past it is whatever
+the toolchain placed next, which differed between x86-64/GCC and arm64/Clang.
+Desktop's garbage happened to satisfy `tmp == (collisions & tmp)` and released
+the player from the doorway; Android's did not. **That single accident is why
+this looked like an Android bug for six rounds of investigation.** The table
+now carries the real ROM bytes for the full index range (`PC_PORT` only — the
+ROM build needs the original four-entry object or its data layout moves).
+Fixing it made desktop reproduce the softlock, which is what finally made the
+bug tractable.
+
+**Cause (3).** The player arrives in the new room with `direction == 0xff`,
+which `LinearMoveDirectionOLD` reads as *not moving* and refuses to act on. He
+is standing on the doorway tile (`ACT_TILE_41`, `SURFACE_DOOR`), which routes
+`sub_080724DC` into the sub-state whose only job is to walk him off it — and it
+cannot move him. He never leaves `PLAYER_ROOMTRANSITION`, so his queued
+`PLAYER_SLEEP` is never consumed, so the cutscene script he was handed never
+runs, so sync flags `0x4` and `0x8` are never set, and Zelda (`id=34`) and
+Smith (`id=40`) wait on each other for ever.
+
+The direction is lost *because of the fade*. The sliding path commits on the
+same frame the boundary is crossed, so the player still carries the heading he
+was walking. Deferring the commit 32 frames to fade out does not: he comes to
+rest while the screen darkens. Traced directly — `playerDir=8` at the queue,
+`playerDir=255` at the commit.
+
+**Fix.** Capture the player's facing when the transition is queued and restore
+it at the commit, which is exactly the state the slide had at its commit point.
+
+**Evidence.** On the desktop repro the player now walks off the door —
+`x=255 → 258 → 261 → 265`, the tile ahead changes from `0x29` to `0x23`, he is
+released, and the cutscene proceeds (3 sync sets, `action=28`). Confirmed on
+the reporter's device. B5's own recording still transitions correctly, carrying
+`dir=24` westward. Re-measured B5's fade at 320x240 after the change: the
+outgoing room holds a constant 80 border columns all the way down from
+brightness 77 to 2.6, ~6 frames of black, then the incoming room fades in — no
+frame shows a partially drawn room.
+
+**Coverage gap, recorded because it is worse than the bug.** `sub_080797C4`
+has exactly one caller and `gUnk_0811C110` exactly one user, and **the
+canonical route never reaches either** — zero events in 13 000 frames. The
+regression gate cannot see this code at all. It is only safe to claim the
+shipping build is unaffected because indices 0-3 are byte-identical and the
+extension can only change a previously-undefined read.
+
+**Lesson (13).** *An out-of-bounds read in decompiled code is a platform
+difference waiting to happen.* On hardware it has a defined answer, because ROM
+is contiguous and the bytes after a table are real data. Ported to a machine
+where that array is its own object, the same read returns whatever the linker
+happened to place next — stable per toolchain, different between them, and
+indistinguishable from a correct answer until something moves. B16 read 27
+entries past a four-entry table and behaved differently on two platforms for
+that reason alone. Where an index can exceed a table, the ROM bytes are the
+specification.
+
+**Lesson (14).** *A bug that only reproduces on one platform is not
+necessarily a platform bug.* Six rounds went into what differed about Android —
+frame rate, `char` signedness, audio threading, allocator behaviour — and all
+of it was wrong. The engine ran identically on both; one accidental read made
+desktop recover from a fault both platforms had. The question that ended it was
+not "what is different about the device" but "what does the device do that
+desktop does not", asked of a trace rather than of the code.
+
+## B17 — Minish house interiors render as sprites over black *(open — diagnosed, not fixed)*
+
+Entering a Picori/Minish building interior: the room is not drawn at all. Only
+sprites appear — Link, the NPC, the furniture drawn as OBJ — over a black
+frame. **Reported 2026-08-05 from a maintainer recording
+(`build/play-320x240/picori_village_room_glitch.script`), reproducing on both
+Android and x86_64**, which places it in the viewport rather than the platform.
+
+**Diagnosed, and the port's own instrument named it in one run.** With
+`TMC_REJECT_TRACE=1`:
+
+```
+[reject] area=0x20 room=0x00 w=240 sf=0x01 sa=0 -> bottom=scroll_flags&1 top=scroll_flags&1
+```
+
+`scroll_flags & 1` is the *degraded room* exclusion: rooms whose map came from
+the `0xffff` sentinel path, built 512x512 by `sub_0807C5F4` and not maintained
+by the tile mutators. `AREA_MINISH_HOUSE_INTERIORS` is marked that way
+explicitly (`playerUtils.c`, `roomControls->scroll_flags |= 1`). The map source
+refuses those rooms by design, so both world layers fall back to the VRAM
+screenblock — and a 256x256 screenblock cannot cover a 320-wide viewport.
+Measured across the recording: the village holds 99.5% of the frame, and it
+drops to **5.4% on the frame the interior loads** and never recovers.
+
+**This is the third bug of this milestone with that same structural cause** —
+after B5 (sliding CHANGEROOM) and B15 (door/stair fade). Each was reported
+separately, diagnosed separately and fixed separately, and each was the
+screenblock being asked to cover 320 px. *Enumerating every remaining path that
+can fall back to the screenblock above native size is worth more than fixing
+them one report at a time*, and is the first thing to do here.
+
+**A one-line relaxation renders the room correctly, and is not yet a fix.**
+Letting the predicate bind these rooms above native size takes the frame from
+5.4% to **46.4%**, which is essentially the ceiling for a 240x160 room centred
+in a 320x240 viewport, and the room is visually correct. The probe was reverted
+rather than kept.
+
+**The question that decides it has not been asked.** The exclusion exists
+because the degraded map is *not updated by the tile mutators*. Binding it
+could trade a black room for a stale one: cut grass, a lifted pot or a pushed
+block might render as its pre-mutation tile. Rendering correctly on a room
+where nothing has been mutated is not evidence about that. Before this is
+fixed:
+
+- get into a degraded room with a mutable tile, mutate it, and check whether
+  the bound map source reflects the change;
+- if it does, the exclusion is over-broad and the relaxation is simply right;
+- if it does not, scope it — bind only where the room has no mutators, or
+  refresh the special map on mutation for these rooms.
+
+Lesson 12 applies in the direction it was written: this probe was rejected
+statically in Spike 2 for a reason that may or may not still hold, and it now
+passes the rendering test. That makes it worth re-running against the
+*mutation* test, not worth trusting.
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.
@@ -712,8 +876,8 @@ to add between bug fixes.
    uniform whatever its colour. B14 is the same mistake made in *code* rather
    than in a measurement — the border was painted black to match the metric.
 
-Lessons 7–12 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
-10 in B14, 11 in B5, 12 in B15.
+Lessons 7–14 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
+10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16.
 
 ---
 
