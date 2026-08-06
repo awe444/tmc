@@ -429,6 +429,14 @@ bool Port_Capture_HandleArg(const char* arg) {
             fprintf(stderr, "[record] cannot open '%s' for writing\n", path);
             exit(1);
         }
+        /* Line-buffered, because the recording has to survive a teardown that
+         * never flushes. A recording is only ever made of a run that misbehaved,
+         * and the interesting ones end in a hang, a crash or a kill -- exactly
+         * the cases where a 4 KB stdio buffer is lost. On Android that is the
+         * normal path, not the exception: SDL_main returns to JNI rather than
+         * the process calling exit(), so the atexit handler below never runs
+         * and the file is left at 0 bytes. A few lines a second costs nothing. */
+        setvbuf(sRecFile, NULL, _IOLBF, 0);
         fprintf(sRecFile, "# Recorded input — replay with --script=<this file>.\n"
                           "# Replay from the save copied alongside as <this file>.sav,\n"
                           "# in a directory with baserom.gba and assets/.\n");

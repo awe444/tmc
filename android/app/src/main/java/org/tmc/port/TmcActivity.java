@@ -15,6 +15,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * SDLActivity plus the one thing the port needs that a desktop install gets
@@ -62,6 +64,87 @@ public class TmcActivity extends SDLActivity {
             Log.e(TAG, "staging game data failed", e);
         }
         super.onCreate(savedInstanceState);
+    }
+
+    /**
+     * Command-line arguments, read from a file so the device can run the
+     * capture and replay tooling.
+     *
+     * The port takes its diagnostics through argv -- {@code --script=},
+     * {@code --dump-dir=}, {@code --no-audio}, the map-source audit -- and an
+     * Android app has no argv. Without this, a bug that only appears on a
+     * device can only be watched, never replayed, and the frame-exact
+     * comparison against a desktop run of the same input is what identifies a
+     * platform difference.
+     *
+     * Read from the app's external files directory, which {@code adb push}
+     * can write to directly with no {@code run-as} dance:
+     *
+     *   adb push args.txt /sdcard/Android/data/org.tmc.port/files/
+     *
+     * One argument per line; blank lines and #-comments ignored. Anything
+     * else in that directory is copied into the working directory first, so a
+     * recording and its save can be pushed alongside.
+     */
+    @Override
+    protected String[] getArguments() {
+        final File dir = getExternalFilesDir(null);
+        if (dir == null) {
+            return super.getArguments();
+        }
+        final File argsFile = new File(dir, "args.txt");
+        if (!argsFile.isFile()) {
+            return super.getArguments();
+        }
+
+        try {
+            stageSideloadedFiles(dir);
+        } catch (IOException e) {
+            Log.w(TAG, "could not stage sideloaded files", e);
+        }
+
+        final List<String> args = new ArrayList<>();
+        try {
+            for (String line : readText(argsFile).split("\n")) {
+                final String arg = line.trim();
+                if (!arg.isEmpty() && !arg.startsWith("#")) {
+                    args.add(arg);
+                }
+            }
+        } catch (IOException e) {
+            Log.w(TAG, "could not read args.txt", e);
+            return super.getArguments();
+        }
+
+        Log.i(TAG, "arguments from args.txt: " + args);
+        return args.toArray(new String[0]);
+    }
+
+    /**
+     * Copies everything except args.txt from the external directory into the
+     * working directory, so a pushed .script and tmc.sav land where the engine
+     * looks for them. Overwrites: a sideloaded save is meant to win.
+     */
+    private void stageSideloadedFiles(File dir) throws IOException {
+        final File[] entries = dir.listFiles();
+        if (entries == null) {
+            return;
+        }
+        for (File entry : entries) {
+            if (!entry.isFile() || entry.getName().equals("args.txt")) {
+                continue;
+            }
+            final File dest = new File(getFilesDir(), entry.getName());
+            final byte[] buffer = new byte[1 << 16];
+            try (InputStream in = new FileInputStream(entry);
+                 OutputStream out = new FileOutputStream(dest)) {
+                int read;
+                while ((read = in.read(buffer)) != -1) {
+                    out.write(buffer, 0, read);
+                }
+            }
+            Log.i(TAG, "sideloaded " + entry.getName());
+        }
     }
 
     private void stageGameData() throws IOException, PackageManager.NameNotFoundException {
