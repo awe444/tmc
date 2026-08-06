@@ -3497,7 +3497,10 @@ void SetTileType(u32 tileType, u32 tilePos, u32 layer) {
             gMapBottom.collisionData[tilePos] = collisionData;
         }
         mapLayer->actTiles[tilePos] = gMapTileTypeToActTile[tileType];
-        if ((gRoomControls.scroll_flags & 1) == 0) {
+        /* VIEWPORT_MAINTAIN_DEGRADED_MAP: above native size a degraded room is
+         * drawn from this map, so it has to be kept current. 0 at 240x160,
+         * where this reduces to the original condition exactly. See B17. */
+        if (VIEWPORT_MAINTAIN_DEGRADED_MAP || (gRoomControls.scroll_flags & 1) == 0) {
             u32 offset = (tilePos & 0x3f) * 2 + (tilePos & 0xfc0) * 4;
             if (layer != 2) {
                 dest = gMapDataBottomSpecial + offset;
@@ -3713,7 +3716,8 @@ void SetTileByIndex(u32 tileIndex, u32 tilePos, u32 layer) {
     tileType = mapLayer->tileTypes[tileIndex];
     mapLayer->collisionData[tilePos] = gMapTileTypeToCollisionData[tileType];
     mapLayer->actTiles[tilePos] = gMapTileTypeToActTile[tileType];
-    if ((gRoomControls.scroll_flags & 1) == 0) {
+    /* See B17 / VIEWPORT_MAINTAIN_DEGRADED_MAP. */
+    if (VIEWPORT_MAINTAIN_DEGRADED_MAP || (gRoomControls.scroll_flags & 1) == 0) {
         u32 offset = (tilePos & 0x3f) * 2 + (tilePos & 0xfc0) * 4;
         if (layer != 2) {
             dest = gMapDataBottomSpecial + offset;
@@ -3745,7 +3749,8 @@ void RestorePrevTileEntity(u32 tilePos, u32 layer) {
     tileType = mapLayer->tileTypes[tileIndex];
     mapLayer->collisionData[tilePos] = gMapTileTypeToCollisionData[tileType];
     mapLayer->actTiles[tilePos] = gMapTileTypeToActTile[tileType];
-    if ((gRoomControls.scroll_flags & 1) == 0) {
+    /* See B17 / VIEWPORT_MAINTAIN_DEGRADED_MAP. */
+    if (VIEWPORT_MAINTAIN_DEGRADED_MAP || (gRoomControls.scroll_flags & 1) == 0) {
         u32 offset = (tilePos & 0x3f) * 2 + (tilePos & 0xfc0) * 4;
         if (layer != 2) {
             dest = gMapDataBottomSpecial + offset;

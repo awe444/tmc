@@ -189,6 +189,27 @@
 #define VIEWPORT_SCROLL_STEPS_X (VIEWPORT_WIDTH / 4)
 #define VIEWPORT_SCROLL_STEPS_Y (VIEWPORT_HEIGHT / 4)
 
+/* Whether the tile mutators must keep the special map current in *degraded*
+ * rooms — those whose map was built by the 0xffff sentinel path and which
+ * carry scroll_flags & 1.
+ *
+ * On hardware nothing reads the special map for such a room, so SetTileType,
+ * SetTileByIndex and RestorePrevTileEntity all skip writing it. Above
+ * GBA-native size that stops being true: the 32-tile VRAM screenblock covers
+ * 256 px and cannot fill a wider viewport, so the map source is the only thing
+ * that can draw the room, and a map the mutators do not maintain would render
+ * cut grass as uncut and a lifted pot as still there.
+ *
+ * So above native size the mutators maintain it and the map source is allowed
+ * to bind these rooms; at GBA-native this is 0 and every one of those sites
+ * reduces to exactly the original condition. B17.
+ */
+#if VIEWPORT_WIDTH > DISPLAY_WIDTH || VIEWPORT_HEIGHT > DISPLAY_HEIGHT
+#define VIEWPORT_MAINTAIN_DEGRADED_MAP 1
+#else
+#define VIEWPORT_MAINTAIN_DEGRADED_MAP 0
+#endif
+
 /* Fade rate for that transition, in fade progress per frame out of 0x100 —
  * 8 gives 32 frames each way, matching the inter-card fade the Picori legend
  * uses (cutscene.c) rather than inventing a new pace. */
