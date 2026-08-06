@@ -1,14 +1,14 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B17
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B18
 from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All seventeen bugs are
-closed: sixteen fixed with a root cause and evidence, and B4 closed as **no
+complete — see `docs/milestone2-status.md`.** All eighteen bugs are
+closed: seventeen fixed with a root cause and evidence, and B4 closed as **no
 longer observed** rather than diagnosed.
 
 **Four of these were live in the shipping 240×160 build or through all of
@@ -43,6 +43,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B15 | Room furniture lit against black through a door/stair fade | **Fixed** 2026-08-02 |
 | B16 | Softlock entering the smith room after a scrolling transition | **Fixed** 2026-08-05 — reported from Android, reproduced on desktop once an out-of-bounds read stopped masking it |
 | B17 | Minish house interiors render as sprites over black | **Fixed** 2026-08-06 — third instance of the screenblock being unable to cover 320 px; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
+| B18 | Pause map detail view shows only the top of the map | **Fixed** 2026-08-06 — the per-scanline BG3 curtain's band was still in 240x160 rows; the only per-scanline table on a UI screen |
 
 ---
 
@@ -902,6 +903,95 @@ others": `subTileMap rebound` is unverified, and most of the game's areas were
 unreachable because the warp crashes. Both are named above so the next person
 starts from them rather than from a playtest report.
 
+## B18 — pause map detail view shows only the top of the map *(fixed)*
+
+Pause menu → MAP → A on a windcrest. The detail map draws down to roughly two
+thirds of the frame and then stops; below it is bare parchment down to the
+frame's bottom bar. **Reported by the maintainer 2026-08-06 from the 320x240
+build, with a screenshot.** Not a screenblock-fallback bug — the map is on the
+right layer and drawn correctly, it is being *covered*.
+
+**Root cause: an HBlank-DMA table indexed by physical scanline, whose band
+bounds are rows of the authored 240x160 screen.**
+
+`sub_080A67C4` (`src/menu/pauseMenuScreen6.c`) builds a per-line BG3CNT table
+and hands it to `SetVBlankDMA`. BG2 carries the scrolling map at priority 3
+(`gUnk_08128AD8[4]`); BG3 carries the frame's parchment, and the table flips
+BG3's priority per line. `0x1e0b` is priority 3, which loses the tie to the
+lower-numbered BG2 and lets the map show; `0x1e0a` is priority 2, which beats
+BG2 and covers it. **BG3 is a curtain**, and rows `8 .. unk5+unk4`
+(`gUnk_08128E94`; 132 for thirteen of the seventeen windcrests, 120 for the
+rest) are the window the map is seen through.
+
+Those two bounds are rows of the authored screen. The table is not:
+`port_hdma_step_line` replays one entry per rendered line starting at line 0,
+so the index is a **physical scanline**, while `mapsource_bind_ui`
+(`port_mapsource.c`) centres the whole UI screen `UI_CENTER_DY` = 40 rows
+further down. The curtain therefore opens 40 rows too high and closes 40 rows
+too early — the top 8-row margin leaks map, and the bottom 40 rows of map are
+replaced by parchment. 92 of the map's 124 rows survive, which is the "top
+half" in the report.
+
+**The screen said so itself.** The down-scroll arrow is drawn at y=0x84 = 132
+(`sub_080A66D0`) — the same 132 that ends the band. It is an OBJ, so it takes
+the UI screen's sprite offset and lands at physical row 172; the curtain closed
+at 132. The arrow marking the bottom of the map window and the bottom of the
+map window disagreed by exactly `UI_CENTER_DY`, on screen, in the reporter's
+own screenshot.
+
+**Spike 9 widened this table and did not move it.** It is one of the nine
+per-scanline tables that spike lengthened to `VIEWPORT_HEIGHT`, which is why
+the screen is not garbage below line 160. Lengthening a table and relocating
+what it addresses are different edits, and only the first was needed anywhere
+else.
+
+**Fix.** Add `UI_CENTER_DY` to both band bounds, the way the figurine
+gallery's and the kinstone menu's *static* window bounds already do
+(`figurineMenu.c:129`, `kinstoneMenu.c:299`, `cutscene.c:247`). One edit fixes
+two screens: `Subtask_LocalMapHint` builds its band through the same function.
+
+**Evidence.**
+
+- 320x240, before → after, on the reported frame: rows 132..171 change from
+  parchment to map, and rows 40..43 from map to frame margin. Nothing else on
+  the frame moves — rows 0..39, 44..131 and 172..239 are pixel-identical.
+- The centred 240x160 region of all five map-screen captures (`n0_map`,
+  `n1_detail`, `n2_detail`, `n3_detail`, `n4_scrolled`) is now **pixel-identical
+  to the 240x160 build**. Before the fix the four detail frames differed by
+  7602–7666 px each.
+- Regression gate at 240x160: canonical route 11/11 with 0 differences;
+  map-source audit 0 mismatched in 265,497,600 fetches.
+
+**The gate cannot see this screen, so the shipping build got its own check.**
+The canonical route never opens the map menu. `UI_CENTER_DY` is 0 at
+GBA-native, so both bounds reduce to the original `8` and `unk5+unk4` and the
+first loop's `i < 8` is exactly the original `i <= 7`; the only codegen
+difference at 240x160 is one dead store of `8` into the loop counter, which
+already holds 8. Empirically: the same capture script run on 240x160 binaries
+built with and without the fix is **byte-identical across all 14 waypoints**,
+including the five map screens. That is the argument the route could not make.
+
+**Why no capture had ever rendered this screen.**
+`Port_DebugAction_GiveAllItems` did not set `ITEM_MAP`, and
+`PauseMenu_Variant2` bounces every request for screens 4, 5 and 6 back to
+Items or Quest Status without it (`pauseMenu.c:139`). The entire map-screen
+family was unreachable to *any* script, in either milestone. `giveallitems`
+now sets it — `ITEM_MAP`'s only other use in the engine is that gate, so it
+cannot disturb the inventory grid the way the blanket patterns that function
+avoids would — and from `subtask 1 0` the detail map is two `R` presses and an
+`A`.
+
+**The general question, asked at the first instance rather than the third.**
+Nine sites register a per-scanline HBlank DMA (`viewport.h`). Eight are world
+effects: four circular WIN0H windows (fade iris, lantern, white triangle,
+minish portal closeup), three BG3HOFS scrollers, and the rolling barrel's
+affine matrix. Their line index is a screen position the world already places
+correctly, and the port shifts nothing vertically in a world view. The pause
+detail map is the only one of the nine on a **UI screen**, and a UI screen is
+the only surface the port shifts vertically. So this class has exactly one
+member and it is fixed — unlike the screenblock family, which was reported
+three times before anyone asked.
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.
@@ -959,7 +1049,22 @@ to add between bug fixes.
    than in a measurement — the border was painted black to match the metric.
 
 Lessons 7–14 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
-10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16.
+10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16. The last two are here
+because B18 is so far the only place either applies.
+
+15. **A per-scanline table is indexed by the raster, not by the surface it
+    decorates.** Wherever the port shifts a surface, any table addressing that
+    surface by line has to take the same shift — and *lengthening* such a table
+    is not *relocating* it. Spike 9 lengthened all nine and needed to relocate
+    exactly one, which is why the miss survived a spike whose whole subject was
+    these tables. B18.
+
+16. **An item the debug actions do not grant is a screen the tooling cannot
+    see.** `giveallitems` omitted `ITEM_MAP`, and without it the pause menu
+    silently redirects every request for the three map screens. Nothing failed
+    and nothing was logged; the screens were simply never in a capture, in
+    either milestone, until a human opened one. When a menu gates a screen on
+    inventory, the gate is part of the test surface. B18.
 
 ---
 

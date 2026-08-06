@@ -1,7 +1,7 @@
 # Milestone 2 — status at session close, 2026-08-06
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and all seventeen tracked bugs are
+the items the plan did not anticipate, and all eighteen tracked bugs are
 closed. **One thing is still open and it is a judgement, not work: frame
 time.**
 
@@ -37,6 +37,7 @@ and several carry inline "superseded" notes pointing back here.
 | **B16** — softlock entering the smith room | bug tracker | Reported from Android, 2 runs in 3; three layered defects, the last being the player losing his facing across the fade's deferral |
 | **B17** — Minish interiors render as sprites over black | bug tracker | Third instance of the screenblock-cannot-cover-320 family; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
 | Screenblock-fallback sweep | bug tracker | Asked once which other paths can fall back above native size. On everything reachable, B17 was the only one |
+| **B18** — pause map detail view shows only the top of the map | bug tracker | The per-scanline BG3 curtain's band was still in 240x160 rows. The only one of the nine HDMA tables on a UI screen, so the class has one member and it is closed |
 
 ## Gates
 
@@ -48,11 +49,16 @@ including the last four:
 
 **What the gate did not catch, and could not.** B16 lived in
 `sub_080797C4`/`gUnk_0811C110`, which the canonical route never executes —
-zero events in 13 000 frames. B17 lived in rooms the route never enters. Both
-passed the gate throughout while broken. Where a change touches code the route
-does not reach, say so and find another argument; for B16's ROM table that
-argument was that indices 0–3 are byte-identical, so the change could only
-alter a read that was previously undefined.
+zero events in 13 000 frames. B17 lived in rooms the route never enters. B18
+lived on a screen no script could open at all, because `giveallitems` did not
+grant the item the menu gates it on. All three passed the gate throughout while
+broken. Where a change touches code the route does not reach, say so and find
+another argument; for B16's ROM table that argument was that indices 0–3 are
+byte-identical, so the change could only alter a read that was previously
+undefined. For B18 it was stronger and worth copying — build the shipping
+240x160 binary both with and without the change and diff the captures of the
+screen itself. Byte-identical across all 14 waypoints is a direct statement
+about the code that changed, not an inference from coverage.
 
 ## The one open item: frame time
 
@@ -126,6 +132,14 @@ The lessons added here, in the tracker's numbering:
   platform bug. B16 cost six rounds of asking what was different about Android
   when the answer was that one accidental read let desktop recover from a fault
   both platforms had.
+- **15** — a per-scanline table is indexed by the raster, not by the surface it
+  decorates, and lengthening one is not relocating it. Spike 9 lengthened all
+  nine of these tables and needed to relocate exactly one, which is how B18
+  survived the spike whose whole subject was them.
+- **16** — an item the debug actions do not grant is a screen the tooling
+  cannot see. `giveallitems` omitted `ITEM_MAP`, so the pause menu silently
+  redirected every request for the three map screens and no capture in either
+  milestone ever rendered them.
 
 And one that did not need a number because the tracker already had it: after a
 round of inference on B13 produced nothing, a recording found it in one pass.
@@ -133,7 +147,7 @@ The same held for B5, B15 and B16 — every bug in this milestone that needed a
 human at the controls was resolved by a recording, usually after inference had
 already failed on it.
 
-**Three of the seventeen were one defect reported three times.** B5, B15 and
+**Three of the eighteen were one defect reported three times.** B5, B15 and
 B17 are all a world layer losing its map source and falling back to a 256 px
 screenblock that cannot cover 320. Each was found by a separate playtest report
 before anyone asked the general question; when it finally was asked, the sweep
