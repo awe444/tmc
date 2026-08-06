@@ -159,6 +159,21 @@ new bug — reopen it rather than filing a fresh one, and get a recording, which
 is the step that was never taken here and which resolved B5, B13 and B15 in one
 pass each.
 
+**Possible retrospective identification: B16.** Recorded as a possibility, not
+a finding. B16 is a softlock in this same room, entered by scrolling, in which
+**the player is absent from the first dialogue with Zelda and the Smith** —
+which is one reading of "sprites wrong at the very first character dialogue".
+The B4 report predates the B5 fade by two milestones, and the scroll transition
+into that room existed the whole time, so the entry path matches. Against it:
+B4 described a rendering fault, not a hang, and nothing in B16's mechanism
+produces wrong *layers*.
+
+Nothing here distinguishes them and B4 was never reproduced, so this is not a
+claim that they are the same defect — only a note that the next person should
+read B16 before concluding B4 was fixed by something else. Both a recording and
+this identification are still missing, which is the same gap the paragraph
+above describes.
+
 ## B5 — interior room-to-room scroll glitches *(fixed)*
 
 Walking from one interior room into an adjoining one: visible glitching,
@@ -656,6 +671,94 @@ rather than trusting the earlier verdict.
 
 ---
 
+## B16 — softlock entering the smith room after a scrolling transition *(fixed)*
+
+Walking east from Link's house entrance into the room where Zelda and the
+Master Smith are: the room appears, Link never emerges from the doorway, and
+the game hangs. **Reported from the Android build, reproduced there 2 of 3
+times on a fresh save, and initially not reproducible on desktop at all.**
+
+Three defects in a row, each hiding the next. Only the third is the cause; the
+first two had to be fixed before it could be seen.
+
+**1. The one-frame slide stopped at the GBA screen width.** `Scroll2Step`
+terminates on `0x3c` and `0x28`. Those are not arbitrary: at 4 px of camera
+travel per step they are 240 and 160 px — the GBA screen, spelled as step
+counts. B5's fade runs that step to completion in a single frame, so at 320x240
+the camera stopped 80 px short and the player, who drifts 0.25 px per step,
+landed 5 px short of where he belonged. Both now scale with the viewport
+(`VIEWPORT_SCROLL_STEPS_X/Y`). Measured 60 steps / 240 px / 15 px drift before,
+80 / 320 / 20 after. **The B5 commit predicted this and dismissed it** — its
+carry-forward note says these literals "no longer matter above native size,
+where the slide completes in one frame behind the fade". They matter precisely
+*because* it completes in one frame: the loop still terminates on them.
+
+**2. An out-of-bounds table read was masking the bug on desktop.**
+`sub_080797C4` indexes `gUnk_0811C110` with `direction >> 3`, and `direction`
+is a `u8`, so the index reaches 31 in a **four-entry** table. On hardware that
+reads on into adjacent ROM and is perfectly defined — 0x0811C14E holds
+`0x0807`. On PC the array is its own object and everything past it is whatever
+the toolchain placed next, which differed between x86-64/GCC and arm64/Clang.
+Desktop's garbage happened to satisfy `tmp == (collisions & tmp)` and released
+the player from the doorway; Android's did not. **That single accident is why
+this looked like an Android bug for six rounds of investigation.** The table
+now carries the real ROM bytes for the full index range (`PC_PORT` only — the
+ROM build needs the original four-entry object or its data layout moves).
+Fixing it made desktop reproduce the softlock, which is what finally made the
+bug tractable.
+
+**Cause (3).** The player arrives in the new room with `direction == 0xff`,
+which `LinearMoveDirectionOLD` reads as *not moving* and refuses to act on. He
+is standing on the doorway tile (`ACT_TILE_41`, `SURFACE_DOOR`), which routes
+`sub_080724DC` into the sub-state whose only job is to walk him off it — and it
+cannot move him. He never leaves `PLAYER_ROOMTRANSITION`, so his queued
+`PLAYER_SLEEP` is never consumed, so the cutscene script he was handed never
+runs, so sync flags `0x4` and `0x8` are never set, and Zelda (`id=34`) and
+Smith (`id=40`) wait on each other for ever.
+
+The direction is lost *because of the fade*. The sliding path commits on the
+same frame the boundary is crossed, so the player still carries the heading he
+was walking. Deferring the commit 32 frames to fade out does not: he comes to
+rest while the screen darkens. Traced directly — `playerDir=8` at the queue,
+`playerDir=255` at the commit.
+
+**Fix.** Capture the player's facing when the transition is queued and restore
+it at the commit, which is exactly the state the slide had at its commit point.
+
+**Evidence.** On the desktop repro the player now walks off the door —
+`x=255 → 258 → 261 → 265`, the tile ahead changes from `0x29` to `0x23`, he is
+released, and the cutscene proceeds (3 sync sets, `action=28`). Confirmed on
+the reporter's device. B5's own recording still transitions correctly, carrying
+`dir=24` westward. Re-measured B5's fade at 320x240 after the change: the
+outgoing room holds a constant 80 border columns all the way down from
+brightness 77 to 2.6, ~6 frames of black, then the incoming room fades in — no
+frame shows a partially drawn room.
+
+**Coverage gap, recorded because it is worse than the bug.** `sub_080797C4`
+has exactly one caller and `gUnk_0811C110` exactly one user, and **the
+canonical route never reaches either** — zero events in 13 000 frames. The
+regression gate cannot see this code at all. It is only safe to claim the
+shipping build is unaffected because indices 0-3 are byte-identical and the
+extension can only change a previously-undefined read.
+
+**Lesson (13).** *An out-of-bounds read in decompiled code is a platform
+difference waiting to happen.* On hardware it has a defined answer, because ROM
+is contiguous and the bytes after a table are real data. Ported to a machine
+where that array is its own object, the same read returns whatever the linker
+happened to place next — stable per toolchain, different between them, and
+indistinguishable from a correct answer until something moves. B16 read 27
+entries past a four-entry table and behaved differently on two platforms for
+that reason alone. Where an index can exceed a table, the ROM bytes are the
+specification.
+
+**Lesson (14).** *A bug that only reproduces on one platform is not
+necessarily a platform bug.* Six rounds went into what differed about Android —
+frame rate, `char` signedness, audio threading, allocator behaviour — and all
+of it was wrong. The engine ran identically on both; one accidental read made
+desktop recover from a fault both platforms had. The question that ended it was
+not "what is different about the device" but "what does the device do that
+desktop does not", asked of a trace rather than of the code.
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.
@@ -712,8 +815,8 @@ to add between bug fixes.
    uniform whatever its colour. B14 is the same mistake made in *code* rather
    than in a measurement — the border was painted black to match the metric.
 
-Lessons 7–12 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
-10 in B14, 11 in B5, 12 in B15.
+Lessons 7–14 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
+10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16.
 
 ---
 
