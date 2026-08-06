@@ -820,6 +820,61 @@ statically in Spike 2 for a reason that may or may not still hold, and it now
 passes the rendering test. That makes it worth re-running against the
 *mutation* test, not worth trusting.
 
+## Screenblock-fallback sweep — 2026-08-06
+
+B5, B15 and B17 all have the same root shape: a world layer loses its map
+source, falls back to the VRAM screenblock, and a 32-tile screenblock covers
+256 px and cannot fill 320. Three separate reports, three separate diagnoses.
+This sweep asks the question once: **which other paths can leave a layer on the
+screenblock above native size, and do any of them show?**
+
+Run entirely on instruments the port already had — `TMC_REJECT_TRACE=1` for
+per-reason transitions with area/room/width, `--mapsource-report` for
+per-reason frame counts, and frame dumps scored by *distinct colours per
+column*, the border test lesson 6 prescribes. No new code.
+
+**Coverage.** Eleven scripts and recordings at 320x240 (route, sweep, walk,
+bugs, intro, and the B5 / npcpop / stairway / zelda-exit / smith /
+picori recordings) — roughly 73,000 gameplay frames — plus warp probes into
+the three areas whose managers the predicate names, covering 13 rooms.
+
+| rejection class | fired | verdict |
+|---|---|---|
+| `task!=GAME` | heavily | title / file select; the clip rule handles it. Expected |
+| `substate!=UPDATE` | heavily | menus and subtasks; same. Expected |
+| `scroll_flags&1` | 706 frames (picori), 296 (area sweep) | **B17 — the only defect found** |
+| `mid-transition` | 2–4 frames per recording | the B5 fade window; the screen is black by design |
+| `bad geometry` | 1–2 frames per run | `substate=7 area=0 room=0 w=0` — a subtask before a room exists. Transient |
+| `layer off` | 148 frames, 4 areas | **benign, measured** — see below |
+| `subTileMap rebound` | **never** | **unverified** — see below |
+
+**`layer off` is benign and that is measured, not assumed.** It fires in
+MinishPaths (0x11), CrenelMinishPaths (0x12), 0x1A and MinishRafters (0x2E) —
+BG1 detached while BG2 stays bound. Every one of the 13 rooms reached renders
+**full width, 0 flat columns**. The top layer is genuinely unused in those
+rooms, so there is nothing for the screenblock to fail to cover.
+
+**`subTileMap rebound` never fired anywhere, and that is a gap rather than a
+result.** The predicate's comment names bigGoron, minish paths and minish
+rafters as its causes. Minish paths and rafters were reached — and produced
+`layer off`, not `rebound`. So either the comment is stale about which managers
+reach that state, or it needs a room or phase this sweep did not hit. **It
+remains the most likely place for a fourth instance.**
+
+**What limited the sweep, recorded because it is the thing to fix first.**
+Warping to an out-of-range room or to fixed coordinates in an arbitrary area
+**segfaults**: 7 of 8 area-sweep chunks and all 3 per-room probes died that
+way. That is what stopped this from covering all ~128 areas, and it is worth
+its own investigation — the debug menu's "All areas (raw, by index)" warp is
+user-reachable, and while it computes per-area geometric centres, nothing
+appears to guard a room index past an area's room count.
+
+**Conclusion.** On everything reachable, **B17 is the only outstanding
+screenblock-fallback defect.** That is a narrower claim than "there are no
+others": `subTileMap rebound` is unverified, and most of the game's areas were
+unreachable because the warp crashes. Both are named above so the next person
+starts from them rather than from a playtest report.
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.
