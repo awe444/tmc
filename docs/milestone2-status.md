@@ -1,8 +1,15 @@
-# Milestone 2 — status at session close, 2026-08-02
+# Milestone 2 — status at session close, 2026-08-06
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-six items the plan did not anticipate. **One thing is still open and it is a
-judgement, not work: frame time.**
+the items the plan did not anticipate, and all seventeen tracked bugs are
+closed. **One thing is still open and it is a judgement, not work: frame
+time.**
+
+Since 2026-08-02 this milestone also grew an **arm64 Android build**
+(`android/`). It is not a separate port — it is this viewport on other
+hardware, built from the same source list — and it has already earned its keep
+as a test surface: B16 and B17 were both reported from it, and neither turned
+out to be a platform bug.
 
 Read this first; the individual spike write-ups are the detail behind each row
 and several carry inline "superseded" notes pointing back here.
@@ -23,13 +30,29 @@ and several carry inline "superseded" notes pointing back here.
 | **B13** — NPC pop-in | bug tracker | Found from a maintainer recording; confirmed fixed 2026-08-01 |
 | **B14** — UI side borders forced black | bug tracker | Reported by the maintainer 2026-08-02; all four bands now one colour |
 | Legend panels centred vertically | `ui-vertical-centring.md` §4-5 | The last deferred vertical case; decided and fixed 2026-08-02 |
+| **B15** — furniture lit against black through a door/stair fade | bug tracker | Reported with a recording; both room-change substates keep their map source above native size |
+| **B5** — interior room-to-room scroll glitches | bug tracker | Deferred since Milestone 1; reproduced from a recording and the slide replaced by a fade above native size |
+| **B4** — smith-room sprites at first dialogue | bug tracker | Closed 2026-08-02 as no longer observed — the one entry with no root cause. See B16 for a possible retrospective identification |
+| **Android build** | `android/README.md` | arm64-v8a, assets baked in at build time, source list parsed from `xmake.lua`. Gamepad only, no touch |
+| **B16** — softlock entering the smith room | bug tracker | Reported from Android, 2 runs in 3; three layered defects, the last being the player losing his facing across the fade's deferral |
+| **B17** — Minish interiors render as sprites over black | bug tracker | Third instance of the screenblock-cannot-cover-320 family; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
+| Screenblock-fallback sweep | bug tracker | Asked once which other paths can fall back above native size. On everything reachable, B17 was the only one |
 
 ## Gates
 
-Both hold at 240×160 and were re-run before every commit in this milestone:
+Both hold at 240×160 and were re-run before every commit in this milestone,
+including the last four:
 
 - canonical route: **11/11 waypoints, 0 differences**
 - map-source audit: **0 mismatched in 265 497 600 fetches**
+
+**What the gate did not catch, and could not.** B16 lived in
+`sub_080797C4`/`gUnk_0811C110`, which the canonical route never executes —
+zero events in 13 000 frames. B17 lived in rooms the route never enters. Both
+passed the gate throughout while broken. Where a change touches code the route
+does not reach, say so and find another argument; for B16's ROM table that
+argument was that indices 0–3 are byte-identical, so the change could only
+alter a read that was previously undefined.
 
 ## The one open item: frame time
 
@@ -64,7 +87,10 @@ No go/no-go is recorded. That is the maintainer's call and it rests on this.
 | **The screen-shrink cinematic** | Named in the plan; no concrete site found in the source. Unidentified rather than done. |
 | ~~**Picori legend panels**~~ | **Centred 2026-08-02** at the maintainer's request — `ui-vertical-centring.md` §5. Pixel-identical to 240x160 shifted 40 px on both axes; the world half of the same cutscene is byte-identical, so B3 stands. |
 | **Kinstone menu** | Still never runtime-verified; it crashes on cold scripted entry at 240×160 too, so it is the pre-existing crash chain (CHANGELOG #16). |
-| **B4, B5** | Still deferred from Milestone 1. Both now have a viable route: `record-bug.sh`, which found B13 in one pass. |
+| ~~**B4, B5**~~ | **Both closed 2026-08-02.** B5 reproduced from a recording and fixed; B4 closed as no longer observed, the one entry in the tracker without a root cause. |
+| **The debug-warp crash** | **Open.** Warping to some destinations segfaults, and a second intermittent crash near teardown is tangled with it. Two real validation gaps were closed (room existence, coordinates inside the room) and coverage widened measurably, but it is not fixed. It is what stops the screenblock sweep from covering more than a fraction of the ~128 areas. |
+| **`subTileMap rebound`** | **Never observed.** The one map-source rejection class the sweep could not reach, and therefore the most likely place for a fourth screenblock-fallback instance. Blocked behind the warp crash. |
+| **Tile mutation in degraded rooms** | B17's fix makes the mutators maintain that map; the maintenance itself was verified by reading the code, not by driving a mutation. Cutting grass or lifting a pot inside a Minish house is the check nobody has run. |
 
 ## What this milestone changed about how the work is checked
 
@@ -89,8 +115,28 @@ The lessons added here, in the tracker's numbering:
 - **9** — ask what a predicate *gates*, not just what it is called.
   `CheckOnScreen` decides whether to draw; `CheckRectOnScreen` decides whether
   the entity exists.
+- **12** — a probe that failed is evidence about the state it ran in, not
+  about the change. B15's fix was measured, rejected and reverted one session
+  before it became correct.
+- **13** — an out-of-bounds read in decompiled code is a platform difference
+  waiting to happen. On hardware ROM is contiguous and the read is defined;
+  ported, it returns whatever the linker placed next, which is stable per
+  toolchain and different between them.
+- **14** — a bug that only reproduces on one platform is not necessarily a
+  platform bug. B16 cost six rounds of asking what was different about Android
+  when the answer was that one accidental read let desktop recover from a fault
+  both platforms had.
 
 And one that did not need a number because the tracker already had it: after a
 round of inference on B13 produced nothing, a recording found it in one pass.
-The tooling for that has existed since Milestone 1 and B4/B5 are still open
-for want of using it.
+The same held for B5, B15 and B16 — every bug in this milestone that needed a
+human at the controls was resolved by a recording, usually after inference had
+already failed on it.
+
+**Three of the seventeen were one defect reported three times.** B5, B15 and
+B17 are all a world layer losing its map source and falling back to a 256 px
+screenblock that cannot cover 320. Each was found by a separate playtest report
+before anyone asked the general question; when it finally was asked, the sweep
+that answered it needed no new code — `TMC_REJECT_TRACE` and
+`--mapsource-report` had existed since Milestone 1. Ask the general question
+after the second instance, not the third.

@@ -9,11 +9,16 @@ submodule and none of it is here. The traces of it that survive in the engine
 (`TMC_ANDROID_PORT`, `TMC_ANDROID_RUNTIME_DIR`) are **not** used by this build —
 see "What this deliberately does not do" below.
 
-**Status: played on an Ayaneo Pocket S 2K (Android 13) — audio, video and
-controller input all worked, no bugs seen.** That run was at 240x160 and
-windowed; the default is now 320x240 and the window is fullscreen. Neither of
-those two changes has been on a device yet, and no other hardware has been
-tried.
+**Status: played at 320x240 fullscreen on an Ayaneo Pocket S 2K (Android 13).**
+Audio, video and controller input all work. No other hardware has been tried.
+
+Two bugs have been reported from this build and fixed — B16 and B17 in
+`docs/viewport-bug-tracker.md`. **Neither was a platform bug.** Both were
+viewport defects that this build happened to expose, and B16 in particular cost
+six rounds of investigating what was different about Android before the answer
+turned out to be that an out-of-bounds read returned different padding per
+toolchain and let desktop recover from a fault both platforms had. Treat a
+device-only symptom here as a viewport bug until a trace says otherwise.
 
 ## Prerequisites
 
@@ -125,7 +130,7 @@ device on first launch, with a progress bar, reaching the same state slowly.
 
 ## Engine changes this build required
 
-Four, all no-ops off Android:
+Five, all no-ops off Android:
 
 - `port/port_main.c` includes `<SDL3/SDL_main.h>` under `__ANDROID__` so
   `main()` becomes the exported `SDL_main` that SDLActivity calls through JNI.
@@ -140,10 +145,22 @@ Four, all no-ops off Android:
   `setWindowStyle(false)` and adds `FLAG_FORCE_NOT_FULLSCREEN`. Asking SDL for
   a fullscreen window makes it call `setWindowStyle(true)`, which applies the
   immersive-sticky flags.
+- `port/port_main.c` pipes stdout and stderr into logcat on a pump thread.
+  Nothing else does: SDL leaves the process's stdio alone on Android, so every
+  diagnostic the port prints would otherwise be written to nothing.
 - `port/port_touch_controls.cpp` gained a `PORT_NO_TOUCH_CONTROLS` opt-out. Its
   implementation is `#ifdef __ANDROID__`, so an Android build would otherwise
   compile the on-screen overlay in. With the define set, every entry point
   becomes the same no-op the desktop build uses.
+
+One change was **not** Android-only and applies everywhere:
+`port/port_capture.c` line-buffers the `--record=` file. It had been fully
+buffered and flushed only by an `atexit` handler, so a recording of a hang —
+the only kind anyone makes — lost its whole buffer. On Android that was the
+normal path (`SDL_main` returns to JNI rather than the process calling
+`exit()`), which is how it was noticed, but the same footgun was live on
+desktop and is what `record-bug.sh`'s "do NOT kill the process" warning was
+about.
 
 ## What this deliberately does not do
 
@@ -162,6 +179,46 @@ Four, all no-ops off Android:
   place.
 - **No ABI but arm64-v8a.** Each extra ABI multiplies the native build time.
 - **No app icon.** The platform default is used.
+
+## Diagnostics on a device
+
+The port's traces and its capture/replay tooling both work here, which is what
+made B16 findable. Three pieces:
+
+**Its own log output reaches logcat.** SDL does not touch the process's stdio
+on Android, so without this every `[AREA]`, `[sync]` and `[ASSET]` trace goes
+to a descriptor pointing at nothing. It is line-buffered, so the last line
+before a hang is the one you get.
+
+```bash
+adb logcat -c && adb logcat -s tmc:V > run.log
+```
+
+**Arguments come from a file**, since an Android app has no argv. Push
+`args.txt` — one argument per line, `#` comments ignored — to the app's
+external files directory, which `adb push` writes to without a `run-as` dance.
+Anything else pushed alongside is staged into the working directory first, so a
+recording and its save travel with it.
+
+```bash
+adb shell mkdir -p /sdcard/Android/data/org.tmc.port/files
+printf -- '--script=bug.script\n' > args.txt
+adb push args.txt bug.script /sdcard/Android/data/org.tmc.port/files/
+```
+
+**Recording works too**, and survives however the app ends:
+
+```
+--record=/sdcard/Android/data/org.tmc.port/files/device_bug.script
+```
+
+Clear `files/tmc.sav` first if you want the recording to start blank
+(`adb shell run-as org.tmc.port rm -f files/tmc.sav`), then pull the script
+afterwards — you can pull it while the game is still hung.
+
+Running the *same* script on the device and on desktop, and diffing the traces,
+is the comparison that identifies whether a symptom is the viewport or the
+platform. It is worth reaching for early.
 
 ## Notes
 

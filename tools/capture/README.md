@@ -169,7 +169,13 @@ tmc_pc --script=/tmp/b5.script          # replay, from /tmp/b5.script.sav
 
 `--record` logs the committed KEYINPUT every frame it changes, in the same
 `<frame> keys ...` format the replay path already consumes, and copies the
-starting `tmc.sav` to `FILE.sav`. Replay then reproduces the session
+starting `tmc.sav` to `FILE.sav`. **The file is line-buffered**, so it survives
+however the run ends — a hang, a crash, a kill. Only the trailing `<frame>
+quit` line needs a clean exit, and replay does not need it. That was not always
+true: the file used to be fully buffered and flushed only by an `atexit`
+handler, so a recording of a hang lost everything. It surfaced on Android,
+where `SDL_main` returns to JNI and the handler never runs at all, leaving a
+0-byte file. Replay then reproduces the session
 frame-for-frame — verified by recording a scripted run and replaying it: all
 17 dumped frames byte-identical.
 
@@ -216,6 +222,57 @@ walking `->next`. Not an ASLR artefact — it reproduces with `setarch -R`.
 Making it portable needs an exhaustive global inventory plus pointer
 relocation. Input recording sidesteps the whole problem because a key mask
 has no pointers in it.
+
+## Sweeping for screenblock fallbacks
+
+Above GBA-native size a world layer that loses its map source falls back to the
+VRAM screenblock, which covers 256 px and cannot fill 320 — the shape of B5,
+B15 and B17. `TMC_REJECT_TRACE` and `--mapsource-report` answer "which paths
+can that happen on" without any new code:
+
+```bash
+TMC_REJECT_TRACE=1 tmc_pc --uncapped --mapsource-report --script=<script> --exit-frame=13000
+```
+
+- `--mapsource-report` prints a per-layer, per-reason **frame count** at exit —
+  a sustained non-zero count against a world view is the signal.
+- `TMC_REJECT_TRACE` prints the area, room, width and flags each time the
+  reason changes, which identifies *where*.
+
+Score the frames by **distinct colours per column**, not by testing for black
+(lesson 6): a room narrower than the viewport legitimately has flat border
+columns, and their count is `viewport width − room width`. A count far above
+that means the room is not being drawn.
+
+Expect `task!=GAME` and `substate!=UPDATE` in quantity — those are title, file
+select and menus, which the centring clip handles correctly. `mid-transition`
+is the B5 fade window with the screen black by design. Anything else against a
+world view is worth a frame dump.
+
+The 2026-08-06 sweep and its two remaining gaps are written up at the end of
+`docs/viewport-bug-tracker.md`.
+
+## Running any of this on Android
+
+The device build takes the same flags; it just has no argv. Push an `args.txt`
+(one argument per line) to the app's external files directory, which `adb push`
+writes to without `run-as`, and anything pushed alongside is staged into the
+working directory:
+
+```bash
+adb shell mkdir -p /sdcard/Android/data/org.tmc.port/files
+printf -- '--script=bug.script\n' > args.txt
+adb push args.txt bug.script /sdcard/Android/data/org.tmc.port/files/
+adb logcat -c && adb logcat -s tmc:V > run.log
+```
+
+stdout and stderr reach logcat, so every trace in the table above works there.
+`--record=` works too, to an absolute path under that same directory.
+
+**Running one script on both a device and the desktop, then diffing the
+traces, is what distinguishes a viewport bug from a platform one.** It is what
+identified B16, after six rounds of reasoning about the platform got it wrong.
+See `android/README.md`.
 
 ## Useful measurements
 

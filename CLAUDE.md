@@ -7,18 +7,24 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and every reported bug fixed. The one open item
-is a decision, not work: frame time is +41% over the canvas baseline and peak
-frames exceed the 16.67 ms deadline. No go/no-go is recorded.**
+complete — every spike landed and all seventeen tracked bugs closed. The one
+open item is a decision, not work: frame time is +41% over the canvas baseline
+and peak frames exceed the 16.67 ms deadline. No go/no-go is recorded.**
+
+There is also an **arm64 Android build** (`android/`), which is the same
+viewport on other hardware and is played on an Ayaneo Pocket S 2K.
 
 Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirteen
-   bugs, the decisions taken, and the lessons that cost the most to learn.
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Seventeen
+   bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
+   that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
-4. `docs/viewport-expansion-research-plan.md` — the original plan and the
+4. `android/README.md` — the Android build, and how to drive the same
+   capture/replay tooling on a device.
+5. `docs/viewport-expansion-research-plan.md` — the original plan and the
    per-spike write-ups, a historical record.
 
 The tracker wins wherever the plan disagrees with it; several spike write-ups
@@ -29,11 +35,24 @@ through all of Milestone 1** — the expansion exposed them rather than causing
 them. The regression gate proves the shipping build did not *move*; it cannot
 prove it was right. When a change alters a mechanism rather than a surface,
 count the frames that exercise the mechanism instead of reading a gate pass as
-coverage.
+coverage. B16 and B17 both lived in code the canonical route never executes.
 
 **When a bug needs a human at the controls, ask for a recording early.**
-`record-bug.sh` found B13 in one pass after a round of inference found
-nothing. B4 and B5 have been open since Milestone 1 for want of using it.
+`record-bug.sh` found B13, B5, B15 and B16 in one pass each, after rounds of
+inference found nothing.
+
+**Three bugs — B5, B15, B17 — were one defect reported three times:** a world
+layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
+cover 256 px, not 320. If a room renders as sprites over black above native
+size, start from `TMC_REJECT_TRACE=1`, which names the rejection class in one
+run. The sweep in the tracker enumerates the rest.
+
+**A platform-only symptom is not a platform bug.** B16 reproduced on Android 2
+runs in 3 and never on desktop, and six rounds went into what was different
+about the device — all wrong. The engine was identical; one out-of-bounds read
+of a four-entry table returned different padding per toolchain and let desktop
+recover from a fault both platforms had. In decompiled code an out-of-range
+index is defined on hardware (ROM is contiguous) and undefined here.
 
 ## Building
 
@@ -47,6 +66,18 @@ drop a previously configured size, and the next build silently stays expanded.
 
 Name builds WxH (240x160, 320x160, 320x240), never "the 240 build" — with two
 axes in play a bare number no longer says which.
+
+The **Android** build is separate and lives in `android/` (Gradle, arm64-v8a,
+defaults to 320x240):
+
+```bash
+cd android && ./gradlew assembleDebug
+```
+
+It parses the source list out of `xmake.lua`'s `tmc_pc` target rather than
+duplicating it, so an engine file added there joins that build too. See
+`android/README.md` — including how to run capture scripts and read the port's
+own traces on a device, which is what identified B16.
 
 ## Always refresh the playable build at the end of a work cycle
 

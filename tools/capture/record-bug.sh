@@ -6,8 +6,9 @@
 #   e.g.  ./record-bug.sh B5
 #
 # Play normally until the bug happens, then quit the game normally (window
-# close or in-game exit) -- do NOT kill the process, or the trailing frame
-# count is lost.
+# close or in-game exit). The log is line-buffered, so killing the process only
+# loses the trailing "<frame> quit" line -- which replay does not need. That
+# matters because the interesting recordings end in a hang.
 #
 # Produces, next to this script:
 #   recordings/<name>.script      the input log
@@ -45,7 +46,7 @@ cd "$HERE"
 
 echo "Binary:    $BIN"
 echo "Recording: recordings/$NAME.script"
-echo "Play until the bug happens, then quit normally (do not kill the process)."
+echo "Play until the bug happens, then quit normally (a kill only loses the final quit line)."
 echo
 
 "$BIN" --record="$HERE/recordings/$NAME.script" "$@"
