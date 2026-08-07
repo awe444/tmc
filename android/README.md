@@ -221,6 +221,24 @@ printf -- '--script=bug.script\n' > args.txt
 adb push args.txt bug.script /sdcard/Android/data/org.tmc.port/files/
 ```
 
+**The `TMC_*` traces reach the device through `--env=NAME=VALUE`.** Every
+diagnostic in this port is gated on `getenv`, and an Android app has no
+environment — which used to mean the one platform where a bug reproduces was
+the one platform where none of the instruments could be switched on. Put them
+in `args.txt` like any other argument; each one echoes an `[env]` line into
+logcat so you can see it took:
+
+```
+--env=TMC_STUCK_TRACE=1
+--env=TMC_CAMTRACE=1
+```
+
+`TMC_STUCK_TRACE` is the one to reach for on a softlock: it reports when the
+player has been in `PLAYER_ROOMTRANSITION` for 180 frames, with the direction,
+collisions and position that decide whether he can leave the doorway. Set it to
+a small number instead of 1 to make it fire on every ordinary doorway, which is
+how you confirm it is running before you trust its silence.
+
 **Recording works too**, and survives however the app ends:
 
 ```

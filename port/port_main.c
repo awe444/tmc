@@ -11,6 +11,7 @@
 #include "port_runtime_config.h"
 #include "port_types.h"
 #include "port_update_check.h"
+#include "viewport.h"
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -382,6 +383,46 @@ int main(int argc, char* argv[]) {
     Port_Android_EnterStorageDir();
 #endif
 
+    /* --env=NAME=VALUE, applied before anything reads a flag.
+     *
+     * Every diagnostic in this port is gated on getenv — TMC_CAMTRACE,
+     * TMC_REJECT_TRACE, TMC_HDMA_TRACE, TMC_OOB_TRACE, all of them — and most
+     * cache the answer in a static on first call. On Android there is no
+     * environment to put them in: an app has no argv either, so TmcActivity
+     * reads arguments out of args.txt, and arguments were all it could carry.
+     * The result was that the one platform where a bug reproduces is the one
+     * platform where none of the instruments can be switched on, which is a
+     * large part of why B16 cost six rounds of guessing what was different
+     * about the device.
+     *
+     * A pre-pass rather than a case in the main loop below, so the variable is
+     * set before any other argument handler can read its own flag; after the
+     * Android log redirect above, so the confirmations reach logcat rather
+     * than the descriptor pointing at nothing. On desktop it is redundant with
+     * the shell; on Android it is the only way in. */
+    {
+        int argi;
+        for (argi = 1; argi < argc; argi++) {
+            if (strncmp(argv[argi], "--env=", 6) == 0) {
+                const char* kv = argv[argi] + 6;
+                const char* eq = strchr(kv, '=');
+                if (eq != NULL) {
+                    char name[64];
+                    size_t n = (size_t)(eq - kv);
+                    if (n > 0 && n < sizeof(name)) {
+                        memcpy(name, kv, n);
+                        name[n] = '\0';
+                        setenv(name, eq + 1, 1);
+                        fprintf(stderr, "[env] %s=%s\n", name, eq + 1);
+                    }
+                } else if (kv[0] != '\0') {
+                    setenv(kv, "1", 1);
+                    fprintf(stderr, "[env] %s=1\n", kv);
+                }
+            }
+        }
+    }
+
     /* Must run before any std::vector / new / malloc that could land in
      * the GBA window. Static initializers in C++ files are constructed
      * before main, so even this is technically not early enough — but
@@ -391,6 +432,21 @@ int main(int argc, char* argv[]) {
     Port_ReserveGbaAddressSpace();
 
     fprintf(stderr, "Initializing port layer...\n");
+
+    /* Say which binary this is, before anything else can go wrong.
+     *
+     * A bug report is a log plus a claim about which build produced it, and on
+     * Android the second half is guesswork: the APK is not checked in, the
+     * staging line says only "already staged for this install", and a device
+     * can sit two fixes behind for days. A dungeon-softlock logcat arrived
+     * that could not be attributed to a build at all, which is what this is
+     * for. Compile time rather than a git hash so it needs no build-system
+     * co-operation and cannot fail in a checkout without git; the viewport is
+     * here because it is the one build option that changes what the engine
+     * does, and "240x160" in a report about the expanded build ends the
+     * investigation on line three. */
+    fprintf(stderr, "Build: %s %s, viewport %dx%d\n", __DATE__, __TIME__, VIEWPORT_WIDTH,
+            VIEWPORT_HEIGHT);
 
     // Initialize REG_KEYINPUT to all-keys-released (GBA: 1=not pressed)
     *(u16*)(gIoMem + REG_OFFSET_KEYINPUT) = 0x03FF;
@@ -419,11 +475,16 @@ int main(int argc, char* argv[]) {
             else if (Port_Capture_HandleArg(argv[i])) {
                 /* capture/replay tooling arg, consumed */
             }
+            /* Already applied by the pre-pass at the top of main(). */
+            else if (strncmp(argv[i], "--env=", 6) == 0) {
+            }
             else if (strcmp(argv[i], "--help") == 0) {
                 fprintf(stderr, "Usage: %s [--window_scale=<value>] [--loose-assets] [--no-audio]\n", argv[0]);
                 fprintf(stderr, "  --window_scale=<value>: Set the window scale (1-10, default is 3)\n");
                 fprintf(stderr, "  --loose-assets:         Ignore assets/*.pak archives and read loose files instead.\n");
                 fprintf(stderr, "  --no-audio:             Skip audio init (workaround for agbplay crash)\n");
+                fprintf(stderr, "  --env=NAME=VALUE:       Set an environment variable before anything reads it.\n");
+                fprintf(stderr, "                          The only way to enable the TMC_* traces on Android.\n");
                 Port_Capture_PrintUsage();
                 fprintf(stderr, "  config.json: Set window_scale and bindings defaults\n");
                 return 0;
