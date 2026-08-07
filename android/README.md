@@ -221,6 +221,49 @@ printf -- '--script=bug.script\n' > args.txt
 adb push args.txt bug.script /sdcard/Android/data/org.tmc.port/files/
 ```
 
+### Where the save lives, and the one-way staging
+
+**`/data/data/org.tmc.port/files/tmc.sav`** — internal app storage, alongside
+`tmc.softslots`, `config.json`, `assets/`, `rom_data/` and `baserom.gba`. On
+Android 14 `getFilesDir()` may report the canonical `/data/user/0/…` instead;
+same directory, and a secondary user or work profile gets `/data/user/<id>/`.
+The startup line says which:
+
+```
+ANDROID: working directory is /data/data/org.tmc.port/files
+```
+
+`port_save.c` opens the save by relative path, and `Port_Android_EnterStorageDir`
+chdirs here before the first file access, so every relative path in the port
+resolves against it.
+
+No file manager can show that directory — it is the app sandbox, not a bug. Use
+`run-as`, and `exec-out` rather than `shell`, because `adb shell` runs through a
+PTY and will corrupt an 8 KB binary with line-ending translation:
+
+```bash
+adb shell run-as org.tmc.port ls -l files/
+adb exec-out run-as org.tmc.port cat files/tmc.sav > tmc.sav
+adb shell run-as org.tmc.port sh -c 'cat > files/tmc.sav' < tmc.sav   # push back
+```
+
+**The save never appears in the external directory, and cannot.** Staging is
+one-way: `stageSideloadedFiles()` copies *from* `getExternalFilesDir()` *into*
+`getFilesDir()`, so pushed scripts and saves land where the engine looks for
+them, and nothing is ever copied back out.
+
+**That staging re-runs on every launch and overwrites unconditionally**, for as
+long as an `args.txt` exists in the external directory — the code comment is
+"a sideloaded save is meant to win". Two consequences worth knowing before they
+bite:
+
+- **Never leave a `tmc.sav` in the external directory.** It will silently
+  replace the on-device save every time the app starts.
+- **A `--record=` in `args.txt` keeps recording**, overwriting the same script
+  each launch. Pull anything worth keeping before relaunching, and delete
+  `args.txt` when finished debugging:
+  `adb shell rm /sdcard/Android/data/org.tmc.port/files/args.txt`.
+
 **The `TMC_*` traces reach the device through `--env=NAME=VALUE`.** Every
 diagnostic in this port is gated on `getenv`, and an Android app has no
 environment — which used to mean the one platform where a bug reproduces was

@@ -1,15 +1,17 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B20
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B21
 from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All twenty bugs are
-closed: nineteen fixed with a root cause and evidence, and B4 closed as **no
-longer observed** rather than diagnosed.
+complete — see `docs/milestone2-status.md`.** Twenty of the twenty-one bugs
+are closed: nineteen fixed with a root cause and evidence, and B4 closed as
+**no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
+full, but every route to a fix is blocked, so it is a decision rather than
+work.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -46,6 +48,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B18 | Pause map detail view shows only the top of the map | **Fixed** 2026-08-06 — the per-scanline BG3 curtain's band was still in 240x160 rows; the only per-scanline table on a UI screen |
 | B19 | Segfault entering a room narrower than the viewport | **Fixed** 2026-08-06 — a `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9. Reported from Android with a recording; reproduced on desktop first try |
 | B20 | Gameplay flashes at 240x160, offset, across a pause transition | **Fixed** 2026-08-06 — the centring clip changed several frames before the picture did; it now changes only on a black frame |
+| B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
 
 ---
 
@@ -1147,6 +1150,84 @@ returned true. Only the trace separated them. Where a fix has an internal
 condition that is supposed to fire, log whether it fires, not just whether the
 output improved.
 
+## B21 — Minish Woods light shaft ends 80 px short of the right edge *(open)*
+
+Entering Minish Woods from the west, the shaft of light reaches the right edge
+of the screen at 240x160 and stops 80 px short of it at 320x240. **Reported
+2026-08-06, measured by the maintainer on 2026-08-07 as exactly 80 px.**
+
+**Diagnosed. It is not a clip, a clamp, or a mask — there is nothing out there
+to draw.**
+
+The shaft is BG3, a 32x64 tilemap loaded straight into `gBG3Buffer` by gfx group
+0x25 (4096 bytes to GBA `0x02001A40`). Read back at runtime:
+
+```
+[bg3dump] xOffset=16
+  col  0..20  first=0x8340        <- one filler tile, repeated
+  col 21..31  0x8360..0x8364, 0x8341..0x8345, 0x8350   <- the shaft
+```
+
+Blank on the left, ~16 columns of artwork on the right ending exactly at map
+px 255. At the constant `xOffset = 0x10` that is screen 115..239 — mid-screen
+to the right edge of a 240-wide screen, which is what the maintainer describes
+seeing at 240x160. At 320 the same band still occupies 115..239 and the screen
+simply got 80 px wider.
+
+**No offset can fix it.** The layer wraps at 256. Putting ray columns at screen
+256..319 requires ray content in map px `X..X+63`, and that same 64-px window is
+also what renders at screen 0..63 — so a shaft at the right edge implies a
+second shaft at the left. **Repeated shafts were rejected by the maintainer**
+(2026-08-07), which closes that branch rather than leaving it as an option.
+
+**The measurement that settled it was an A/B of the layer, not of the picture.**
+Three earlier readings were artifacts and had to be thrown away: a "seam at
+x=280" in a zoomed crop that per-column brightness showed was a tile boundary;
+an extent from a single frame pair, which static scenery would have produced
+identically; and a camera-move test whose premise was wrong because this state
+sets `bg3.xOffset` to a *constant*, so the layer never moves with the camera
+anyway. Building with BG3 forced off and differencing gave the answer in one
+run — `BG3 contributes to columns 115..239, and 0 px beyond` — and that is the
+technique to reach for first next time.
+
+**The fix that would work is blocked by VRAM, not by artwork.** BGCNT's size
+field offers 512x256, which covers 320 with no wrap at all — `512 - 320 = 192`,
+so the screen shows map 192..511. Everything downstream already supports it:
+the PPU honours the size bits (`map_width_tiles = (size_flag & 1) ? 64 : 32`),
+`scroll_x` is masked to 9 bits, and `sub_08016CA8` takes its upload length from
+`gUnk_080B2CD8[control >> 14]` = `0x1000` for that size, so the 4 KB lands
+across two screenblocks with no change to the DMA path. And the extra 256 px
+needs only *blank*, which is one repeated tile — no new artwork.
+
+It still cannot be done, because a 512-wide BG needs an adjacent **pair** of
+screenblocks and there is no free pair:
+
+| layer | screenbase | VRAM |
+|---|---|---|
+| BG1 | 28 | `0x0600E000` |
+| BG2 | 29 | `0x0600E800` |
+| BG3 | 30 | `0x0600F000` |
+| BG0 | 31 | `0x0600F800` |
+
+All four are occupied and contiguous, and everything below block 28 is
+character data — gfx groups load tiles right up to `0x0600F000`. Prototyped
+anyway to be sure: BG3 at size 512 from base 30 writes 4 KB over blocks 30 *and*
+31, which is BG0's tilemap, and the HUD and text box render as garbage. Reverted.
+
+**Status: open, approaches exhausted short of reallocating a BG layer's
+screenbase** — which means re-checking every gfx group's tile destinations
+against the new layout, a change far larger than this defect justifies. The
+standing options are to accept the shaft ending 80 px short, or to spend that
+work. No decision is recorded.
+
+**Lesson (19).** *"Supported end to end" is a claim about a pipeline, and a
+pipeline has more stages than the ones you thought to check.* The size-bit route
+was proposed after confirming the renderer honoured it and the DMA length table
+sized it — two real checks that were both true and neither of which was the one
+that decides. VRAM allocation was, and it was never looked at until the
+prototype corrupted the HUD. When a change needs a resource, check the resource
+is free *before* checking the code that would use it.
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.
@@ -1204,8 +1285,9 @@ to add between bug fixes.
    than in a measurement — the border was painted black to match the metric.
 
 Lessons 7–14 are stated where they were learned: 7 in B11, 8 in B12, 9 in B13,
-10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16. The last two are here
-because B18 is so far the only place either applies.
+10 in B14, 11 in B5, 12 in B15, 13 and 14 in B16. 18 is in B20 and 19 in B21,
+for the same reason. The three below are here because they are about the
+tooling rather than about any one defect.
 
 15. **A per-scanline table is indexed by the raster, not by the surface it
     decorates.** Wherever the port shifts a surface, any table addressing that
@@ -1220,6 +1302,15 @@ because B18 is so far the only place either applies.
     and nothing was logged; the screens were simply never in a capture, in
     either milestone, until a human opened one. When a menu gates a screen on
     inventory, the gate is part of the test surface. B18.
+
+17. **A diagnostic that cannot be switched on where the bug happens is not a
+    diagnostic.** Every `TMC_*` trace was gated on `getenv`, and an Android app
+    has no environment — so the platform that reproduced B16, B17 and B19 was
+    the one platform with no instruments. `--env=NAME=VALUE` in `args.txt` fixed
+    that, and B19 then reproduced on desktop from a device recording on the
+    first replay, against six rounds for B16. A log that cannot name its own
+    build is the same problem one step earlier: the first dungeon-softlock
+    report could not be attributed to a binary at all.
 
 ---
 
