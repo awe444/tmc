@@ -16,6 +16,7 @@
 #include "tileMap.h"
 #include "vram.h"
 
+#include "port_gba_mem.h"
 #include "cpu/mode1.h"
 #include "viewport.h"
 
@@ -132,6 +133,12 @@ int Port_MapSource_LastReason(int layer) {
  *                    fog phase)
  */
 static bool mapsource_is_ui_screen(void);
+/* The same answer, held across a transition until switching it is invisible.
+ * Defined with the clip it exists for; see mapsource_ui_latch_update. */
+static bool mapsource_ui_screen_stable(void);
+#if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
+static void mapsource_ui_latch_update(void);
+#endif
 
 static int mapsource_reason(int layer) {
     if (!sEnabled) {
@@ -184,7 +191,7 @@ static int mapsource_reason(int layer) {
          * exactly right. */
         if (gMain.substate == GAMEMAIN_CHANGEROOM || gMain.substate == GAMEMAIN_CHANGEAREA) {
             /* fall through to the geometry checks */
-        } else if (gMain.substate != GAMEMAIN_SUBTASK || mapsource_is_ui_screen()) {
+        } else if (gMain.substate != GAMEMAIN_SUBTASK || mapsource_ui_screen_stable()) {
             return REASON_SUBSTATE;
         }
 #else
@@ -377,9 +384,173 @@ int Port_MapSource_MessageTileShiftY(void) {
  * only still needed to decide whether the world layers may be map-sourced
  * at all, and whether sprites should travel with a shifted layer.
  */
+#if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
+/* Is every colour the frame could use black?
+ *
+ * Used only to decide whether changing the clip *right now* would be visible,
+ * so it deliberately does not model the fade. gFadeControl's progress/sustain
+ * pair means different things per fade type, and the question here is never
+ * "how far through the fade are we" but "would anyone notice". An all-black
+ * palette answers that directly — and if the scene is legitimately black
+ * rather than mid-fade, flipping during it is still invisible, which is the
+ * entire requirement. */
+/* Would this frame show anything but black?
+ *
+ * Two ways the engine reaches black across a menu transition and only one of
+ * them touches colour, which is why the first version of this returned false
+ * on every frame of both pause transitions (measured with TMC_UILATCH_TRACE):
+ *
+ *  - it darkens the palette, which the palette scan below catches; or
+ *  - it switches the layers off and leaves the backdrop showing, which is what
+ *    the pause menu actually does (PauseMenu_Variant3 clears the BG enable
+ *    bits, sub_0801E104 clears two more). The palette stays bright the whole
+ *    time and the screen is still pure black.
+ *
+ * DISPCNT is read from gIoMem rather than gScreen because that is the copy the
+ * PPU renders from; gScreen is the engine's staging copy and can be a frame
+ * ahead. Bits 8..12 are BG0..BG3 and OBJ. */
+static bool mapsource_layers_all_off(void) {
+    u16 dispcnt = (u16)(gIoMem[0] | (gIoMem[1] << 8));
+    return (dispcnt & 0x1F00) == 0;
+}
+
+static bool mapsource_backdrop_is_black(void) {
+    u16 c = gBgPltt[0];
+    return (c & 0x1F) <= 1 && ((c >> 5) & 0x1F) <= 1 && ((c >> 10) & 0x1F) <= 1;
+}
+
+static bool mapsource_palette_is_black(void) {
+    int i;
+    if (mapsource_layers_all_off()) {
+        return mapsource_backdrop_is_black();
+    }
+    /* gBgPltt/gObjPltt, not gPaletteBuffer. gPaletteBuffer is the engine's
+     * working copy; what the PPU renders is the emulated palette RAM the
+     * engine DMAs into, and the fade only darkens the latter. Reading the
+     * working copy made this return false on every frame of both pause
+     * transitions -- verified with TMC_UILATCH_TRACE, which showed black=0
+     * throughout and the latch running entirely on its timeout.
+     *
+     * Threshold rather than equality for the same reason: a fade lands on
+     * near-black, not exact zero, and one stray dark-but-nonzero entry would
+     * veto the whole frame. 1 of 31 per channel is below anything a display
+     * separates from black. */
+    for (i = 0; i < 256; i++) {
+        u16 c = (u16)(gBgPltt[i] | gObjPltt[i]);
+        if ((c & 0x1F) > 1 || ((c >> 5) & 0x1F) > 1 || ((c >> 10) & 0x1F) > 1) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* Frames to wait for a black frame before taking the change anyway. A
+ * transition that never blacks out must not strand the clip in the wrong
+ * state; taking it late is the old behaviour and no worse than it. Both pause
+ * transitions reach black in about ten frames. */
+#define UI_LATCH_MAX_HOLD 40
+
+/* Change the UI/world classification only when the change cannot be seen.
+ *
+ * mapsource_is_ui_screen() answers from gMain.substate and gUI.lastState, and
+ * MenuFadeIn sets both the instant the pause menu is *requested* — several
+ * frames before the menu has drawn anything, and about eight before the screen
+ * reaches black. In between, the world is still the thing on screen but is
+ * already clipped to 240x160 and shifted 40 px. Measured on the pause
+ * transition: all four border bands collapse from (152, 70, 24, 51) distinct
+ * colours to 1 four frames before the centre goes black, and on the way out
+ * gameplay fades back *in* inside the small box and then snaps to full size at
+ * full brightness. The snap is the artifact; the clip itself is right.
+ *
+ * So this does not classify differently, it just waits for a frame where
+ * switching is invisible. The engine already fades both ways across this
+ * transition, so such a frame exists.
+ *
+ * Latched on first call rather than defaulting, because boot starts on the
+ * title — a UI screen — and treating that as a pending change would hold the
+ * world classification through the first frames for no reason. */
+static bool sUiLatched = false;
+
+/* Advanced exactly once per frame, at the top of Port_MapSource_Update.
+ *
+ * It has to be one place and it has to be first, because two things read the
+ * answer and they run in the other order: mapsource_reason() decides whether a
+ * world layer may keep its map source, and it runs for both layers *before*
+ * mapsource_bind_ui() applies the clip. If those two disagreed for a frame the
+ * result would be worse than the bug — the layer refused its map source and
+ * then left unclipped, i.e. a 256 px screenblock wrapping across 320. */
+static void mapsource_ui_latch_update(void) {
+    static bool sHaveLatched = false;
+    static int sHeld = 0;
+    bool want = mapsource_is_ui_screen();
+
+    /* Leaving a menu has to be anticipated, because the two directions are not
+     * symmetric.
+     *
+     * Opening one changes the engine's state first and reaches black second, so
+     * waiting for black is enough. Closing one is the other way round: the
+     * screen goes black while the subtask is still current, and by the time
+     * gMain.substate returns to GAMEMAIN_UPDATE the world is already fading
+     * back *in*. There is no black frame left to wait for, which is why the
+     * latch alone fixed opening and did nothing for closing -- measured, the
+     * close still snapped from the 240x160 box to full size at full
+     * brightness.
+     *
+     * Subtask_Exit sets nextToLoad = 3 at the top of the fade out and the
+     * teardown steps past it, so `>= 3` is "on its way out" and it starts well
+     * before black. Treating that as already a world view makes the pending
+     * change exist early enough for the black frame in the middle to apply it,
+     * and the world then fades in at full size. The menu itself keeps the clip
+     * while it is still visible, because the latch does not act until black.
+     *
+     * It has to be the whole teardown rather than `== 3`: traced, nextToLoad is
+     * already 4 on the single black frame in the middle of the close, so an
+     * exact-match window shuts one frame too early and leaves nothing to
+     * apply.
+     *
+     * Guarded on `want` so it can only ever bring a UI screen forward to a
+     * world view, never the reverse. */
+    if (want && gUI.nextToLoad >= 3) {
+        want = false;
+    }
+
+    if (!sHaveLatched) {
+        sHaveLatched = true;
+        sUiLatched = want;
+        return;
+    }
+    if (want == sUiLatched) {
+        sHeld = 0;
+        return;
+    }
+    {
+        bool black = mapsource_palette_is_black();
+        if (getenv("TMC_UILATCH_TRACE") != NULL) {
+            fprintf(stderr,
+                    "[uilatch] want=%d latched=%d black=%d held=%d substate=%u next=%u\n",
+                    (int)want, (int)sUiLatched, (int)black, sHeld, gMain.substate, gUI.nextToLoad);
+        }
+        if (black || ++sHeld >= UI_LATCH_MAX_HOLD) {
+            sUiLatched = want;
+            sHeld = 0;
+        }
+    }
+}
+
+static bool mapsource_ui_screen_stable(void) {
+    return sUiLatched;
+}
+#else
+/* Nothing to latch: at GBA-native size the clip does not exist and the
+ * rejection predicate below never asks. */
+static bool mapsource_ui_screen_stable(void) {
+    return mapsource_is_ui_screen();
+}
+#endif
+
 static void mapsource_bind_ui(void) {
 #if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
-    bool ui_screen = mapsource_is_ui_screen();
+    bool ui_screen = mapsource_ui_screen_stable();
     VirtuaPPUMode1BgClip clip;
     int bg;
 
@@ -559,6 +730,11 @@ void Port_MapSource_Update(void) {
      * frames, so a stale binding on a BG this frame's layers no longer use
      * would keep sampling after the engine moved on. */
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
+#if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
+    /* Once per frame, and before the layer loop below: mapsource_reason() and
+     * mapsource_bind_ui() must both see the same answer this frame. */
+    mapsource_ui_latch_update();
+#endif
     virtuappu_mode1_clear_map_sources();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);

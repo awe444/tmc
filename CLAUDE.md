@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all nineteen tracked bugs closed. The one
+complete — every spike landed and all twenty tracked bugs closed. The one
 open item is a decision, not work: frame time is +41% over the canvas baseline
 and peak frames exceed the 16.67 ms deadline. No go/no-go is recorded.**
 
@@ -18,7 +18,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Nineteen
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -79,38 +79,65 @@ duplicating it, so an engine file added there joins that build too. See
 `android/README.md` — including how to run capture scripts and read the port's
 own traces on a device, which is what identified B16.
 
-## Always refresh the playable build at the end of a work cycle
+## Always refresh both playable builds at the end of a work cycle
 
-`build/play-320x240/` is the self-contained build the maintainer actually
-plays, and it is how every bug in the tracker that needed a human at the
-controls was found. **Rebuild and reinstall it before handing work back**, even
-when the change looks headless — a fix that is only in `build/pc/tmc_pc` is a
-fix nobody can playtest, and the maintainer has no way to tell the binary is
-stale short of not seeing their bug fixed.
+`build/play-320x240/` and `build/play-240x160/` are the self-contained builds
+the maintainer actually plays, and they are how every bug in the tracker that
+needed a human at the controls was found. **Rebuild and reinstall both before
+handing work back**, even when the change looks headless — a fix that is only in
+`build/pc/tmc_pc` is a fix nobody can playtest, and the maintainer has no way to
+tell a binary is stale short of not seeing their bug fixed.
 
-**Do this after the regression gate below, not before.** The gate needs a
-240x160 build and this needs a 320x240 one, and `xmake f -c` drops the previous
-size — running them the other way round means configuring twice and handing
-over a play binary you have not gated.
+The 240x160 one exists to answer *"is this the expansion's fault or was it
+always like that?"* by hand. Four of Milestone 2's defects were live in the
+shipping build all along and only looked new, and each cost rounds before that
+was established. It is the first thing to ask of any new report.
+
+**Order matters, and it makes the 240x160 copy free.** The gate below needs a
+240x160 build and the other play build needs a 320x240 one, and `xmake f -c`
+drops the previous size. Do the gate first, install its *exact binary* as the
+240x160 play build, then configure 320x240 once:
 
 ```bash
+# 1. gate (see below) at the default 240x160, then install that same binary
+cd build/play-240x160
+rm -f tmc_pc_240x160.prev            # older .prev is dropped, 45 MB apiece
+mv tmc_pc_240x160 tmc_pc_240x160.prev 2>/dev/null || true
+cp ../../build/pc/tmc_pc tmc_pc_240x160
+
+# 2. then the expanded one
 TMC_VIEW_W=320 TMC_VIEW_H=240 xmake f -c -y -m release
 TMC_VIEW_W=320 TMC_VIEW_H=240 xmake build -y tmc_pc
 cd build/play-320x240
-rm -f tmc_pc_320x240.prev            # older .prev is dropped, 45 MB apiece
+rm -f tmc_pc_320x240.prev
 mv tmc_pc_320x240 tmc_pc_320x240.prev
 cp ../../build/pc/tmc_pc tmc_pc_320x240
 ```
 
+Doing it in that order means the 240x160 play binary *is* the binary the gate
+passed on, at no extra configure. Rebuilding it separately is not equivalent and
+not free — and note a rebuild is no longer byte-reproducible anyway, because the
+startup identity line embeds `__DATE__`/`__TIME__`; compare `.text` rather than
+whole files if you need to prove two builds are the same code.
+
+Neither play directory ships a `tmc.sav`. Do not create one: let the maintainer
+copy their own in. Saves are viewport-independent, so the same file works in
+both and moving one across is the fastest way to compare a scene at both sizes.
+
 Confirm what you installed rather than assuming the copy was the right binary:
-`cmp` it against `build/pc/tmc_pc`, and replay a capture script through it from
-a temp dir to check it renders what you verified.
+`cmp` each against `build/pc/tmc_pc` at the time you copy it, and replay a
+capture script through it from a temp dir to check it renders what you verified.
+The 240x160 one has a stronger check available and worth using — replay the
+canonical route through the installed binary and diff against
+`tools/capture/references/spike0-240x160`; it must be 11/11.
 
-Then update that directory's `README.md`: it is written to the playtester and
-says what changed since the last binary, so a stale one is worse than none.
-Move the previous cycle's notes down a section rather than deleting them.
+Then update those directories' `README.md`: they are written to the playtester
+and say what changed since the last binary, so a stale one is worse than none.
+Move the previous cycle's notes down a section rather than deleting them. The
+240x160 README is about *why you would reach for it* rather than a per-cycle
+changelog, so it usually needs nothing beyond the build date.
 
-Two ways to damage that directory, both already done once:
+Two ways to damage these directories, both already done once:
 
 - **Never run anything from inside it.** The game overwrites `tmc.sav` as it
   plays, and that save is the maintainer's. Run captures from a `mktemp -d`

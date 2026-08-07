@@ -29,16 +29,34 @@ shift
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 # The binary: an explicit TMC_BIN wins; otherwise prefer one sitting next to
-# this script (the distributed playtest build), else the repo's normal output.
+# this script (a distributed playtest directory), else the repo's normal output.
+#
+# Globbed rather than named, because there is now a play directory per viewport
+# -- build/play-240x160 and build/play-320x240 -- and one copy of this script
+# serves both. It was previously hardcoded, and the copy in the play directory
+# had been hand-edited to match while this one still said `tmc_pc_320`, a name
+# no build has produced since Milestone 1. A glob cannot drift that way.
+#
+# `.prev` is the previous cycle's binary kept for comparison and must never win.
 if [ -n "${TMC_BIN:-}" ]; then
     BIN="$TMC_BIN"
-elif [ -x "$HERE/tmc_pc_320" ]; then
-    BIN="$HERE/tmc_pc_320"
-elif [ -x "$HERE/../../build/pc/tmc_pc" ]; then
-    BIN="$(cd "$HERE/../.." && pwd)/build/pc/tmc_pc"
 else
-    echo "error: no tmc_pc found. Set TMC_BIN=/path/to/binary." >&2
-    exit 1
+    BIN=""
+    for candidate in "$HERE"/tmc_pc_[0-9]*x[0-9]*; do
+        case "$candidate" in
+            *.prev) continue ;;
+        esac
+        [ -x "$candidate" ] || continue
+        BIN="$candidate"
+        break
+    done
+    if [ -z "$BIN" ] && [ -x "$HERE/../../build/pc/tmc_pc" ]; then
+        BIN="$(cd "$HERE/../.." && pwd)/build/pc/tmc_pc"
+    fi
+    if [ -z "$BIN" ]; then
+        echo "error: no tmc_pc found. Set TMC_BIN=/path/to/binary." >&2
+        exit 1
+    fi
 fi
 
 mkdir -p "$HERE/recordings"
