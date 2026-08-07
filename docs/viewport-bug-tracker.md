@@ -1,14 +1,14 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B19
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B20
 from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All nineteen bugs are
-closed: eighteen fixed with a root cause and evidence, and B4 closed as **no
+complete — see `docs/milestone2-status.md`.** All twenty bugs are
+closed: nineteen fixed with a root cause and evidence, and B4 closed as **no
 longer observed** rather than diagnosed.
 
 **Four of these were live in the shipping 240×160 build or through all of
@@ -45,6 +45,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B17 | Minish house interiors render as sprites over black | **Fixed** 2026-08-06 — third instance of the screenblock being unable to cover 320 px; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
 | B18 | Pause map detail view shows only the top of the map | **Fixed** 2026-08-06 — the per-scanline BG3 curtain's band was still in 240x160 rows; the only per-scanline table on a UI screen |
 | B19 | Segfault entering a room narrower than the viewport | **Fixed** 2026-08-06 — a `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9. Reported from Android with a recording; reproduced on desktop first try |
+| B20 | Gameplay flashes at 240x160, offset, across a pause transition | **Fixed** 2026-08-06 — the centring clip changed several frames before the picture did; it now changes only on a black frame |
 
 ---
 
@@ -1072,6 +1073,79 @@ in the declaration and the defect is in the arithmetic three lines away. What
 finds it is asking which quantities changed sign range when the viewport grew —
 camera offsets against room origins, which is now negative for two thirds of
 the game's rooms.
+
+## B20 — gameplay flashes at 240x160, offset, across a pause transition *(fixed)*
+
+Opening or closing the pause menu shows the world at 240x160 and shifted 40 px
+for a few frames before the transition completes, so the picture appears to jump
+sideways and down. **Reported by the maintainer 2026-08-06 against the 320x240
+build**, both directions, not platform-specific.
+
+**Root cause: the clip changes several frames before the picture does.**
+
+`mapsource_is_ui_screen()` answers from `gMain.substate` and `gUI.lastState`,
+and `MenuFadeIn` sets both the instant the menu is *requested* — about eight
+frames before the screen reaches black. In between, the world is still the thing
+on screen but is already being clipped to `DISPLAY_WIDTH` x `DISPLAY_HEIGHT` and
+shifted by `UI_CENTER_DX/DY`. Nothing is wrong with the clip; it is applied at
+the wrong moment.
+
+Measured on the transition, counting distinct colours per border band — the
+metric the tracker's lesson 6 insists on, since the border here is the PPU
+backdrop rather than black:
+
+| frame | l / r / t / b | centre |
+|---|---|---|
+| gameplay | 24 / 51 / 152 / 70 | 202 |
+| `open+2` (before) | **1 / 1 / 1 / 1** | 223 |
+| `open+10` (before) | 1 / 1 / 1 / 1 | 1 (black) |
+
+All four bands collapse four frames before the centre does. Closing is worse:
+the world fades back *in* inside the small box and snaps to full size at full
+brightness.
+
+**Fix.** Do not classify differently — change classification only on a frame
+where the change cannot be seen, i.e. while the screen is black. The engine
+already fades both ways across this transition, so such a frame exists. Bounded
+by a 40-frame hold so a transition that never blacks out cannot strand the clip.
+
+**The two directions are not symmetric, and that is the whole difficulty.**
+Opening changes state first and reaches black second, so waiting is enough.
+Closing reaches black *while the subtask is still current* and only returns
+`gMain.substate` to `GAMEMAIN_UPDATE` once the world is already fading back in —
+there is no black frame left to wait for. So the close is anticipated from
+`gUI.nextToLoad >= 3`, which `Subtask_Exit` sets at the top of the fade out.
+
+**Three wrong answers, each caught by the instrument rather than by reading.**
+`TMC_UILATCH_TRACE` was added when the first version appeared to work, and
+reported `black=0` on *every* frame of both transitions — the latch was running
+entirely on its timeout and the apparent fix was the timeout outlasting the
+fade:
+
+1. `gPaletteBuffer` is the engine's working copy, not what the PPU renders.
+2. `gBgPltt` is what the PPU renders, and it is still **bright** at the black
+   frame. The engine reaches black by *switching the layers off* and showing the
+   backdrop (`PauseMenu_Variant3` clears the BG enable bits), not by darkening
+   colour. So "is it black" is a DISPCNT question first and a palette question
+   second.
+3. `gUI.nextToLoad == 3` closes one frame too early: traced, `nextToLoad` is
+   already `4` on the single black frame in the middle of the close, so an
+   exact-match window has nothing to apply. `>= 3` is the teardown.
+
+**Evidence.** Both directions, before → after: `close+2` goes from 1/1/1/1 to
+23/46/80/64 and `close+8` from 1/1/1/1 to 24/51/151/70, i.e. the world fades in
+at full size throughout; `open+2` goes from 1/1/1/1 to 24/51/153/70. The settled
+frames either side are unchanged. Regression gate at 240x160: canonical route
+11/11 with 0 differences, map-source audit 0 mismatched in 265 497 600 fetches —
+and the whole change sits inside `#if UI_CENTER_DX > 0 || UI_CENTER_DY > 0`,
+which does not exist at GBA-native size.
+
+**Lesson (18).** *A fix that works for the wrong reason measures the same as a
+fix that works.* This one passed its before/after comparison on the opening
+transition while its central test — "is the screen black" — had never once
+returned true. Only the trace separated them. Where a fix has an internal
+condition that is supposed to fire, log whether it fires, not just whether the
+output improved.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
