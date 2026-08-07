@@ -54,7 +54,27 @@ void sub_0807D280(u16* mapspecial, u16* bgbuffer) {
                 DmaSet(3, bgbuffer + 0x40, bgbuffer, 0x800003c0);
             }
 
-            mapspecial = mapspecial + (((unk_18 * 0x10000 >> 0x12) << 8) + ((xdiff >> 4) << 1));
+            /* The cast keeps this sum *signed*. `unk_18` is the only u32 local
+             * in the function, and mixing it into the sum makes the whole
+             * expression unsigned by the usual arithmetic conversions — so a
+             * negative `xdiff` does not subtract, it wraps. Measured at the
+             * crash: unk_18 = 0 and xdiff = -24 gave 0u + (-4) = 0xFFFFFFFC,
+             * and the pointer advanced 4294967292 entries — 8.6 GB — straight
+             * out of gMapDataBottomSpecial.
+             *
+             * `xdiff` is negative whenever the room is narrower than the
+             * viewport, because the camera is then pinned left of the room
+             * origin (VIEWPORT_CAM_MIN_X) and the border either side is
+             * backdrop. At GBA-native width that cannot happen — 240 is also
+             * the narrowest room in the game, so xdiff >= 0 always and the
+             * unsigned sum was free. At 320 it is the common case: 443 of 617
+             * rooms are narrower.
+             *
+             * The other three cases build their offsets out of the s32 tmp
+             * locals and are already signed; this is the only one that needed
+             * it. At GBA-native size both spellings agree exactly, because the
+             * sum cannot be negative there. B19. */
+            mapspecial = mapspecial + ((s32)((unk_18 * 0x10000 >> 0x12) << 8) + ((xdiff >> 4) << 1));
             DmaSet(3, mapspecial, bgbuffer + 0x280, 0x80000020);
             DmaSet(3, mapspecial + 0x80, bgbuffer + 0x2a0, 0x80000020);
             return;

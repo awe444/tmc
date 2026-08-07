@@ -1,7 +1,7 @@
 # Milestone 2 — status at session close, 2026-08-06
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and all eighteen tracked bugs are
+the items the plan did not anticipate, and all nineteen tracked bugs are
 closed. **One thing is still open and it is a judgement, not work: frame
 time.**
 
@@ -38,6 +38,8 @@ and several carry inline "superseded" notes pointing back here.
 | **B17** — Minish interiors render as sprites over black | bug tracker | Third instance of the screenblock-cannot-cover-320 family; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
 | Screenblock-fallback sweep | bug tracker | Asked once which other paths can fall back above native size. On everything reachable, B17 was the only one |
 | **B18** — pause map detail view shows only the top of the map | bug tracker | The per-scanline BG3 curtain's band was still in 240x160 rows. The only one of the nine HDMA tables on a UI screen, so the class has one member and it is closed |
+| Android diagnostics | `android/README.md` | `--env=NAME=VALUE` carries the `TMC_*` traces onto a device, which had no environment to set them in; every run now logs its build identity; `TMC_STUCK_TRACE` watches the state B16 hung in |
+| **B19** — segfault entering a room narrower than the viewport | bug tracker | A `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9 and the pointer walked 8.6 GB. **Reported from Android with a recording and reproduced on desktop on the first replay** — the diagnostics above are why |
 
 ## Gates
 
@@ -97,8 +99,9 @@ No go/no-go is recorded. That is the maintainer's call and it rests on this.
 | **The debug-warp crash** | **Open.** Warping to some destinations segfaults, and a second intermittent crash near teardown is tangled with it. Two real validation gaps were closed (room existence, coordinates inside the room) and coverage widened measurably, but it is not fixed. It is what stops the screenblock sweep from covering more than a fraction of the ~128 areas. |
 | **`subTileMap rebound`** | **Never observed.** The one map-source rejection class the sweep could not reach, and therefore the most likely place for a fourth screenblock-fallback instance. Blocked behind the warp crash. |
 | **Tile mutation in degraded rooms** | B17's fix makes the mutators maintain that map; the maintenance itself was verified by reading the code, not by driving a mutation. Cutting grass or lifting a pot inside a Minish house is the check nobody has run. |
+| **`sub_0807D280` reads before its map for short rooms** | **Latent, not reproduced.** B19 fixed the *unsigned wrap* in `case 2`. `case 1` and the `default` branch feed a negative `ydiff` — `-40` in the steady state of any room shorter than the viewport — to `(ydiff >> 4) * 0x100`. Signed, so no wrap and no crash; it reads a kilobyte or two before `gMapDataBottomSpecial` into the screenblock. Above native size the world is drawn from the map source instead, which is likely why nothing has been seen. Wants its own reproduction first. |
 | **`gUnk_0811C0F8` / `gUnk_0811C108` read past their end** | **Latent, not reproduced.** Both are four-entry `u16` tables sitting contiguously in ROM with B16's `gUnk_0811C110`, and both are indexed by `direction >> 2`, which reaches 63. On hardware the index wraps into an identical adjacent copy — `0x0811C108[4..7]` is byte-identical to `0x0811C110[0..3]` — so every direction lands on a real value. Ported, each array is its own object. B16 extended only `gUnk_0811C110`. Reachable only on the *swim* branch, so it needs a scene where the player is swimming through a room transition; `TMC_OOB_TRACE=1` reports it and stayed silent across the dungeon-softlock recording. Lesson 13 says the ROM bytes are the specification, so the fix is B16's: extend both with the real bytes, PC_PORT only. |
-| **Dungeon-entrance softlock (Deepwood Shrine, room 10 → 6)** | **Open, Android-only, intermittent.** Reported 2026-08-06 from the device. The maintainer's recording traverses the transition and does **not** hang on desktop, and the per-frame camera assertion is clean over it (`x-out=0 y-out=0`). `TMC_STUCK_TRACE` was added for exactly this and needs a device run to speak. |
+| **Dungeon-entrance softlock (Deepwood Shrine, room 10 → 6)** | **Open, Android-only, intermittent, and not seen since.** The maintainer's recording traverses the transition and does not hang on desktop; the per-frame camera assertion is clean over it. A device run with `TMC_STUCK_TRACE=1` produced **no `[stuck]` line** and did not reproduce it — but did hit B19 further into the dungeon. Whether the two were ever the same event is unknown. |
 
 ## What this milestone changed about how the work is checked
 
@@ -149,7 +152,7 @@ The same held for B5, B15 and B16 — every bug in this milestone that needed a
 human at the controls was resolved by a recording, usually after inference had
 already failed on it.
 
-**Three of the eighteen were one defect reported three times.** B5, B15 and
+**Three of the nineteen were one defect reported three times.** B5, B15 and
 B17 are all a world layer losing its map source and falling back to a 256 px
 screenblock that cannot cover 320. Each was found by a separate playtest report
 before anyone asked the general question; when it finally was asked, the sweep

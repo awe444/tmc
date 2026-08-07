@@ -1,14 +1,14 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B18
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B19
 from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All eighteen bugs are
-closed: seventeen fixed with a root cause and evidence, and B4 closed as **no
+complete — see `docs/milestone2-status.md`.** All nineteen bugs are
+closed: eighteen fixed with a root cause and evidence, and B4 closed as **no
 longer observed** rather than diagnosed.
 
 **Four of these were live in the shipping 240×160 build or through all of
@@ -44,6 +44,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B16 | Softlock entering the smith room after a scrolling transition | **Fixed** 2026-08-05 — reported from Android, reproduced on desktop once an out-of-bounds read stopped masking it |
 | B17 | Minish house interiors render as sprites over black | **Fixed** 2026-08-06 — third instance of the screenblock being unable to cover 320 px; needed the tile mutators to maintain the degraded map, not just a relaxed predicate |
 | B18 | Pause map detail view shows only the top of the map | **Fixed** 2026-08-06 — the per-scanline BG3 curtain's band was still in 240x160 rows; the only per-scanline table on a UI screen |
+| B19 | Segfault entering a room narrower than the viewport | **Fixed** 2026-08-06 — a `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9. Reported from Android with a recording; reproduced on desktop first try |
 
 ---
 
@@ -991,6 +992,86 @@ detail map is the only one of the nine on a **UI screen**, and a UI screen is
 the only surface the port shifts vertically. So this class has exactly one
 member and it is fixed — unlike the screenblock family, which was reported
 three times before anyone asked.
+
+## B19 — segfault entering a room narrower than the viewport *(fixed)*
+
+Walking south through the door from Deepwood Shrine's pot-bridge room (`0x03`)
+into the double-statue room (`0x04`): hard crash, not a hang. **Reported
+2026-08-06 from the Android build with a `--record` script and a logcat**, both
+captured with the diagnostics added the same day.
+
+**It reproduced on desktop from the reporter's recording on the first try**,
+which is the whole point of the recording: `SIGSEGV`, exit 139, deterministic,
+in a debugger. Two Android-only reports in this milestone (B16, B17) each cost
+rounds of asking what was different about the device; this one cost one replay.
+
+**Root cause: one `u32` local makes a pointer offset unsigned, and a negative
+camera offset wraps instead of subtracting.**
+
+`sub_0807D280` (`src/screenTileMap.c`) repopulates the screenblock during a
+scroll. Its `case 2` — the southward branch — computed
+
+```c
+mapspecial = mapspecial + (((unk_18 * 0x10000 >> 0x12) << 8) + ((xdiff >> 4) << 1));
+```
+
+`unk_18` is the function's only `u32` local. Pulling it into the sum makes the
+whole expression unsigned by the usual arithmetic conversions, so a negative
+`xdiff` does not subtract — it wraps. Measured at the fault:
+
+```
+unk_18 = 0   xdiff = -24   ydiff = -240
+scroll_x = 232  origin_x = 256   width = 272  height = 160
+gMapDataBottomSpecial = 0x555556dafee0
+mapspecial            = 0x555756dafed8      (+0x1FFFFFFF8 bytes)
+```
+
+`0u + (-4)` is `0xFFFFFFFC`, and the pointer advanced **4 294 967 292 entries —
+8.6 GB** out of a 32 KB array. The `DmaSet` on the next line is the `memcpy`
+that died.
+
+**Why the viewport exposed it.** `xdiff` is negative exactly when the room is
+narrower than the viewport, because the camera is then pinned left of the room
+origin (`VIEWPORT_CAM_MIN_X`) and the columns either side are backdrop. At
+GBA-native width that is unreachable: 240 is also the narrowest room in the
+game, so `xdiff >= 0` always and the unsigned sum was free. At 320 it is the
+common case — **443 of 617 rooms are narrower**, and this one is 272.
+
+The other three branches build their offsets out of the `s32` `tmp` locals and
+were already signed. `case 2` is the only one that needed the fix.
+
+**Fix.** Cast the `u32` term to `s32` so the sum is signed. At GBA-native size
+both spellings agree exactly, because the sum cannot be negative there.
+
+**Evidence.** The reporter's recording segfaults at frame ~8161 before and runs
+to completion (exit 0, 8400 frames) after. Regression gate at 240x160:
+canonical route 11/11 with 0 differences, map-source audit 0 mismatched in
+265 497 600 fetches.
+
+**This is the same shape as the carried-forward 8-bit window masks** — "at 240 a
+screen x could not exceed 255 and the mask was free". Same sentence, different
+width: *at 240 a camera offset could not be negative and the unsigned type was
+free*. Both are the expansion making a previously-unreachable value reachable,
+and neither is a clipping bug. Worth checking the rest of the engine for
+arithmetic that assumes a non-negative camera offset, which is now routine.
+
+**Still open, found while fixing this and deliberately not fixed here.**
+`ydiff` is `-40` in the *steady state* of any room shorter than the viewport,
+and `case 1` and the `default` branch feed it to
+`(ydiff >> 4) * 0x100` — a small negative index, reading *before*
+`gMapDataBottomSpecial` rather than past it. Those branches are signed, so they
+do not wrap and do not crash; they read a kilobyte or two of the wrong globals
+into the screenblock. Above native size the world is drawn from the map source
+rather than the screenblock, which is likely why nothing has been seen. It
+wants its own reproduction before anyone edits it.
+
+**Lesson (17).** *An unsigned type is an assumption about sign, and the
+expansion invalidated a lot of them.* B19's `u32` was correct for as long as
+the camera could never sit outside its room. Grep cannot find this: the type is
+in the declaration and the defect is in the arithmetic three lines away. What
+finds it is asking which quantities changed sign range when the viewport grew —
+camera offsets against room origins, which is now negative for two thirds of
+the game's rooms.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
