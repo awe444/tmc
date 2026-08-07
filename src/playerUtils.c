@@ -2101,12 +2101,63 @@ void sub_080792D8(void) {
     }
 }
 
+#ifdef PC_PORT
+/* B16's defect, asked of its siblings rather than assumed absent.
+ *
+ * gUnk_0811C0F8, gUnk_0811C108 and gUnk_0811C110 are four-entry u16 tables
+ * laid out contiguously in ROM, and all three are indexed past their own end:
+ * `direction >> 2` reaches 63 and `animationState >> 1` reaches 127. On
+ * hardware that reads straight on into the next table, and the data is built
+ * for exactly that — 0x0811C108[4..7] is byte-identical to 0x0811C110[0..3],
+ * so the index wraps by construction and every direction lands on a real
+ * value. Ported, each array is its own object and everything past it is
+ * whatever the toolchain placed next: stable per toolchain, different between
+ * them, and indistinguishable from a correct answer. Lesson 13.
+ *
+ * B16 extended gUnk_0811C110 and stopped there. TMC_OOB_TRACE=1 reports
+ * whether the other two are reached at runtime, so whether they matter is
+ * settled by a run rather than by reading the code. One line per distinct
+ * (site, index). */
+static void PlayerTableOob(const char* site, u32 index, u32 value) {
+    static const char* seenSite[32];
+    static u32 seenIndex[32];
+    static int seen = 0;
+    static int enabled = -1;
+    int i;
+
+    if (enabled < 0) {
+        enabled = getenv("TMC_OOB_TRACE") != NULL;
+    }
+    if (!enabled || index < 4) {
+        return;
+    }
+    for (i = 0; i < seen; i++) {
+        if (seenSite[i] == site && seenIndex[i] == index) {
+            return;
+        }
+    }
+    if (seen < 32) {
+        seenSite[seen] = site;
+        seenIndex[seen] = index;
+        seen++;
+    }
+    fprintf(stderr, "[oob] %s index=%u (declared 4) value=%u dir=%u animState=%u action=%u swim=%u\n", site,
+            index, value, gPlayerEntity.base.direction, gPlayerEntity.base.animationState,
+            gPlayerEntity.base.action, gPlayerState.swim_state);
+}
+#define PLAYER_TABLE_OOB(site, idx, val) PlayerTableOob((site), (idx), (val))
+#else
+#define PLAYER_TABLE_OOB(site, idx, val) ((void)0)
+#endif
+
 bool32 sub_080793E4(u32 param_1) {
     u32 tmp;
     if (!gPlayerState.swim_state) {
         tmp = gUnk_0811C0F8[gPlayerEntity.base.animationState >> 1];
+        PLAYER_TABLE_OOB("gUnk_0811C0F8 animState>>1", gPlayerEntity.base.animationState >> 1, tmp);
     } else {
         tmp = gUnk_0811C0F8[gPlayerEntity.base.direction >> 2];
+        PLAYER_TABLE_OOB("gUnk_0811C0F8 dir>>2", gPlayerEntity.base.direction >> 2, tmp);
     }
     if (sub_08079778() && (gPlayerState.playerInput.heldInput & tmp)) {
         if (param_1 != 0) {
@@ -2250,8 +2301,10 @@ bool32 sub_08079778(void) {
     u32 tmp;
     if (!gPlayerState.swim_state) {
         tmp = gUnk_0811C108[gPlayerEntity.base.animationState >> 1];
+        PLAYER_TABLE_OOB("gUnk_0811C108 animState>>1", gPlayerEntity.base.animationState >> 1, tmp);
     } else {
         tmp = gUnk_0811C108[gPlayerEntity.base.direction >> 2];
+        PLAYER_TABLE_OOB("gUnk_0811C108 dir>>2", gPlayerEntity.base.direction >> 2, tmp);
     }
     return tmp == (gPlayerEntity.base.collisions & tmp);
 }
