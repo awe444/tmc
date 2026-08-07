@@ -1995,6 +1995,62 @@ static void PlayerRoomTransition(PlayerEntity* this) {
         sub_080724DC,
         sub_0807258C,
     };
+#ifdef PC_PORT
+    /* Watchdog on the state B16 hung in, and the instrument this port did not
+     * have when it did.
+     *
+     * PLAYER_ROOMTRANSITION is meant to last a handful of frames: sub_080724DC
+     * walks the player off the doorway tile he arrived on and hands over. When
+     * it cannot move him — B16 — nothing errors and nothing is logged. The room
+     * around him keeps updating, enemies keep animating, and the only symptom
+     * is that the log goes quiet because no new asset is ever needed again.
+     * That is indistinguishable from "the player stopped recording", which is
+     * exactly what made the first dungeon-softlock report unattributable.
+     *
+     * So say it out loud, once, with the state that decides whether he can
+     * leave: direction is what B16 lost (0xff reads as "not moving"),
+     * collisions is what sub_080797C4 tests it against, and the position says
+     * whether he is still on the doorway tile. Gated on TMC_STUCK_TRACE so it
+     * costs a compare per frame otherwise, and reachable on Android through
+     * --env. */
+    if (getenv("TMC_STUCK_TRACE") != NULL) {
+        static u32 sFrames = 0;
+        static u16 sLastTick = 0;
+        static u8 sReported = 0;
+        static u32 sThreshold = 0;
+        /* The value is the frame threshold, so the watchdog can be proved to
+         * fire before it is trusted not to: TMC_STUCK_TRACE=5 reports every
+         * ordinary doorway in the game and shows the path runs and the reset
+         * works, while =1 alone means the 180-frame default. "It stayed quiet"
+         * is only evidence once you have seen it speak. */
+        if (sThreshold == 0) {
+            long v = atol(getenv("TMC_STUCK_TRACE"));
+            sThreshold = (v > 1) ? (u32)v : 180;
+        }
+        /* Consecutive frames, not cumulative: this function only runs while
+         * the player is in the state, so a gap in gMain.ticks means he left it
+         * and came back. Without the reset every ordinary doorway in the game
+         * adds to one counter and the watchdog eventually fires on nothing. */
+        if ((u16)(sLastTick + 1) != gMain.ticks) {
+            sFrames = 0;
+            sReported = 0;
+        }
+        sLastTick = gMain.ticks;
+        if (++sFrames >= sThreshold) {
+            if (!sReported) {
+                sReported = 1;
+                fprintf(stderr,
+                        "[stuck] PLAYER_ROOMTRANSITION for %u frames: area=0x%02X room=0x%02X "
+                        "sub=%u dir=%u animState=%u collisions=0x%02X x=%d y=%d swim=%u "
+                        "scrollAction=%u reload=0x%02X\n",
+                        sFrames, gRoomControls.area, gRoomControls.room, super->subAction, super->direction,
+                        super->animationState, super->collisions, super->x.HALF.HI, super->y.HALF.HI,
+                        gPlayerState.swim_state, gRoomControls.scrollAction,
+                        gRoomControls.reload_flags);
+            }
+        }
+    }
+#endif
     sPlayerRoomTransitionStates[super->subAction](this);
 }
 

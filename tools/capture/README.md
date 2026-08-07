@@ -62,6 +62,12 @@ Run-time (all off unless set):
 | `TMC_OAMY_TRACE=1` | every enabled sprite whose y the 8-bit encoding cannot express at this height, with the packed byte, what the wrap heuristic reads, and the true y. Needs `--mapcheck` |
 | `TMC_OAMY_LEGACY=1` | unbind the untruncated OAM y channel, leaving the PPU on the 8-bit wrap heuristic. The A/B for Spike 8 |
 | `TMC_OAMY_PROBE=<y>` | park a 64×64 sprite at signed screen y in OAM slot 127, x=128, published through the y channel. Renders rows `y..y+63`, so the visible portion is predictable — the fixture for "a sprite above the top edge" without needing a scene that has one |
+| `TMC_STUCK_TRACE=1` | report when the player has been in `PLAYER_ROOMTRANSITION` for 180 frames, with the direction, collisions and position that decide whether he can walk off the doorway tile. The instrument B16 needed and did not have — a hang in that state produces no error and no log line, only silence. Set it to a frame count instead of 1 to lower the threshold; `=5` fires on every ordinary doorway, which is how you prove it runs before trusting its silence |
+| `TMC_OOB_TRACE=1` | report any read of `gUnk_0811C0F8` / `gUnk_0811C108` past their four declared entries. These sit contiguously in ROM with `gUnk_0811C110` and are indexed by `direction >> 2` (reaches 63) and `animationState >> 1` (reaches 127); on hardware the index wraps into an identical adjacent copy, ported it reads whatever the toolchain placed next. B16 extended only `gUnk_0811C110` |
+
+**All of these work on Android too**, via `--env=NAME=VALUE` — an app has no
+environment, so without it the one platform where a bug reproduces is the one
+platform where no instrument can be switched on. See `android/README.md`.
 
 ## Script format
 
