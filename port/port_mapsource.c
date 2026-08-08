@@ -419,6 +419,31 @@ static bool mapsource_backdrop_is_black(void) {
     return (c & 0x1F) <= 1 && ((c >> 5) & 0x1F) <= 1 && ((c >> 10) & 0x1F) <= 1;
 }
 
+/* Is the frame a hand-built screen-space effect rather than a view of a room?
+ *
+ * GBA display modes 1 and 2 make BG2 an *affine* layer, and an affine layer is
+ * not a room: its picture is produced by a matrix the engine recomputes per
+ * scanline against screen coordinates it spells as literals. There is no room
+ * map behind it to sample and nothing that follows the camera, so it cannot be
+ * widened or heightened — it is a 240x160-authored surface in exactly the sense
+ * the clip below already means, and mode2.c says the same thing where it
+ * honours the clip on that layer.
+ *
+ * Two sites in the whole game leave mode 0 (`grep DISPCNT_MODE_ src/`): the
+ * title screen, which is a UI screen and centred already, and the rolling
+ * barrel's interior in Deepwood Shrine. So during a world view this is that
+ * room, reached by what it does rather than by its area and room number — a
+ * later scene that builds a screen-space effect the same way wants the same
+ * treatment for the same reason.
+ *
+ * Read from gIoMem for the reason mapsource_layers_all_off() gives: it is the
+ * copy the PPU renders from. A frame of lag is invisible because the mode is
+ * set from the room's transition handler, with the screen faded out. */
+static bool mapsource_affine_display_mode(void) {
+    u16 dispcnt = (u16)(gIoMem[0] | (gIoMem[1] << 8));
+    return (dispcnt & 7) == 1 || (dispcnt & 7) == 2;
+}
+
 static bool mapsource_palette_is_black(void) {
     int i;
     if (mapsource_layers_all_off()) {
@@ -551,6 +576,13 @@ static bool mapsource_ui_screen_stable(void) {
 static void mapsource_bind_ui(void) {
 #if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
     bool ui_screen = mapsource_ui_screen_stable();
+    /* A world view built out of an affine layer is a 240x160-authored surface
+     * the same way a menu is, and takes the vertical centring for the same
+     * reason — see mapsource_affine_display_mode(). It is not folded into
+     * `ui_screen` because the two want different things of everything else:
+     * this is still the world, so the sprites and the HUD stay where the
+     * engine put them and only the layers are confined. */
+    bool affine_screen = !ui_screen && mapsource_affine_display_mode();
     VirtuaPPUMode1BgClip clip;
     int bg;
 
@@ -577,6 +609,7 @@ static void mapsource_bind_ui(void) {
     clip.content_height = ui_screen ? DISPLAY_HEIGHT : MODE1_GBA_HEIGHT;
     sClippedBgMask = 0;
     for (bg = 0; bg < 4; bg++) {
+        VirtuaPPUMode1BgClip bg_clip = clip;
         /* BG3 during a world view is a *gameplay overlay* — hole parallax,
          * cloud shadows, light/dark, weather, steam, POW — not a 240-authored
          * surface. Two things go wrong if the rule catches it.
@@ -597,8 +630,25 @@ static void mapsource_bind_ui(void) {
         if (bg == 3 && !ui_screen) {
             continue;
         }
+        /* The affine screen's own layers are confined to the authored 160
+         * rows, centred — the vertical twin of the width clip above, and true
+         * for the same mechanical reason: a screenblock is 32 tiles in both
+         * axes, so past row 160 there is no more authored content and what
+         * shows is whatever else the block holds. In the barrel that was 80
+         * rows of unrelated tiles below the barrel, which is the half of this
+         * report you can see.
+         *
+         * BG0 is excluded because it is not one of that screen's layers — it
+         * carries the HUD, whose two bands anchor to the top and bottom edges
+         * of the *viewport* (UI_CENTER_DY, UI_HUD_LOWER_DY). Confining it
+         * would push the hearts down 40 px and delete the rupee and key
+         * counters outright. */
+        if (affine_screen && bg != 0) {
+            bg_clip.offset_y = UI_CENTER_DY;
+            bg_clip.content_height = DISPLAY_HEIGHT;
+        }
         if (!virtuappu_mode1_has_map_source(bg)) {
-            virtuappu_mode1_set_bg_clip(bg, &clip);
+            virtuappu_mode1_set_bg_clip(bg, &bg_clip);
             sClippedBgMask |= 1 << bg;
         }
     }

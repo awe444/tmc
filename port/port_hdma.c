@@ -45,6 +45,8 @@ typedef struct {
 
 static HdmaChannel s_channels[HDMA_CHANNELS];
 
+static long hdma_io_offset(const uint8_t* dest);
+
 /* TMC_HDMA_TRACE=1 — one line per distinct (dest, count) pair registered.
  * Spike 9's registration inventory, taken at runtime rather than by grep:
  * the destination register says which effect it is and `count` says how many
@@ -127,6 +129,33 @@ int port_hdma_has_active_channels(void)
 
     for (ch = 0; ch < HDMA_CHANNELS; ++ch) {
         if (s_channels[ch].active) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+/* Does an active channel rewrite BG2X/BG2Y every scanline?
+ *
+ * The rolling barrel registers an 8-halfword transfer at BG2PA (IO 0x20), so
+ * one line's transfer covers 0x20..0x2F — the whole matrix *and* both halves of
+ * the reference point. Tested as an overlap rather than an equality because the
+ * destination is the start of the run, not the register of interest. */
+int port_hdma_drives_bg2_reference(void)
+{
+    int ch;
+
+    for (ch = 0; ch < HDMA_CHANNELS; ++ch) {
+        long first, last;
+        if (!s_channels[ch].active) {
+            continue;
+        }
+        first = hdma_io_offset(s_channels[ch].dest_orig);
+        if (first < 0) {
+            continue;
+        }
+        last = first + (long)s_channels[ch].count * s_channels[ch].unit - 1;
+        if (first <= 0x2F && last >= 0x28) {
             return 1;
         }
     }

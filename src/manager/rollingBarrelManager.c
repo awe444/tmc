@@ -136,19 +136,26 @@ void sub_08058A04(RollingBarrelManager* this) {
 
     s32 tmp = gPlayerEntity.base.x.HALF.HI - gRoomControls.origin_x;
     s32 tmp2 = gPlayerEntity.base.y.HALF.HI - gRoomControls.origin_y;
-    /* GBA-original trigger gates by barrel angle (unk_20 in 0x118..0x124)
-     * because the cobweb-hole physically rotates with the barrel. On the
-     * port, players struggle to land the angle (60Hz frame timing + 13-
-     * step window + barrel rest at 0xF0 right before the trigger).
-     * Drop the angle gate entirely on PC — once the cobweb is removed
-     * and the player is standing in the hole position with z=0, fall.
-     * Reasonable: the player has walked to the visible exit. */
-    bool32 angleOk;
-#ifdef PC_PORT
-    angleOk = TRUE;
-#else
-    angleOk = (this->unk_20 - 0x118 < 0xDu);
-#endif
+    /* The fall is gated on the barrel's angle because the cobweb hole
+     * *rotates with the barrel*, while the fall itself snaps the player to a
+     * fixed room position (origin + 0x78, 0x50, below). The gate is the only
+     * thing tying those two together: inside 0x118..0x124 the drawn hole is at
+     * room centre, which is where the player is put.
+     *
+     * The port used to bypass this (`#ifdef PC_PORT`, CHANGELOG #6) because the
+     * 13-unit window out of a 512-unit revolution was hard to land. That made
+     * the fall fire at whatever angle the barrel happened to rest at — measured
+     * on the maintainer's 2026-08-08 recording, `unk_20 = 0xA4`, a rest angle,
+     * with the window open on none of the sampled frames — so the player
+     * dropped through a patch of solid barrel while the hole was drawn about
+     * 82 degrees away. That is B23, and it was reported the moment B22 made the
+     * room playable enough to reach the hole on purpose.
+     *
+     * Restored to the hardware gate by the maintainer's decision of 2026-08-08.
+     * Reachable: the snap targets are 0x48, 0xA0 and 0xF0 (sub_080588F8), and
+     * there is none between 0xF0 and the wrap, so a barrel pushed past its
+     * 0xF0 rest rolls freely through the window rather than stopping short. */
+    bool32 angleOk = (this->unk_20 - 0x118 < 0xDu);
     if (angleOk && CheckGlobalFlag(LV1TARU_OPEN) && (tmp - 0x6d < 0x17u) &&
         (tmp2 - 0x45 < 0x17u) && (gPlayerEntity.base.z.HALF.HI == 0)) {
         gPlayerState.queued_action = PLAYER_FALL;
@@ -221,12 +228,41 @@ void sub_08058BC8(RollingBarrelManager* this) {
     tmp2.sx = 0x100;
     tmp3 = 0;
     do {
-        u32 indx = ((tmp3 << 7) / 0xA0) & 0xFF;
+        /* Entry `tmp3` is replayed on *screen* scanline tmp3, but everything
+         * it computes is a position on the barrel, and the barrel is a
+         * 240x160-authored surface centred in the viewport (see the clip in
+         * port_mapsource.c, which is what puts it there and what makes the
+         * PPU sample this matrix at `line - UI_CENTER_DY`). So the row that
+         * matters here is the one inside those 160 authored rows.
+         *
+         * The 0xA0 below says so: it maps the screen's 160 scanlines onto a
+         * quarter period of the sine that gives the staves their curve. Left
+         * indexed by the screen line at a taller viewport it runs to 191
+         * instead of 127 — off the end of the quarter period and into an
+         * unrelated stretch of the table — and the barrel's curvature inverts
+         * over the bottom rows.
+         *
+         * Rows outside the band are clipped away and their entries never
+         * reach the PPU, but they are still written: the table is the full
+         * VIEWPORT_HEIGHT and a half-filled one feeds the DMA whatever is
+         * behind it. Clamped rather than left to wrap so no index leaves the
+         * range the 240x160 build uses.
+         *
+         * At GBA-native height UI_CENTER_DY is 0 and `row` is `tmp3`, so this
+         * is the original loop exactly. */
+        s32 row = tmp3 - UI_CENTER_DY;
+        u32 indx;
+        if (row < 0) {
+            row = 0;
+        } else if (row >= DISPLAY_HEIGHT) {
+            row = DISPLAY_HEIGHT - 1;
+        }
+        indx = ((row << 7) / 0xA0) & 0xFF;
         tmp2.sx = 0x100 + ((gSineTable[indx] * 3) >> 2);
         tmp2.sy =
             0x100 - ((gSineTable[indx * 2] * 2) >>
                      5); // yes, it makes no sense to multiply first and then shift right, but it's matching this way
-        tmp2.texY = (this->unk_20 + tmp3) << 8;
+        tmp2.texY = (this->unk_20 + row) << 8;
         BgAffineSet(&tmp2, tmp, 1);
         tmp++;
     } while (++tmp3 < (s32)VIEWPORT_HEIGHT);
@@ -260,8 +296,28 @@ void sub_08058CB0(RollingBarrelManager* this) {
     this->unk_24.HALF.HI = this->unk_20 = gUnk_08108300[tmp3];
 }
 
+/* Hold the player on the barrel's midline, which is where the roll speed,
+ * the quadrant split and the door and cobweb-hole hit tests are all measured
+ * from (sub_080588F8, sub_08058A04, sub_08058CB0 — every one of them against
+ * origin_y + 0x50).
+ *
+ * The engine spelled the anchor `scroll_y`, and on hardware that is the same
+ * number: the room is exactly 240x160, so the camera has nowhere to go and
+ * sits on the room origin. Above GBA-native height it is not — a 160-row room
+ * in a 240-row viewport is centred, which puts the camera 40 px *above* the
+ * origin (VIEWPORT_CAM_MIN_Y) — so the pin held the player at room y 40 while
+ * everything he can interact with is 40 px below him. Measured on Link's
+ * sprite: room y 27 at 320x240 against 63 at 240x160.
+ *
+ * That is the whole of the "doors do not line up with the walkable area"
+ * report. The doors are where they always were; the player was not.
+ *
+ * Anchored to the room, which is what the barrel actually is. At 240x160
+ * scroll_y == origin_y here by construction, so the shipping build does not
+ * move — verified by capturing this room at that size either side of the
+ * change. */
 void sub_08058CFC(void) {
-    u32 tmp = gPlayerEntity.base.y.HALF.HI - gRoomControls.scroll_y;
+    u32 tmp = gPlayerEntity.base.y.HALF.HI - gRoomControls.origin_y;
     if (tmp < 0x4C) {
         sub_080044AE(&gPlayerEntity.base, 0xC0, 0x10);
     }
