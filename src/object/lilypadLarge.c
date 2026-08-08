@@ -39,6 +39,9 @@ void sub_08085B40(LilypadLargeEntity*);
 void sub_08085A98(LilypadLargeEntity*);
 void sub_08085A44(LilypadLargeEntity*);
 
+/* playerUtils.c — see LilypadLarge_Action3. */
+extern bool32 ScrollTransitionIsPending(void);
+
 void LilypadLarge(LilypadLargeEntity* this) {
     static void (*const LilypadLarge_actions[])(LilypadLargeEntity*) = {
         LilypadLarge_Init,    LilypadLarge_Action1, LilypadLarge_Action2,
@@ -439,7 +442,13 @@ void LilypadLarge_Action3(LilypadLargeEntity* this) {
             sub_08004542(&gPlayerEntity.base);
         }
     }
-    if (gRoomControls.reload_flags == 0) {
+    /* `reload_flags == 0` is the engine saying the room scroll is over, and
+     * this is where the pad stops carrying the player and gives the camera
+     * back. A *pending* faded transition is still a scroll in progress -- see
+     * ScrollTransitionIsPending. Without this the pad exits on its first frame,
+     * 32 frames before the room even changes, and is left outside the room it
+     * was carrying the player into. B24. Always false at GBA-native size. */
+    if (gRoomControls.reload_flags == 0 && !ScrollTransitionIsPending()) {
         super->flags &= ~ENT_PERSIST;
         super->action = 1;
         super->updatePriority = super->updatePriorityPrev;

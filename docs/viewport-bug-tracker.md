@@ -9,10 +9,9 @@ and neither turned out to be a platform bug.
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
 complete — see `docs/milestone2-status.md`.** Twenty-one of the twenty-four
 bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
-**no longer observed** rather than diagnosed. **B21 and B24 are open.** B21 is
-diagnosed in full but every route to a fix is blocked, so it is a decision
-rather than work. B24 is a real defect: diagnosed, a fix attempted, and the
-softlock confirmed still present with it in — deferred to a later cycle.
+**no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
+full, but every route to a fix is blocked, so it is a decision rather than
+work.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
@@ -59,7 +58,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
 | B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
 | B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
-| B24 | Riding a lily pad through a room scroll strands the player outside the room | **Open.** Diagnosed 2026-08-08 and a two-part fix attempted the same day; **the maintainer confirms the softlock is still present with it in**, so the diagnosis is incomplete. Deferred to a later work cycle |
+| B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 
 ---
 
@@ -1433,7 +1432,7 @@ misaligned hole. Two facts settled it:
   out of a ~60-frame roll, with the hole visibly rotating into place as
   feedback.
 
-## B24 — riding a lily pad through a room-scroll transition strands the player outside the room *(open)*
+## B24 — riding a lily pad through a room-scroll transition strands the player outside the room *(fixed)*
 
 Deepwood Shrine B2, floating east from room `0x14` into `0x15`. **Reported
 2026-08-08 with the same recording.** The player and the pad end up west of the
@@ -1479,13 +1478,13 @@ pre-B22 binary the player bounces out of the barrel four times and never
 reaches B2 at all, and at 240x160 the run diverges after room `0x14` because
 transitions slide rather than fade.
 
-**A two-part fix was attempted on 2026-08-08 (maintainer's choice: advance the
-vehicle by the same steps). It did not work — the maintainer confirms the
-softlock still reproduces with it in.** It is committed separately from the
-barrel work so it can be dropped with one revert. Both parts still look correct
-in isolation and neither is known to break anything, but they are evidently not
-the whole cause, so **treat the diagnosis below as incomplete rather than as a
-fix awaiting verification**:
+**A two-part fix was attempted first and did not clear it** (commit
+`030ed14a`). It was not wrong — it was *inert*, and why is the whole lesson
+here. Both parts key off `gRoomControls.camera_target` being the vehicle, and it
+never was, because the state that claims the camera had already exited. With
+that state alive (below) both parts do exactly the work they were written for:
+the pad holds the camera through the deferral, and `Scroll2Sub2` supplies the
+travel the collapsed slide skips. The two halves are:
 
 1. `ScrollTransitionApplyWhenBlack` (playerUtils.c) saves and restores
    `gRoomControls.camera_target` around the apply. The deferral inverts an
@@ -1499,37 +1498,52 @@ fix awaiting verification**:
    with it, by `steps x speed` along the scroll direction — the travel the
    vehicle would have had over the frames the collapse skipped.
 
-**Still open. What the next cycle should not repeat.**
+**The actual root cause, found from a second recording (2026-08-08).**
 
-The measurements above are solid — the commit position (world x 1169, 31 px
-short of the 1200 boundary), the +20 px that is exactly the walker's
-`80 x 0.25`, and the arrival at room x -11 settling to -23 are all traced and
-reproducible. What was *inferred* rather than measured is that the vehicle's
-missing travel is the whole of the shortfall. It is not, or not only: supplying
-that travel did not clear the softlock.
+`LilypadLarge_Action3` *is* the carry-across-a-room-scroll state. It runs
+`LinearMoveUpdate` on the pad and on the player every frame, and it exits — hands
+the camera back, drops `ENT_PERSIST`, returns to ordinary floating — on
 
-Three things worth checking before touching the transition path again:
+    if (gRoomControls.reload_flags == 0)
 
-- **Is the room change firing too early rather than the travel being too
-  short?** The lily pad hands off when the collision 24 px ahead of the *pad*
-  reads `COLLISION_DATA_255` (`sub_08085D60`), and the player sits ~7 px behind
-  the pad's centre. Nothing has confirmed that the hand-off position is the same
-  as it would be on hardware.
-- **What actually moves the player to 1177 at f5754** — a 12 px step *west*,
-  against his direction of travel, with `action = 25`. That was never explained
-  and it is the step that puts him outside the room; the +20 alone leaves him at
-  1189.
-- **Whether he is held by the room border or by his own state.** He is drawn at
-  screen x 4 with the camera correctly pinned at -24, so the camera is not
-  implicated; `TMC_STUCK_TRACE` stays silent, so it is not the
-  `PLAYER_ROOMTRANSITION` hang B16 was.
+which is the engine saying "the scroll is over".
 
-**Build a fixture first.** The recording that found this cannot be replayed —
-B23's gate change stops it at the barrel, and at 240x160 it diverges after room
-`0x14` because transitions slide rather than fade. Until a lily-pad *and* a
-minecart transition can be reached on demand, any further change here is
-unverifiable. `minecart.c` takes the same path and has never been exercised at
-all.
+Sliding, `sub_0807BD14` applies the transition *inside itself*, so that flag is
+already set the first time action 3 runs, and the pad carries for the whole
+60-frame slide — about 60 px, which is what takes it across the boundary.
+Fading, the apply is deferred until black, and **for those 32 frames nothing
+marks a transition as in progress**. Traced: the hand-off fires at f4395 with
+the pad at room x 440, action 3 is entered, and by f4400 the pad is back in
+action 1 with the camera handed back — 28 frames *before* the room changes. It
+carried for zero frames.
+
+So the pad crossed nothing. It sat at the old room's x 441, which is the new
+room's **-23**, and stayed there for the rest of the recording, with the player
+on it at -21, both drawn in the left border. The player's earlier-measured
++20 px was the *walker's* per-step nudge, applied precisely because the pad had
+already given the camera back.
+
+**Fix.** `ScrollTransitionIsPending()` (playerUtils.c) reports a decided but
+un-applied faded transition, and action 3 treats that as a scroll still in
+progress. Defined outside the `#if VIEWPORT_SCROLL_FADE` block and returning
+`FALSE` at GBA-native size, so the condition there reduces to the original
+exactly.
+
+**Verified on the recording that found it**: the pad now carries from 435
+through the deferral, is at room `0x15` x **91** with the player at 89 when it
+returns to floating — comfortably inside a 272-wide room — against **-23**
+before. Regression gate 11/11, `fetches=265497600 mismatched=0`.
+
+It lands ~55 px further in than hardware would, because the pad moves during
+the 32 fade frames *and* gets the collapsed slide's travel, where hardware has
+only the slide. Accepted rather than tuned: freezing the pad during the fade
+would make it visibly stall while the screen is still bright, which reads worse
+than being carried slightly further, and the end state — floating in the room —
+is the same either way.
+
+**`minecart.c` has the same `sub_0807BD14`-then-claim shape and has still never
+been exercised.** If a cart ever strands you on a room boundary, this entry is
+where to start.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
