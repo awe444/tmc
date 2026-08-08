@@ -363,13 +363,47 @@ void RestoreGameTask(bool32 loadGfx) {
     /* sub_0801AE44 fills gBG1Buffer/gBG2Buffer from the room tilemap, but the
      * GBA-original mechanism that gets those into VRAM after a map subtask
      * doesn't fire on the port. Raise the per-layer updated flag and run the
-     * buffer→VRAM copy immediately so the room reappears instead of black. */
+     * buffer→VRAM copy immediately so the room reappears instead of black.
+     *
+     * Not the *room's own* layers when it is drawing itself. In GBA display
+     * mode 1 or 2 the room is a hand-built screen-space effect whose layers
+     * its enter handler loads whole, straight from a gfx group -- for
+     * Deepwood's rolling barrel, LoadGfxGroup(0x16) writes four destinations:
+     * BG2's character data and its one-byte-per-tile *affine* map at
+     * screenbase 28, and BG1's character data and its map at screenbase 30.
+     * None of those come from gBGxBuffer, so copying the buffers over them
+     * destroys the room.
+     *
+     * Both layers matter and they fail differently, which is why this took two
+     * passes. Overwriting BG2's affine map with a text tilemap turns the barrel
+     * into noise -- that was the reported symptom. Overwriting BG1's map is
+     * quieter: BG1 carries the wood grain, alpha-blended over the staves
+     * (layerFXControl 0x3456, alphaBlend 0x909), so losing it leaves the barrel
+     * legible but flat, with the grain gone. Fixing only BG2 left exactly that
+     * behind, and it read as a colour shift until the maintainer named it.
+     *
+     * Measured across the pause: BG2 character data and the palette are
+     * untouched, and only the two maps change. The room handler *is* re-run on
+     * the way out and reloads them correctly -- these copies then overwrite
+     * them, which is why re-running the handler again does not help.
+     *
+     * BG0 keeps its copy: it carries the HUD and the text box, which are
+     * genuinely buffer-driven in every room including this one.
+     *
+     * The engine has already applied the room's own display mode by this point
+     * (RollingBarrelManager_OnEnterRoom runs inside sub_0801AE44, above), so
+     * the mode read here is the one the room will render with. */
     gScreen.bg0.updated = 1;
-    gScreen.bg1.updated = 1;
-    gScreen.bg2.updated = 1;
     sub_08016CA8(&gScreen.bg0);
-    sub_08016CA8(&gScreen.bg1);
-    sub_08016CA8((BgSettings*)&gScreen.bg2);
+    {
+        u32 gbaMode = gScreen.lcd.displayControl & 7;
+        if (gbaMode != 1 && gbaMode != 2) {
+            gScreen.bg1.updated = 1;
+            gScreen.bg2.updated = 1;
+            sub_08016CA8(&gScreen.bg1);
+            sub_08016CA8((BgSettings*)&gScreen.bg2);
+        }
+    }
 #endif
 }
 

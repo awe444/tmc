@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and twenty-one of the twenty-four tracked bugs
+complete — every spike landed and twenty-four of the twenty-five tracked bugs
 are closed. Two are open, and both are decisions rather than work: frame time
 is +41% over the canvas baseline with peak frames past the 16.67 ms deadline,
 and B21's light shaft cannot reach the right edge without reallocating a BG
@@ -20,7 +20,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-four
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-five
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -67,6 +67,18 @@ rolling barrel held the player 40 px off its own midline that way, so the doors
 and the cobweb hole were out of reach. **In such a room, every camera-relative
 expression is unverified code.** The width sweep did not catch this because it
 asked about width; the vertical case has not been swept.
+
+**A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
+loads *whole layers* from a gfx group, maps included, and none of them come from
+`gBGxBuffer`.** Port code that pushes those buffers into VRAM must skip them.
+B25 was a port-only line doing exactly that, live at 240x160 too. It also shows
+how such a bug hides: overwriting BG2's affine map turned the barrel into
+obvious noise, while overwriting BG1's map only removed the alpha-blended wood
+grain, which read as "different colours" until the maintainer said the lines
+were missing. **Fix every layer the handler owns, not the one whose symptom you
+can see** — `LoadGfxGroup(0x16)` writes four destinations and two are maps.
+`grep DISPCNT_MODE_ src/` still returns exactly two sites: the title screen and
+the rolling barrel.
 
 **A platform-only symptom is not a platform bug.** B16 reproduced on Android 2
 runs in 3 and never on desktop, and six rounds went into what was different

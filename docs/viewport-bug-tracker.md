@@ -2,12 +2,12 @@
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
 playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
-from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
+from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-one of the twenty-four
+complete — see `docs/milestone2-status.md`.** Twenty-four of the twenty-five
 bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
 **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
@@ -58,6 +58,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
 | B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
 | B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
+| B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 
 ---
@@ -1563,6 +1564,75 @@ shows.
 **`minecart.c` has the same `sub_0807BD14`-then-claim shape and has still never
 been exercised.** If a cart ever strands you on a room boundary, this entry is
 where to start.
+
+## B25 — the rolling barrel comes back as noise after a pause *(fixed)*
+
+Pause inside Deepwood's InsideBarrel and close the menu: the barrel returns as
+fine yellow/blue tile noise. **Reported 2026-08-08 with a recording, fixed the
+same day.**
+
+**Not the expansion.** It reproduces identically at 240x160 from a warp-in,
+pause, unpause fixture — the fifth defect this milestone that was live in the
+shipping build all along.
+
+**Measured rather than guessed, and the first two guesses were wrong.** The
+room's enter handler *is* re-run on the way out — `RestoreGameTask` ->
+`sub_0801AE44` -> `gArea.onEnter` — which was confirmed by tracing, so
+"the handler never runs" was out. Re-running the handler a second time after
+the palette restore changed nothing, so "the palette backup clobbers it" was
+out too. Checksumming the three candidates across the pause settled it in one
+run:
+
+| | before | after |
+|---|---|---|
+| BG2 character data (`0x06000000`, 16 KB) | `AA105DE5` | `AA105DE5` |
+| BG2 map (screenbase 28, `0x0600E000`) | `EB1BBC50` | **`0A853C7E`** |
+| BG palette | `101EF5AB` | `101EF5AB` |
+
+Only the map moves. **The tiles and the palette were never the problem.**
+
+**Root cause: a port-only line writing a text tilemap into an affine map.**
+`RestoreGameTask` ends with a `#ifdef PC_PORT` block that forces
+`sub_08016CA8` on BG0, BG1 and BG2 to push the staging buffers into VRAM,
+added because the GBA mechanism that does so after a map subtask does not fire
+here. In GBA display mode 1 or 2 that layer's screenbase does not hold a text
+tilemap at all — it holds a one-byte-per-tile *affine* map, which the room's
+own handler loads straight from a gfx group (`LoadGfxGroup(0x16)`, whose second
+entry lands on exactly that screenbase). The forced copy overwrites it. That is
+also why re-running the handler did not help: the handler reloads the map
+correctly and this line then destroys it, one step later.
+
+**Two layers, and they fail differently — which is why this took two passes.**
+`LoadGfxGroup(0x16)` writes *four* destinations, and two of them are maps:
+
+| dest | size | what |
+|---|---|---|
+| `0x06000000` | 16384 | BG2 character data (BG2CNT `0xBC82`, charbase 0) |
+| `0x0600E000` | 4096 | **BG2's affine map** (screenbase 28) |
+| `0x06004000` | 8192 | BG1 character data (BG1CNT `0x5E86`, charbase 1) |
+| `0x0600F000` | 2048 | **BG1's map** (screenbase 30) |
+
+Overwriting BG2's affine map with a text tilemap turns the barrel into noise —
+the reported symptom. Overwriting BG1's map is quieter: BG1 carries the wood
+grain, alpha-blended over the staves (`layerFXControl = 0x3456`,
+`alphaBlend = 0x909`), so losing it leaves the barrel legible but flat.
+
+**Fixing only BG2 left exactly that behind, and it was mis-read as a palette
+problem** — the palette buffer checksum was identical across the pause, the
+colour *count* had changed, and "different colours" was the obvious reading. It
+was the maintainer who named it: the grain lines were simply absent. The lesson
+is that a colour-count delta says "the image changed", not "the palette
+changed", and the two were only distinguishable by someone looking at it.
+
+Fixed by skipping **both** the BG1 and BG2 copies when the display mode makes
+the room affine. BG0 keeps its copy: it carries the HUD and the text box, which
+are genuinely buffer-driven in every room including this one. The mode read is
+the room's own, because the handler has already applied it by that point.
+
+**Verified**: on a stationary fixture the frame after the pause is
+**pixel-identical to the frame before it — 0 differing pixels of 76800** — and
+on the maintainer's own recording the colour count matches at 107 either side.
+Gate 11/11, `fetches=265497600 mismatched=0`.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
