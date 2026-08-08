@@ -7,11 +7,16 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and twenty of the twenty-one tracked bugs are
-closed. Two open items are both decisions rather than work: frame time is +41%
-over the canvas baseline with peak frames past the 16.67 ms deadline, and B21's
-light shaft cannot reach the right edge without reallocating a BG layer's
-screenbase. No go/no-go is recorded for either.**
+complete — every spike landed and twenty-one of the twenty-four tracked bugs
+are closed. Three are open. Two are decisions rather than work: frame time is
++41% over the canvas baseline with peak frames past the 16.67 ms deadline, and
+B21's light shaft cannot reach the right edge without reallocating a BG layer's
+screenbase — no go/no-go is recorded for either. **B24 is the open defect** — a
+vehicle (lily pad, minecart) is left outside the room across a faded room
+transition. Diagnosed, one fix attempted and confirmed *not* to resolve it, so
+the diagnosis is incomplete; the tracker lists what to check next, and the first
+job is a fixture, because the recording that found it can no longer be
+replayed.**
 
 There is also an **arm64 Android build** (`android/`), which is the same
 viewport on other hardware and is played on an Ayaneo Pocket S 2K.
@@ -20,7 +25,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-one
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-four
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -48,6 +53,16 @@ layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
 cover 256 px, not 320. If a room renders as sprites over black above native
 size, start from `TMC_REJECT_TRACE=1`, which names the rejection class in one
 run. The sweep in the tracker enumerates the rest.
+
+**B22 is the same assumption a fourth time, one axis over, and it broke
+gameplay rather than rendering.** A room that is *exactly* viewport-sized on
+hardware — 240x160 — pins the camera on the room origin, which makes
+`scroll_y` and `origin_y` the same number and lets the engine spell a room
+position either way. Above native size they differ by the centring offset. The
+rolling barrel held the player 40 px off its own midline that way, so the doors
+and the cobweb hole were out of reach. **In such a room, every camera-relative
+expression is unverified code.** The width sweep did not catch this because it
+asked about width; the vertical case has not been swept.
 
 **A platform-only symptom is not a platform bug.** B16 reproduced on Android 2
 runs in 3 and never on desktop, and six rounds went into what was different

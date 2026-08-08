@@ -1,9 +1,12 @@
-# Milestone 2 — status at session close, 2026-08-07
+# Milestone 2 — status at session close, 2026-08-08
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty of the twenty-one tracked
-bugs are closed. **Two things are still open and both are judgements rather
-than work: frame time, and B21's light shaft.**
+the items the plan did not anticipate, and twenty-one of the twenty-four
+tracked bugs are closed. **Three are still open. Frame time and B21's light
+shaft are judgements rather than work. B24 — a vehicle left outside the room
+across a faded room transition — is the open defect**: diagnosed, one fix
+attempted, and the softlock confirmed still present with it in, so the
+diagnosis is incomplete. Deferred to a later cycle.
 
 Since 2026-08-02 this milestone also grew an **arm64 Android build**
 (`android/`). It is not a separate port — it is this viewport on other
@@ -170,10 +173,20 @@ The same held for B5, B15 and B16 — every bug in this milestone that needed a
 human at the controls was resolved by a recording, usually after inference had
 already failed on it.
 
-**Three of the twenty-one were one defect reported three times.** B5, B15 and
+**Four of the twenty-two were one assumption reported four times.** B5, B15 and
 B17 are all a world layer losing its map source and falling back to a 256 px
 screenblock that cannot cover 320. Each was found by a separate playtest report
 before anyone asked the general question; when it finally was asked, the sweep
 that answered it needed no new code — `TMC_REJECT_TRACE` and
 `--mapsource-report` had existed since Milestone 1. Ask the general question
 after the second instance, not the third.
+
+**B22 is the fourth, and the sweep did not catch it** — because the sweep asked
+about *width*, and B22 is the vertical case. It is also the first of the family
+to break gameplay rather than rendering: the rolling barrel held the player on a
+midline it measured from the camera instead of from the room, which are the same
+number only because that room is exactly 240x160. A room that is exactly
+viewport-sized on hardware makes camera-relative and room-relative coordinates
+indistinguishable, so every such expression in one is unverified until the
+viewport changes. That is the general question this time, and it has not been
+swept.

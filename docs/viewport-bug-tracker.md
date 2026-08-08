@@ -1,23 +1,31 @@
 # Viewport expansion — bug tracker
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
-playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B21
+playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
 from the maintainer playtesting 320×240, most with recordings. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty of the twenty-one bugs
-are closed: nineteen fixed with a root cause and evidence, and B4 closed as
-**no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
-full, but every route to a fix is blocked, so it is a decision rather than
-work.
+complete — see `docs/milestone2-status.md`.** Twenty-one of the twenty-four
+bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
+**no longer observed** rather than diagnosed. **B21 and B24 are open.** B21 is
+diagnosed in full but every route to a fix is blocked, so it is a decision
+rather than work. B24 is a real defect: diagnosed, a fix attempted, and the
+softlock confirmed still present with it in — deferred to a later cycle.
 
 **Four of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
 iris veto. The expansion exposed them; it did not cause them. This document
 stays the authoritative record of what the expansion actually did to the
 engine.
+
+**B22 is the fourth appearance of one assumption — that the screen is the
+room.** B5, B15 and B17 were the first three, all horizontal. B22 is the
+vertical case and the first to break *gameplay* rather than rendering: a room
+that is exactly viewport-sized on hardware lets camera-relative and
+room-relative coordinates be written interchangeably, and only a viewport
+change tells them apart.
 
 Anything at 240x160 is a release blocker. Anything at 320x160 blocked the
 Milestone 1 exit criteria but not the shipping build, which is still
@@ -49,6 +57,9 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B19 | Segfault entering a room narrower than the viewport | **Fixed** 2026-08-06 — a `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9. Reported from Android with a recording; reproduced on desktop first try |
 | B20 | Gameplay flashes at 240x160, offset, across a pause transition | **Fixed** 2026-08-06 — the centring clip changed several frames before the picture did; it now changes only on a black frame |
 | B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
+| B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
+| B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
+| B24 | Riding a lily pad through a room scroll strands the player outside the room | **Open.** Diagnosed 2026-08-08 and a two-part fix attempted the same day; **the maintainer confirms the softlock is still present with it in**, so the diagnosis is incomplete. Deferred to a later work cycle |
 
 ---
 
@@ -1227,6 +1238,298 @@ sized it — two real checks that were both true and neither of which was the on
 that decides. VRAM allocation was, and it was never looked at until the
 prototype corrupted the HUD. When a change needs a resource, check the resource
 is free *before* checking the code that would use it.
+
+## B22 — rolling barrel interior: doors out of reach, room spills past 160 rows *(fixed)*
+
+Deepwood Shrine's `InsideBarrel` (area `0x48`, room `0x20`). **Reported
+2026-08-08 by the maintainer: "the doors do not line up with the walkable room
+area", the room unplayable at 320x240.** Fixed the same day.
+
+**The doors never moved. The player did.** The room is exactly 240x160 — the
+one size at which a room is the screen — so at 320x240 it is centred and the
+camera is pinned 40 px above the room origin (`camx=-40 camy=-40`,
+`TMC_CAMTRACE`). `sub_08058CFC` holds the player on the barrel's midline and
+measured that midline **from `scroll_y`**, i.e. from the camera. On hardware
+`scroll_y == origin_y` here by construction, so the two spellings are the same
+number and the engine's choice was free. Above native height it is 40 px of
+error, and everything the player interacts with — the four door hitboxes, the
+cobweb hole at room y 69..92, the roll-speed reading, the quadrant split at
+`0x50` — is measured from `origin_y` and stayed put.
+
+Measured on Link's sprite: **room y 27 at 320x240 against 63 at 240x160.**
+
+Three symptoms from the one defect, which is why it read as several problems:
+
+- the lower pair of doors (room y 136..146) was outside the reachable band;
+- the barrel rolled continuously and unprompted, because sitting permanently
+  above the midline satisfies `tmp < 0x49` every frame — and a barrel that will
+  not hold still cannot hold the narrow angle windows the doors test;
+- the quadrant split always chose the upper half, whichever half the player was
+  in.
+
+**The visual half is the vertical twin of B5/B15/B17.** The barrel's picture is
+BG2 as an affine layer, driven by a per-scanline matrix the manager rebuilds
+every frame in screen coordinates it spells as literals — `scrX = 0x78`,
+`scrY = 0x80`, and a `/0xA0` that spreads a quarter sine period across the
+screen's 160 scanlines. Run over 240 rows, the index reached 191 instead of 127
+and the stave curvature inverted over the bottom rows, and the layer's own
+screenblock ran out of authored content at row 160 and showed 80 rows of
+unrelated tiles below it.
+
+**Fix.** Three parts, all reducing to the original at GBA-native size:
+
+1. `sub_08058CFC` anchors to `gRoomControls.origin_y`. Same number at 240x160.
+2. `sub_08058BC8` builds entry `tmp3` from room row `tmp3 - UI_CENTER_DY`,
+   clamped to `DISPLAY_HEIGHT`, so the 160 authored rows land in the centred
+   band and no sine index leaves the range the 240x160 build uses.
+   `UI_CENTER_DY` is 0 at native, so `row == tmp3`.
+3. `port_mapsource.c` gives the room's layers `offset_y = UI_CENTER_DY,
+   content_height = DISPLAY_HEIGHT` — the vertical twin of the existing width
+   clip. **BG0 is excluded**: it carries the HUD, whose bands anchor to the top
+   and bottom of the *viewport*, and confining it would push the hearts down
+   40 px and delete the counters.
+
+**The room is reached mechanically, not by area and room number.** The
+predicate is "a world view in a GBA affine display mode" (`DISPCNT` mode 1 or
+2). `grep DISPCNT_MODE_ src/` returns exactly two sites in the whole game: the
+title screen, which is already a centred UI screen, and this room. An affine
+layer has no room map behind it and does not follow the camera, so it is a
+240x160-authored surface by construction — `mode2.c` already says so where it
+honours the clip on that layer.
+
+**Verification, because a gate pass is not coverage here.** This changes a
+per-frame mechanism, not a surface, so a static waypoint proves little. Driving
+a full roll — down, up, and settling — from a script:
+
+- 26 sampled frames **byte-identical at 240x160** before and after, with 23 of
+  25 consecutive pairs differing from each other, i.e. the mechanism is
+  genuinely exercised rather than 26 copies of a still scene;
+- at 320x240 the play area (crop rows 37..128, between the two HUD bands) is
+  **pixel-identical to the 240x160 build on all 26 frames**, and the player's
+  position tracks it exactly at +40. The only differing rows are 6..36 and
+  129..156 — the two HUD bands, which are bottom- and top-anchored and are
+  supposed to differ;
+- canonical route 11/11, map-source audit `fetches=265497600 mismatched=0`.
+
+**Left open, deliberately: ~24 px of the barrel's rim sprites still show in the
+top and bottom border.** The rim is twelve 32x32 sprites (tile `0x8EB0`,
+priority 3) at room y -24 and y 152 — six across, mirrored. Hardware clipped
+them at the screen edge; a taller screen reveals 24 more rows of each. The
+horizontal twin of this is already solved (`set_obj_clip` to the room's
+on-screen span) and the HUD survives it **by construction** — the narrowest room
+is 240, so the span is at worst `[40,280)` and the HUD is authored inside 240
+and shifted by 40 into it. **Vertically there is no such construction**: the
+shortest room is 160, so the span is at worst `[40,200)`, and the HUD's own
+sprites sit at y 4..21 and near the bottom edge — inside the band a rim clip
+would have to remove. Confining the rim therefore needs a per-slot world/UI
+distinction plumbed through `RenderSpritePieces`, `gOam*` and the PPU's OBJ
+raster, which is a hot loop, at a milestone whose frame time is already an open
+go/no-go. Costed and put to the maintainer rather than spent unasked.
+
+**Lesson (20).** *A coordinate the engine had two equal spellings for is a
+defect waiting for the viewport to separate them.* `scroll_y` and `origin_y`
+were the same number in this room on hardware, so nothing distinguished the
+right one from the wrong one until the camera could move relative to the room.
+The same shape as B5/B15/B17 — an assumption that the screen is the room — and
+the fourth time it has been the answer. When a room is exactly viewport-sized,
+every camera-relative expression in it is unverified code.
+
+## B23 — barrel's drawn hole and the fall it triggers are rotationally apart *(fixed)*
+
+**Reported 2026-08-08 with a recording, immediately after B22 was fixed:** the
+invisible exits are now in the right place, but the *drawn* door/hole sits at a
+different rotation from the exit that fires. Clearest on the middle exit — the
+drawn cobweb hole is nowhere near where Link starts falling.
+
+**Not the expansion, and not B22's fix. It is the port's own angle-gate bypass**
+(`sub_08058A04`, `#ifdef PC_PORT`, from CHANGELOG #6, commits `107e7451` /
+`cd99dd4d` — long before Milestone 2). Hardware gates the fall on
+`unk_20 - 0x118 < 0xD`, i.e. a 13-unit window out of a 512-unit revolution,
+*because the cobweb hole rotates with the barrel*. The gate is what guarantees
+the drawn hole is at room centre when the fall fires — and the fall snaps the
+player to room centre (`origin + 0x78, 0x50`) unconditionally. Remove the gate
+and the fall still uses room centre while the hole is wherever the rotation put
+it.
+
+**Measured on the maintainer's recording:** at the frame he falls, `unk_20` is
+`0xA4`; the window `0x118..0x124` opened on **0 of the sampled frames** of the
+whole run. `0xA4` is the barrel's own rest angle (the snap targets are `0x48`,
+`0xA0`, `0xF0`), so the bypass makes the fall fire at a rest angle essentially
+every time — a fixed ~0x74 of rotation, about 82°, from where the hole is drawn.
+
+**Viewport-independent by construction**: the bypass is `#ifdef PC_PORT`, which
+is defined at both sizes, so 240x160 is misaligned identically. This was
+invisible until B22 was fixed because the room was not playable enough to reach
+the hole deliberately.
+
+**It is a decision, not a defect to fix silently** — the bypass was the
+maintainer's deliberate call to make the hole reachable, and the difficulty it
+worked around is real at 240x160 too (so it was *not* a workaround for B22).
+Three routes, put to the maintainer 2026-08-08:
+
+1. **Restore the hardware gate.** Drawn hole and fall coincide exactly; the
+   original difficulty returns.
+2. **Keep the bypass.** Easy to trigger, permanently misaligned — today's
+   report.
+3. **Rotate the barrel into alignment, then fall.** When the player stands in
+   the hole with the cobweb gone, drive `unk_20` toward the window over a few
+   frames and fall when it opens. Keeps the bypass's reachability and restores
+   the visual relationship.
+
+**Resolved 2026-08-08: option 1, the maintainer's choice.** The bypass is gone
+and `angleOk = (this->unk_20 - 0x118 < 0xDu)` is unconditional again.
+
+**Restoring the gate exposed the real defect, which was in the renderer, not
+the engine.** The maintainer re-tested and reported standing dead centre on the
+drawn hole without falling. Traced: he was in the hitbox (`px=120 py=84`,
+`inhole=1`) at `unk_20 = 0xCA`, while the gate wants `0x118` — **the drawn
+barrel was 0x4E out of step with the angle the logic reads.**
+
+`virtuappu_mode2_render_frame` computed `tex_y = ref_y + pd * rel_line + ...`.
+That accumulation is right when BG2X/BG2Y are latched once per frame, which is
+how the affine BG normally works. It is wrong when HBlank-DMA **rewrites the
+reference every scanline**, because hardware's internal accumulator is
+overwritten before each line is drawn — the value just written *is* that line's
+reference. The barrel supplies `texY = (angle + line) << 8` per line, so the
+line term was counted twice: the texture was sampled at **twice the vertical
+rate**, and the picture sat
+
+    (unk_20 + 2r - 128) - (unk_20 + r - 128) = r
+
+texture rows out of step, which at the centre of the authored frame (r = 80) is
+**0x50** — against 0x4E measured, the 2 being `sy` not quite 1.0.
+
+Fixed in the PPU rather than worked around in the engine:
+`port_hdma_drives_bg2_reference()` reports whether an active channel covers
+IO 0x28..0x2F, `Port_PPU_PresentFrame` publishes it through
+`virtuappu_mode1_set_bg2_ref_per_line()`, and mode2.c drops the `pb`/`pd` line
+term while it is set. **Verified**: the same scripted approach that lands the
+window now falls through with the hole under the player, and the barrel's plank
+spacing and grain are correct instead of vertically doubled — which is also the
+long-standing "renders as flat brown bands / warp not honoured" complaint from
+CHANGELOG 0.1.2 and #6, and the actual reason the angle was unlandable enough
+to be bypassed in the first place.
+
+**Not viewport-specific**: the double-count was there at 240x160 too, so the
+shipping build's barrel was equally out of step. The regression gate passes
+(11/11, 0 mismatches) but never enters this room, so it is not evidence here —
+the evidence is the capture above.
+
+**Reachability was the risk and was measured before shipping it** — a gate that
+cannot be landed makes the dungeon unfinishable, which is far worse than a
+misaligned hole. Two facts settled it:
+
+- **The window is on the barrel's free-rolling arc.** The snap targets are
+  0x48, 0xA0 and 0xF0, and traced over a full revolution the angle runs
+  0xF0 -> 0x117 -> 0x146 -> ... -> 0x1D2 -> 0x0 -> 0x2F -> 0x48: nothing between
+  0xF0 and the wrap, so a barrel pushed past its last rest rolls straight
+  through 0x118..0x124 rather than stopping short of it.
+- **It can be landed, and the technique is the authentic one.** Roll until the
+  angle is inside the window, then stop pushing; the angle freezes as soon as
+  the player is back inside 0x49..0x57, and the hole band (room y 69..91)
+  overlaps that. Swept five release timings 60 frames apart: **1720 froze at
+  0x118 and 1733 at 0x120, both `win=1` and both fell through**; 1700 stopped
+  short at 0xF4, 1745 and 1760 overshot to 0x135 and 0x149. A ~25-frame band
+  out of a ~60-frame roll, with the hole visibly rotating into place as
+  feedback.
+
+## B24 — riding a lily pad through a room-scroll transition strands the player outside the room *(open)*
+
+Deepwood Shrine B2, floating east from room `0x14` into `0x15`. **Reported
+2026-08-08 with the same recording.** The player and the pad end up west of the
+room's own west edge, held there by the room-border collision, drawn in the
+left border and unable to move — a softlock.
+
+**Exact numbers, from a per-frame trace of the transition:**
+
+| | |
+|---|---|
+| room `0x14` | origin_x 736, width 464 → east edge **1200** |
+| room `0x15` | origin_x **1200**, width 272 |
+| player at commit (f5743) | absolute x **1169** — 31 px short of the boundary |
+| after the slide (f5745) | absolute x **1189**, `unk_18=80`, camera 880→1200 |
+| settles | absolute x **1177** → room x **-23**, camera correctly pinned at -24 |
+
+**Root cause: `VIEWPORT_SCROLL_FADE` collapses the slide into a single frame,
+and that preserves the camera and the player's per-step drift but not the
+motion of the vehicle he is riding.** `Scroll2Sub2` runs all
+`VIEWPORT_SCROLL_STEPS_X` (80) steps in one frame; each step moves the camera
+4 px and nudges the player 0.25 px, so the player gains exactly 80 x 0.25 = 20
+px — which the trace confirms to the pixel (1169 → 1189). On hardware the same
+slide takes 60 *frames*, during which the lily pad is a live entity with
+`action = 3` and `speed = 0x100` (1 px/frame east, set by `sub_08085E74`, which
+also makes the pad `gRoomControls.camera_target`) and therefore carries the
+player a further ~60 px — comfortably across the 31 px boundary. Collapsed, the
+pad gets one frame instead of sixty.
+
+`Scroll2Sub2`'s own comment states the intent — "land on exactly the state the
+sliding path would have reached". For a walking player it does; for a *ridden*
+one it does not, because the drift models only the player.
+
+The lily pad is one of four callers of `sub_0807BD14`; **`minecart.c` is
+another and is the same shape**, so this is a class, not one room.
+
+**Expansion-caused but not caused by B22's fix** — proved two ways: the two
+functions B22 touched are called only from the barrel manager, and room `0x15`
+runs in DISPCNT mode 0, where B22's clip predicate is false. The fade path only
+exists above GBA-native size, so 240x160 is unaffected.
+
+**Not reproducible by replaying the recording on an older build** — on the
+pre-B22 binary the player bounces out of the barrel four times and never
+reaches B2 at all, and at 240x160 the run diverges after room `0x14` because
+transitions slide rather than fade.
+
+**A two-part fix was attempted on 2026-08-08 (maintainer's choice: advance the
+vehicle by the same steps). It did not work — the maintainer confirms the
+softlock still reproduces with it in.** It is committed separately from the
+barrel work so it can be dropped with one revert. Both parts still look correct
+in isolation and neither is known to break anything, but they are evidently not
+the whole cause, so **treat the diagnosis below as incomplete rather than as a
+fix awaiting verification**:
+
+1. `ScrollTransitionApplyWhenBlack` (playerUtils.c) saves and restores
+   `gRoomControls.camera_target` around the apply. The deferral inverts an
+   order: a vehicle hands off by calling `sub_0807BD14` and *then* claiming the
+   camera, so sliding the claim lands after the apply's reset and stands, while
+   fading it lands 32 frames before and is wiped. That wipe is why the player
+   received the *walker's* 0.25 px-per-step nudge at all — `Scroll2Step` applies
+   it only when the target is the player. Same shape as
+   `sScrollFadePlayerDirection` (B16), one field over.
+2. `Scroll2Sub2` (scroll.c) advances a non-player camera target, and the player
+   with it, by `steps x speed` along the scroll direction — the travel the
+   vehicle would have had over the frames the collapse skipped.
+
+**Still open. What the next cycle should not repeat.**
+
+The measurements above are solid — the commit position (world x 1169, 31 px
+short of the 1200 boundary), the +20 px that is exactly the walker's
+`80 x 0.25`, and the arrival at room x -11 settling to -23 are all traced and
+reproducible. What was *inferred* rather than measured is that the vehicle's
+missing travel is the whole of the shortfall. It is not, or not only: supplying
+that travel did not clear the softlock.
+
+Three things worth checking before touching the transition path again:
+
+- **Is the room change firing too early rather than the travel being too
+  short?** The lily pad hands off when the collision 24 px ahead of the *pad*
+  reads `COLLISION_DATA_255` (`sub_08085D60`), and the player sits ~7 px behind
+  the pad's centre. Nothing has confirmed that the hand-off position is the same
+  as it would be on hardware.
+- **What actually moves the player to 1177 at f5754** — a 12 px step *west*,
+  against his direction of travel, with `action = 25`. That was never explained
+  and it is the step that puts him outside the room; the +20 alone leaves him at
+  1189.
+- **Whether he is held by the room border or by his own state.** He is drawn at
+  screen x 4 with the camera correctly pinned at -24, so the camera is not
+  implicated; `TMC_STUCK_TRACE` stays silent, so it is not the
+  `PLAYER_ROOMTRANSITION` hang B16 was.
+
+**Build a fixture first.** The recording that found this cannot be replayed —
+B23's gate change stops it at the barrel, and at 240x160 it diverges after room
+`0x14` because transitions slide rather than fade. Until a lily-pad *and* a
+minecart transition can be reached on demand, any further change here is
+unverifiable. `minecart.c` takes the same path and has never been exercised at
+all.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 

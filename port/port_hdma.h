@@ -21,6 +21,10 @@ extern "C" {
 void port_hdma_register(int channel, const void* src, void* dest,
                         uint16_t cnt_h, uint16_t count);
 int port_hdma_has_active_channels(void);
+/* Is an active channel writing BG2's affine reference point (BG2X/BG2Y, IO
+ * 0x28..0x2F) every scanline? The affine renderer must not accumulate pb/pd
+ * across lines when it is — see virtuappu_mode1_set_bg2_ref_per_line. */
+int port_hdma_drives_bg2_reference(void);
 void port_hdma_unregister(int channel);
 void port_hdma_step_line(int line);
 void port_hdma_vblank_reset(void);

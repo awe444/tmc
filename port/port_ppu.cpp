@@ -504,6 +504,10 @@ extern "C" void Port_PPU_PresentFrame(void) {
      * when HDMA has already supplied per-line reference points. */
     virtuappu_mode1_pre_line_callback =
         port_hdma_has_active_channels() ? port_hdma_step_line : nullptr;
+    /* The affine renderer must not accumulate pb/pd across lines while the DMA
+     * is rewriting BG2X/BG2Y per scanline. Re-evaluated every frame because the
+     * registration comes and goes with the scene. */
+    virtuappu_mode1_set_bg2_ref_per_line(port_hdma_drives_bg2_reference() != 0);
 
     Port_PPU_OamYProbe();
     virtuappu_render_frame();
