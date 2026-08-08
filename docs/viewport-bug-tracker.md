@@ -1534,12 +1534,31 @@ through the deferral, is at room `0x15` x **91** with the player at 89 when it
 returns to floating — comfortably inside a 272-wide room — against **-23**
 before. Regression gate 11/11, `fetches=265497600 mismatched=0`.
 
-It lands ~55 px further in than hardware would, because the pad moves during
-the 32 fade frames *and* gets the collapsed slide's travel, where hardware has
-only the slide. Accepted rather than tuned: freezing the pad during the fade
-would make it visibly stall while the screen is still bright, which reads worse
-than being carried slightly further, and the end state — floating in the room —
-is the same either way.
+**Then trimmed, on the maintainer's report that it entered too far in.** The
+first version landed the pad 91 px into a 272-wide room where hardware puts it
+at ~36, because it was given the 32 fade frames of its own travel *and* a full
+`VIEWPORT_SCROLL_STEPS_X` slide on top. Two things were wrong with that number:
+
+- **How far a vehicle carries the player is a fact about the vehicle and the
+  room, not about how wide the screen is.** It is `speed` for as many frames as
+  the slide lasts, and on hardware that is `DISPLAY_WIDTH / 4` across (60) or
+  `DISPLAY_HEIGHT / 4` down (40). `VIEWPORT_SCROLL_STEPS_*` is right for the
+  *camera*, which genuinely has more screen to bring on at 320 wide, and wrong
+  for him.
+- **The fade frames are travel too.** The carry state runs throughout the
+  deferral, so by the time the slide is collapsed the vehicle has already had
+  those frames; only the remainder is owed. The fade is `0x100` of progress at
+  `VIEWPORT_SCROLL_FADE_SPEED`, so its length is `0x100 / SPEED` = 32 frames.
+
+`Scroll2Sub2` now tops up by `nativeSteps - fadeFrames` — 28 frames across, 8
+down — clamped at zero. **Re-measured on the same recording: the pad enters
+still carrying at room x 7 and comes to rest at 39 with the player at 37**,
+against 91 before and ~36 on hardware. The 3 px over is the few frames of carry
+that run after the swap before `reload_flags` clears.
+
+Freezing the vehicle during the fade instead was rejected: it would visibly
+stall while the screen is still bright, where being carried is what hardware
+shows.
 
 **`minecart.c` has the same `sub_0807BD14`-then-claim shape and has still never
 been exercised.** If a cart ever strands you on a room boundary, this entry is
