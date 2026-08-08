@@ -3983,11 +3983,34 @@ static u8 sScrollFadePlayerDirection;
 
 void ScrollTransitionApplyWhenBlack(void) {
     if (sScrollFadePending && !gFadeControl.active) {
+        /* The camera target the *caller* left behind, which the apply resets to
+         * the player (gameUtils.c) and which the sliding path therefore keeps
+         * and this one loses. Same shape as sScrollFadePlayerDirection above,
+         * one field over, and it is the deferral that causes it.
+         *
+         * The order is what differs. A vehicle hands off by calling
+         * sub_0807BD14 and *then* claiming the camera —
+         * `gRoomControls.camera_target = super` at the end of sub_08085E74
+         * (lilypadLarge.c), minecart.c likewise. Sliding, sub_0807BD14 applies
+         * the transition inside itself, so the vehicle's claim lands after the
+         * reset and stands. Fading, the apply is 32 frames later, so the claim
+         * lands first and the reset wipes it — and the slide then runs as if
+         * the player were walking.
+         *
+         * Restoring it is not cosmetic: Scroll2Step nudges the player 0.25 px
+         * per step *only* when the target is the player, which is how the
+         * engine says "the vehicle is moving him, not the scroller". With the
+         * claim wiped, he got the walker's nudge and the vehicle got nothing.
+         * B24. */
+        Entity* target = gRoomControls.camera_target;
         sScrollFadePending = FALSE;
         /* Before the apply, so the room change lands on a player who is still
          * facing the way he was walking. See sScrollFadePlayerDirection. */
         gPlayerEntity.base.direction = sScrollFadePlayerDirection;
         ScrollTransitionApply(sScrollFadeRoom, sScrollFadeDirection);
+        if (target != NULL) {
+            gRoomControls.camera_target = target;
+        }
     }
 }
 #endif

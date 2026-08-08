@@ -274,8 +274,55 @@ void Scroll2Sub2(RoomControls* controls) {
         int guard = (VIEWPORT_SCROLL_STEPS_X > VIEWPORT_SCROLL_STEPS_Y ? VIEWPORT_SCROLL_STEPS_X
                                                                       : VIEWPORT_SCROLL_STEPS_Y) +
                     1;
+        int steps = 0;
         while (controls->scrollAction == 2 && guard-- > 0) {
             Scroll2Step(controls);
+            steps++;
+        }
+        /* Give the vehicle the travel the slide would have given it.
+         *
+         * "Land on exactly the state the sliding path would have reached" holds
+         * for a walking player, because Scroll2Step models all of his motion:
+         * 0.25 px per step and nothing else. It does not hold for a player
+         * being *carried*. A lily pad or a minecart is a live entity moving
+         * under its own speed on every one of the slide's frames, and running
+         * those frames in one costs it all of them — 80 frames of travel at
+         * `speed` for a room change that only nudges the scroller.
+         *
+         * Measured on the maintainer's B24 recording, floating east out of
+         * Deepwood B2 room 0x14 (origin 736, width 464, so its east edge and
+         * room 0x15's origin are both 1200): the player committed at world x
+         * 1169, 31 px short of the boundary, and the collapsed slide moved him
+         * to 1189 — exactly the 80 x 0.25 the walker's nudge gives and nothing
+         * more. He arrived at room x -11, drifted to -23, and the room border
+         * held him there, off the left of a room he was already inside. The
+         * pad's own 0x100 (1 px/frame) over 80 frames is what carries him the
+         * remaining distance on hardware.
+         *
+         * Applied to the player as well as the target so a rider keeps station
+         * with what he is riding; the vehicle's own update re-derives the
+         * offset from there (sub_08085EFC), so this cannot double-count.
+         *
+         * Skipped when the target *is* the player — that case is already fully
+         * modelled by the per-step nudge, and adding his walking speed on top
+         * would overshoot every ordinary doorway in the game. */
+        {
+            Entity* target = controls->camera_target;
+            if (target != NULL && target != &gPlayerEntity.base) {
+                s32 travel = (s32)steps * (s32)target->speed * 0x100;
+                switch (controls->scroll_direction) {
+                    case 0: travel = -travel; /* fallthrough */
+                    case 2:
+                        target->y.WORD += travel;
+                        gPlayerEntity.base.y.WORD += travel;
+                        break;
+                    case 3: travel = -travel; /* fallthrough */
+                    case 1:
+                        target->x.WORD += travel;
+                        gPlayerEntity.base.x.WORD += travel;
+                        break;
+                }
+            }
         }
         controls->scrollAction = 0;
         /* Repopulate the screenblock for the camera's final position while the
