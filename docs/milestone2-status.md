@@ -2,11 +2,8 @@
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
 the items the plan did not anticipate, and twenty-one of the twenty-four
-tracked bugs are closed. **Three are still open. Frame time and B21's light
-shaft are judgements rather than work. B24 — a vehicle left outside the room
-across a faded room transition — is the open defect**: diagnosed, one fix
-attempted, and the softlock confirmed still present with it in, so the
-diagnosis is incomplete. Deferred to a later cycle.
+tracked bugs are closed. **Two are still open and both are judgements rather
+than work: frame time, and B21's light shaft.**
 
 Since 2026-08-02 this milestone also grew an **arm64 Android build**
 (`android/`). It is not a separate port — it is this viewport on other

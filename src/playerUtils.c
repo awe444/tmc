@@ -4015,6 +4015,29 @@ void ScrollTransitionApplyWhenBlack(void) {
 }
 #endif
 
+/* Is a scroll transition decided but not yet applied?
+ *
+ * A vehicle carrying the player across a room scroll holds that state until the
+ * engine says the scroll is over, and the engine says so with
+ * `gRoomControls.reload_flags == 0` (LilypadLarge_Action3, and minecart.c has
+ * the same shape). Sliding, sub_0807BD14 applies the transition on the spot, so
+ * that flag is already set the first time the vehicle's carry state runs.
+ * Fading, the apply is deferred until black -- and for those 32 frames nothing
+ * marks a transition as in progress, so the carry state reads "scroll finished"
+ * on its very first frame, hands the camera back and exits before the room has
+ * even changed. The vehicle then never carries anyone anywhere. B24.
+ *
+ * So a pending transition counts as in progress. Zero at GBA-native size, where
+ * there is no deferral and the question cannot arise. */
+bool32 ScrollTransitionIsPending(void) {
+#if VIEWPORT_SCROLL_FADE
+    return sScrollFadePending;
+#else
+    return FALSE;
+#endif
+}
+
+
 bool32 sub_0807BD14(Entity* this, u32 scrollDirection) {
     u32 room = sub_0807BEEC(this->x.HALF.HI, this->y.HALF.HI, scrollDirection);
     if (room != 0xff) {

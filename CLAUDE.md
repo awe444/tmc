@@ -8,15 +8,10 @@ unexplained literals as load-bearing until proven otherwise.
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
 complete — every spike landed and twenty-one of the twenty-four tracked bugs
-are closed. Three are open. Two are decisions rather than work: frame time is
-+41% over the canvas baseline with peak frames past the 16.67 ms deadline, and
-B21's light shaft cannot reach the right edge without reallocating a BG layer's
-screenbase — no go/no-go is recorded for either. **B24 is the open defect** — a
-vehicle (lily pad, minecart) is left outside the room across a faded room
-transition. Diagnosed, one fix attempted and confirmed *not* to resolve it, so
-the diagnosis is incomplete; the tracker lists what to check next, and the first
-job is a fixture, because the recording that found it can no longer be
-replayed.**
+are closed. Two are open, and both are decisions rather than work: frame time
+is +41% over the canvas baseline with peak frames past the 16.67 ms deadline,
+and B21's light shaft cannot reach the right edge without reallocating a BG
+layer's screenbase. No go/no-go is recorded for either.**
 
 There is also an **arm64 Android build** (`android/`), which is the same
 viewport on other hardware and is played on an Ayaneo Pocket S 2K.
@@ -53,6 +48,15 @@ layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
 cover 256 px, not 320. If a room renders as sprites over black above native
 size, start from `TMC_REJECT_TRACE=1`, which names the rejection class in one
 run. The sweep in the tracker enumerates the rest.
+
+**The faded room transition (VIEWPORT_SCROLL_FADE) defers the apply by 32
+frames, and state that keys off "is a scroll in progress" reads *no* during
+them.** B16 lost the player's facing that way; B24 lost a lily pad's whole
+carry-across-the-scroll state, which exits on `reload_flags == 0` and so quit
+28 frames before the room changed, leaving the pad and the player outside the
+room. Anything that runs between a hand-off and the end of a scroll must be
+checked against `ScrollTransitionIsPending()`. `minecart.c` has the same shape
+and is still unexercised.
 
 **B22 is the same assumption a fourth time, one axis over, and it broke
 gameplay rather than rendering.** A room that is *exactly* viewport-sized on

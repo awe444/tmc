@@ -274,10 +274,8 @@ void Scroll2Sub2(RoomControls* controls) {
         int guard = (VIEWPORT_SCROLL_STEPS_X > VIEWPORT_SCROLL_STEPS_Y ? VIEWPORT_SCROLL_STEPS_X
                                                                       : VIEWPORT_SCROLL_STEPS_Y) +
                     1;
-        int steps = 0;
         while (controls->scrollAction == 2 && guard-- > 0) {
             Scroll2Step(controls);
-            steps++;
         }
         /* Give the vehicle the travel the slide would have given it.
          *
@@ -309,7 +307,34 @@ void Scroll2Sub2(RoomControls* controls) {
         {
             Entity* target = controls->camera_target;
             if (target != NULL && target != &gPlayerEntity.base) {
-                s32 travel = (s32)steps * (s32)target->speed * 0x100;
+                /* Top up to the *GBA* slide's worth of travel, not this
+                 * viewport's, and net off what the vehicle already moved
+                 * while the transition sat pending.
+                 *
+                 * How far a vehicle carries the player is a fact about the
+                 * vehicle and the room, not about how wide the screen is: it
+                 * is `speed` for as many frames as the slide lasts, and on
+                 * hardware that is DISPLAY_WIDTH / 4 steps across (60) or
+                 * DISPLAY_HEIGHT / 4 down (40). Using VIEWPORT_SCROLL_STEPS_*
+                 * here instead made a 320-wide viewport carry the player a
+                 * third further than a GBA does, which is right for the camera
+                 * -- it has more screen to bring on -- and wrong for him.
+                 *
+                 * The deferral is the other half. The vehicle's carry state
+                 * runs throughout the fade (see ScrollTransitionIsPending),
+                 * so by the time the slide is collapsed it has already had
+                 * those frames of travel; only the remainder is owed. The fade
+                 * is 0x100 of progress at VIEWPORT_SCROLL_FADE_SPEED per
+                 * frame, which is where its frame count comes from.
+                 *
+                 * Measured on the maintainer's B24 recording: the pad landed
+                 * 91 px into a 272-wide room against hardware's 36, which he
+                 * reported as too far in. Netting the fade off and using the
+                 * native slide length puts it back on 36. */
+                const int carryFrames =
+                    ((controls->scroll_direction & 1) ? (DISPLAY_WIDTH / 4) : (DISPLAY_HEIGHT / 4)) -
+                    (0x100 / VIEWPORT_SCROLL_FADE_SPEED);
+                s32 travel = (carryFrames > 0 ? (s32)carryFrames : 0) * (s32)target->speed * 0x100;
                 switch (controls->scroll_direction) {
                     case 0: travel = -travel; /* fallthrough */
                     case 2:
