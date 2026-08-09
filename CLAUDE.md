@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and twenty-one of the twenty-four tracked bugs
+complete — every spike landed and twenty-four of the twenty-five tracked bugs
 are closed. Two are open, and both are decisions rather than work: frame time
 is +41% over the canvas baseline with peak frames past the 16.67 ms deadline,
 and B21's light shaft cannot reach the right edge without reallocating a BG
@@ -20,7 +20,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-four
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-five
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -32,9 +32,10 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Four of this milestone's defects were live in the shipping 240×160 build or
+**Six of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
-them. The regression gate proves the shipping build did not *move*; it cannot
+them, and the last two (B23, B25) only because it made the rolling barrel worth
+playing. The regression gate proves the shipping build did not *move*; it cannot
 prove it was right. When a change alters a mechanism rather than a surface,
 count the frames that exercise the mechanism instead of reading a gate pass as
 coverage. B16 and B17 both lived in code the canonical route never executes.
@@ -67,6 +68,18 @@ rolling barrel held the player 40 px off its own midline that way, so the doors
 and the cobweb hole were out of reach. **In such a room, every camera-relative
 expression is unverified code.** The width sweep did not catch this because it
 asked about width; the vertical case has not been swept.
+
+**A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
+loads *whole layers* from a gfx group, maps included, and none of them come from
+`gBGxBuffer`.** Port code that pushes those buffers into VRAM must skip them.
+B25 was a port-only line doing exactly that, live at 240x160 too. It also shows
+how such a bug hides: overwriting BG2's affine map turned the barrel into
+obvious noise, while overwriting BG1's map only removed the alpha-blended wood
+grain, which read as "different colours" until the maintainer said the lines
+were missing. **Fix every layer the handler owns, not the one whose symptom you
+can see** — `LoadGfxGroup(0x16)` writes four destinations and two are maps.
+`grep DISPCNT_MODE_ src/` still returns exactly two sites: the title screen and
+the rolling barrel.
 
 **A platform-only symptom is not a platform bug.** B16 reproduced on Android 2
 runs in 3 and never on desktop, and six rounds went into what was different
@@ -110,9 +123,10 @@ handing work back**, even when the change looks headless — a fix that is only 
 tell a binary is stale short of not seeing their bug fixed.
 
 The 240x160 one exists to answer *"is this the expansion's fault or was it
-always like that?"* by hand. Four of Milestone 2's defects were live in the
+always like that?"* by hand. Six of Milestone 2's defects were live in the
 shipping build all along and only looked new, and each cost rounds before that
-was established. It is the first thing to ask of any new report.
+was established. It is the first thing to ask of any new report — B23 and B25
+were both settled in one run each by warping into the room at 240x160.
 
 **Order matters, and it makes the 240x160 copy free.** The gate below needs a
 240x160 build and the other play build needs a 320x240 one, and `xmake f -c`
