@@ -1,9 +1,16 @@
 # Milestone 2 — status at session close, 2026-08-08
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-one of the twenty-four
-tracked bugs are closed. **Two are still open and both are judgements rather
-than work: frame time, and B21's light shaft.**
+the items the plan did not anticipate, and twenty-four of the twenty-five
+tracked bugs are closed. **Two things are still open and both are judgements
+rather than work: frame time, and B21's light shaft.**
+
+The 2026-08-08 session added four (B22–B25), all in or around Deepwood's
+rolling barrel, and **two of them — B23 and B25 — turned out to be live at
+240×160 as well**, bringing this milestone's tally of pre-existing defects it
+merely exposed to six. Neither would have been found without the expansion:
+B22 had made the room unplayable, and fixing it is what got anyone to use the
+barrel's middle exit on purpose.
 
 Since 2026-08-02 this milestone also grew an **arm64 Android build**
 (`android/`). It is not a separate port — it is this viewport on other
@@ -42,11 +49,15 @@ and several carry inline "superseded" notes pointing back here.
 | Playable 240x160 build | `CLAUDE.md` | `build/play-240x160/` alongside the 320x240 one, so "is this the expansion's fault or was it always like that?" is answerable by hand. Installed from the gate's own binary, so it costs no extra configure |
 | **B20** — gameplay flashes at 240x160 across a pause transition | bug tracker | The centring clip changed several frames before the picture did. Now changes only on a black frame; the close direction has to be anticipated from `gUI.nextToLoad` because its black frame precedes the state change |
 | **B19** — segfault entering a room narrower than the viewport | bug tracker | A `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9 and the pointer walked 8.6 GB. **Reported from Android with a recording and reproduced on desktop on the first replay** — the diagnostics above are why |
+| **B22** — rolling barrel unplayable | bug tracker | The player pin measured the barrel's midline from the camera, not the room; 40 px of error in the one room that is exactly viewport-sized. Doors out of reach, barrel self-rolling. Rim sprites in the border left open as a costed decision |
+| **B23** — barrel drawn out of step with its own logic | bug tracker | The port had bypassed the barrel's rotation gate since long before this milestone; restoring it exposed the real defect, an affine renderer accumulating `pb`/`pd` on top of a reference HBlank-DMA had already set per scanline. Was wrong at 240x160 too |
+| **B24** — lily pad strands the player outside the room | bug tracker | The vehicle's carry state exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad quit 28 frames before the room changed. Carry distance then trimmed to a GBA slide's worth |
+| **B25** — barrel returns as noise after a pause | bug tracker | A port-only forced buffer→VRAM copy wrote text tilemaps over both of the room's own maps. Frame is now pixel-identical across the pause. Was wrong at 240x160 too |
 
 ## Gates
 
 Both hold at 240×160 and were re-run before every commit in this milestone,
-including the last four:
+including all four of the 2026-08-08 barrel and lily-pad commits:
 
 - canonical route: **11/11 waypoints, 0 differences**
 - map-source audit: **0 mismatched in 265 497 600 fetches**
@@ -170,7 +181,7 @@ The same held for B5, B15 and B16 — every bug in this milestone that needed a
 human at the controls was resolved by a recording, usually after inference had
 already failed on it.
 
-**Four of the twenty-two were one assumption reported four times.** B5, B15 and
+**Four of the twenty-five were one assumption reported four times.** B5, B15 and
 B17 are all a world layer losing its map source and falling back to a 256 px
 screenblock that cannot cover 320. Each was found by a separate playtest report
 before anyone asked the general question; when it finally was asked, the sweep

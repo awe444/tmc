@@ -13,11 +13,13 @@ bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
 
-**Four of these were live in the shipping 240×160 build or through all of
-Milestone 1** — B11, B12's horizontal half, B13's horizontal half, and the
-iris veto. The expansion exposed them; it did not cause them. This document
-stays the authoritative record of what the expansion actually did to the
-engine.
+**Six of these were live in the shipping 240×160 build or through all of
+Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
+veto, B23's angle-gate bypass and B25's post-menu buffer copy. The expansion
+exposed them; it did not cause them, and the last two were only found because
+the 320×240 build made the rolling barrel worth playing. This document stays
+the authoritative record of what the expansion actually did to the engine —
+which includes distinguishing that from what it merely revealed.
 
 **B22 is the fourth appearance of one assumption — that the screen is the
 room.** B5, B15 and B17 were the first three, all horizontal. B22 is the
@@ -1565,6 +1567,22 @@ shows.
 been exercised.** If a cart ever strands you on a room boundary, this entry is
 where to start.
 
+**Lesson (21).** *Two clocks that agree on hardware will not agree once one of
+them is deferred.* `VIEWPORT_SCROLL_FADE` puts 32 frames between a transition
+being decided and being applied, and everything that asks "is a scroll in
+progress" answers *no* across that gap. B16 lost the player's facing to it and
+B24 lost a lily pad's entire carry state. The deferral is now three bugs old and
+its shape is known: anything running between a hand-off and the end of a scroll
+must be checked against `ScrollTransitionIsPending()`.
+
+**Lesson (22).** *A fix that is inert measures exactly like a fix that is
+wrong.* B24's first attempt keyed off `camera_target` being the vehicle, which
+it never was, because the state that claims the camera had already exited. The
+change did nothing and the bug reproduced unchanged, which read as "wrong
+diagnosis"; it was in fact a correct half waiting on a precondition. Before
+concluding a fix failed, check that its precondition ever held — a trace of the
+guard is cheaper than a new theory.
+
 ## B25 — the rolling barrel comes back as noise after a pause *(fixed)*
 
 Pause inside Deepwood's InsideBarrel and close the menu: the barrel returns as
@@ -1633,6 +1651,15 @@ the room's own, because the handler has already applied it by that point.
 **pixel-identical to the frame before it — 0 differing pixels of 76800** — and
 on the maintainer's own recording the colour count matches at 107 either side.
 Gate 11/11, `fetches=265497600 mismatched=0`.
+
+**Lesson (23).** *Fix every layer the room owns, not the one whose symptom you
+can see.* B25's forced buffer copy destroyed two of the rolling barrel's maps.
+The affine one turned the room into noise and was fixed first; the other only
+removed an alpha-blended detail layer, which read as "different colours" and was
+chased as a palette problem until the maintainer said the wood grain lines were
+missing. A colour-count delta says the image changed, not that the palette did.
+When a handler loads whole layers from a gfx group, enumerate its destinations —
+`LoadGfxGroup(0x16)` writes four and two of them are maps.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 

@@ -32,9 +32,10 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Four of this milestone's defects were live in the shipping 240×160 build or
+**Six of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
-them. The regression gate proves the shipping build did not *move*; it cannot
+them, and the last two (B23, B25) only because it made the rolling barrel worth
+playing. The regression gate proves the shipping build did not *move*; it cannot
 prove it was right. When a change alters a mechanism rather than a surface,
 count the frames that exercise the mechanism instead of reading a gate pass as
 coverage. B16 and B17 both lived in code the canonical route never executes.
@@ -122,9 +123,10 @@ handing work back**, even when the change looks headless — a fix that is only 
 tell a binary is stale short of not seeing their bug fixed.
 
 The 240x160 one exists to answer *"is this the expansion's fault or was it
-always like that?"* by hand. Four of Milestone 2's defects were live in the
+always like that?"* by hand. Six of Milestone 2's defects were live in the
 shipping build all along and only looked new, and each cost rounds before that
-was established. It is the first thing to ask of any new report.
+was established. It is the first thing to ask of any new report — B23 and B25
+were both settled in one run each by warping into the room at 240x160.
 
 **Order matters, and it makes the 240x160 copy free.** The gate below needs a
 240x160 build and the other play build needs a 320x240 one, and `xmake f -c`
