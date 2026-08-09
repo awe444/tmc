@@ -1,7 +1,7 @@
 # Milestone 2 — status at session close, 2026-08-08
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-four of the twenty-five
+the items the plan did not anticipate, and twenty-five of the twenty-six
 tracked bugs are closed. **Two things are still open and both are judgements
 rather than work: frame time, and B21's light shaft.**
 
@@ -53,6 +53,7 @@ and several carry inline "superseded" notes pointing back here.
 | **B23** — barrel drawn out of step with its own logic | bug tracker | The port had bypassed the barrel's rotation gate since long before this milestone; restoring it exposed the real defect, an affine renderer accumulating `pb`/`pd` on top of a reference HBlank-DMA had already set per scanline. Was wrong at 240x160 too |
 | **B24** — lily pad strands the player outside the room | bug tracker | The vehicle's carry state exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad quit 28 frames before the room changed. Carry distance then trimmed to a GBA slide's worth |
 | **B25** — barrel returns as noise after a pause | bug tracker | A port-only forced buffer→VRAM copy wrote text tilemaps over both of the room's own maps. Frame is now pixel-identical across the pause. Was wrong at 240x160 too |
+| **B26** — town scenery from the wrong tileset | bug tracker | Region tables that drive a tileset swap are authored with a gap sized for a 160-row screen; 80 extra rows make two regions match at once and first-match-wins loads the earlier one. Now picks the region covering most of the screen |
 
 ## Gates
 

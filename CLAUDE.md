@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and twenty-four of the twenty-five tracked bugs
+complete — every spike landed and twenty-five of the twenty-six tracked bugs
 are closed. Two are open, and both are decisions rather than work: frame time
 is +41% over the canvas baseline with peak frames past the 16.67 ms deadline,
 and B21's light shaft cannot reach the right edge without reallocating a BG
@@ -20,7 +20,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-five
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-six
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
@@ -68,6 +68,27 @@ rolling barrel held the player 40 px off its own midline that way, so the doors
 and the cobweb hole were out of reach. **In such a room, every camera-relative
 expression is unverified code.** The width sweep did not catch this because it
 asked about width; the vertical case has not been swept.
+
+**Authored region tables encode how much of the world fits on screen.** Hyrule
+Town and Minish Village swap tilesets by camera position from tables whose
+regions have gaps between them — Town's is 128 px — sized so a 160-row screen
+only ever overhangs one region a little before the next takes over, which makes
+`CheckRegionsOnScreen`'s first-match-wins right. At 240 rows the overhang
+triples and the screen shows the next region's scenery with the previous
+region's tiles loaded (B26). **The fix is to test regions against the centred
+`DISPLAY_WIDTH x DISPLAY_HEIGHT` sub-rect, which is exactly where the GBA's
+camera would be for the same player position** — the original rule is then right
+everywhere, and it needs no viewport gate. Two attempts to invent a smarter rule
+(max-overlap, then max-overlap among disjoint regions) each fixed the report in
+front of them and broke another list, because these tables are partitions in
+some places and override-plus-default in others; simulated over all five lists
+and 43,000 camera positions they score 8316 and 3897 disagreements with hardware
+against 0 for the centred sub-rect. **When authored data assumes a screen size,
+give it that screen rather than reasoning about the geometry** — and simulate
+every table before changing a selection rule; it is static data and costs
+minutes. **Before blaming a per-frame budget, read the authored data**: B26 also
+cost three measured-and-discarded hypotheses (sprite gfx slots, the 128-entry
+OAM cap, screenblock coverage).
 
 **A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
 loads *whole layers* from a gfx group, maps included, and none of them come from
