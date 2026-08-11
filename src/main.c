@@ -305,11 +305,49 @@ u32 CheckRegionOnScreen(u32 x0, u32 y0, u32 x1, u32 y1) {
 }
 
 /**
- * Iterate over array of AABBs and check if any fit on screen
+ * Iterate over array of AABBs and pick one for the screen.
+ *
+ * Only two callers, and both are tileset managers (hyruleTownTileSetManager,
+ * minishVillageTileSetManager) asking "which gfx group should be resident for
+ * where the camera is". Taking the *first* region that touches the screen is
+ * load-bearing: the tables come in two shapes and one of them is a specific box
+ * listed before a region covering the whole room, i.e. an override with a
+ * default behind it, where order is the entire point.
+ *
+ * The bug at a larger viewport is not the rule, it is the *screen* the rule is
+ * asked about. A region starts touching at `cam > regionEdge - VIEWPORT_SIZE`,
+ * so 80 extra rows make every region trigger 80 px of camera travel early, and
+ * the manager loads a tileset for scenery that is still only in the periphery.
+ * Hyrule Town showed this three times over: the stump tables at camy 511/512,
+ * then `graphicsGroups[2]` flipping 4<->5 at 511/515, then again at 191/195
+ * against a wall, all the same mechanism one list over.
+ *
+ * The fix is to ask about the screen the data was authored for. For the same
+ * player position the GBA's camera sits UI_CENTER_DX/DY inside the expanded
+ * one — that is what centring a 240x160 view in a larger viewport means — so
+ * **the GBA's screen is exactly the centred DISPLAY_WIDTH x DISPLAY_HEIGHT
+ * sub-rect of ours**, and testing regions against it reproduces hardware's
+ * choice by construction rather than by approximation.
+ *
+ * Simulated over 43,000 camera positions against all five of Hyrule Town's
+ * region lists (three normal, two festival): this agrees with the GBA's own
+ * selection on every one. Plain first-match on the full viewport disagrees on
+ * 4398, and two cleverer rules tried first — max-overlap, and max-overlap
+ * restricted to disjoint regions — score 8316 and 3897, both *worse than doing
+ * nothing* on the override-shaped lists. Match the reference; do not invent a
+ * better rule for authored data.
+ *
+ * At GBA-native size UI_CENTER_* are zero and DISPLAY_* are VIEWPORT_*, so this
+ * is the original test unchanged and the shipping build cannot move.
  */
 u32 CheckRegionsOnScreen(const u16* arr) {
+    s32 camX = (s32)gRoomControls.scroll_x - (s32)gRoomControls.origin_x + UI_CENTER_DX;
+    s32 camY = (s32)gRoomControls.scroll_y - (s32)gRoomControls.origin_y + UI_CENTER_DY;
+
     for (; *arr != 0xff; arr += 5) {
-        if (CheckRegionOnScreen(arr[1], arr[2], arr[3], arr[4]))
+        u32 x = (u32)(camX - (s32)arr[1] + DISPLAY_WIDTH);
+        u32 y = (u32)(camY - (s32)arr[2] + DISPLAY_HEIGHT);
+        if ((x < arr[3] + DISPLAY_WIDTH) && (y < arr[4] + DISPLAY_HEIGHT))
             return *arr;
     }
     return 0xff;

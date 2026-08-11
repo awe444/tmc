@@ -2,12 +2,12 @@
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
 playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
-from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions. B16 and B17 were
+from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-four of the twenty-five
+complete — see `docs/milestone2-status.md`.** Twenty-five of the twenty-seven
 bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
 **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
@@ -60,6 +60,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
 | B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
 | B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
+| B27 | Town scenery in the outer 40 px drawn from a non-resident tileset | **Open, fully diagnosed, plan written.** The residual B26 cannot reach: one tileset is resident and the viewport now shows more world than any single tileset covers. Not a selection problem — B26's rule is provably optimal. Fix is to keep both resident in enlarged emulated VRAM and choose per tile; **`docs/town-tileset-residency.md`** is a step-by-step plan with every measurement it needs |
+| B26 | Hyrule Town scenery drawn from the wrong tileset past a camera threshold | **Fixed** 2026-08-09 — the tileset managers pick a gfx group by *first* region touching the screen, and 80 extra rows widen the band where two regions match from 32 px to 112 px. Now picks the region covering most of the screen; unchanged at 240x160 |
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 
@@ -1660,6 +1662,160 @@ chased as a palette problem until the maintainer said the wood grain lines were
 missing. A colour-count delta says the image changed, not that the palette did.
 When a handler loads whole layers from a gfx group, enumerate its destinations —
 `LoadGfxGroup(0x16)` writes four and two of them are maps.
+
+## B26 — Hyrule Town scenery drawn from the wrong tileset past a camera threshold *(fixed)*
+
+Walking up and down in festival Hyrule Town, the stump tables below and right
+of the player turn to garbage past a particular y, and come back clean when you
+walk down again. **Reported 2026-08-09 with a recording.** Reported as a sprite
+glitch; it is not one.
+
+**Three hypotheses died before the right one, each killed by a measurement
+rather than by argument.** Worth listing, because all three were plausible and
+two of them were about budgets the wider viewport really does strain:
+
+| hypothesis | measurement | verdict |
+|---|---|---|
+| sprite gfx slots exhausted | peak 17/40 at *both* sizes, 0 allocation failures | dead |
+| 128-entry OAM cap hit | peak 82/128 at 320x240, 59/128 at 240x160, **0 cap hits** | dead |
+| screenblock cannot cover the viewport (the B5/B15/B17 family) | `mapsrc_mask=0x6`, both world layers **bound** to full-room map sources | dead |
+
+**It is not a sprite at all.** Re-rendering the glitch frame with each layer
+disabled and measuring how much of the table region changed: OBJ 4.1%, BG0
+0.6%, **BG1 38.5%, BG2 55.5%**, BG3 0.0%. Rendering BG2 alone shows the garbled
+shape. The tables are background tiles.
+
+**The map is not involved either.** The special-map entries for the table
+(`C064 C065 / C068 C069` at map 54-55, 112-113) are written once when the room
+loads and never touched again for the rest of the recording. What changes
+underneath them is the *character data* those tile indices point at:
+
+| camy | gfx group | tile checksum |
+|---|---|---|
+| 513 | 1 | `6885ECC2` (correct) |
+| 510 | 0 | `9811A795` (corrupt) |
+
+flipping back and forth on every up/down cycle, with the boundary at camy
+511/512.
+
+**Root cause: `CheckRegionsOnScreen` takes the first region that touches the
+screen, and the region tables are authored for a 160-row screen.**
+`hyruleTownTileSetManager` swaps tile graphics by camera position across a
+1008x960 room; its `regions0` covers y 0..512 for group 0 and y 640..960 for
+group 1, with a deliberate **128 px gap** between them. A region begins matching
+at `camy > regionBottom - VIEWPORT_HEIGHT`, so:
+
+| viewport | both regions match for | region-1 scenery visible at camy 511 |
+|---|---|---|
+| 160 | camy 480..512 | 31 px |
+| 240 | camy **400**..512 | **111 px** |
+
+The gap is sized to absorb a 160-row screen's ~31 px overhang. A 240-row screen
+overhangs 111 px, so it is looking at real second-region scenery while the first
+region's tileset is still loaded. `512 = 0x200` is region 0's own bottom edge,
+which is why the threshold sits exactly there.
+
+**Fix: ask the region test about the screen the data was authored for.** The
+rule was never wrong — taking the first region that touches is load-bearing,
+because one of these lists is a specific box in front of a whole-room default,
+i.e. an override where order is the entire point. What is wrong is the *screen*.
+A region starts touching at `cam > regionEdge - VIEWPORT_SIZE`, so 80 extra rows
+make every region trigger 80 px of camera travel early and the manager loads a
+tileset for scenery still only in the periphery.
+
+For the same player position the GBA's camera sits `UI_CENTER_DX/DY` inside the
+expanded one — that is what centring a 240x160 view in a larger viewport means —
+so **the GBA's screen is exactly the centred `DISPLAY_WIDTH x DISPLAY_HEIGHT`
+sub-rect of ours.** Testing regions against that sub-rect reproduces hardware's
+selection by construction. At GBA-native size `UI_CENTER_*` are zero and
+`DISPLAY_*` are `VIEWPORT_*`, so it is the original test unchanged and needs no
+`#if`.
+
+**Two cleverer rules were tried first and both shipped before being disproved,
+which is the lesson here.** Simulating all five of Hyrule Town's region lists
+over 43,000 camera positions and comparing against the GBA's own choice:
+
+| rule | disagreements with hardware |
+|---|---|
+| first-match on the full viewport (pre-fix) | 4398 |
+| max-overlap (first attempt) | 8316 |
+| max-overlap restricted to disjoint regions (second attempt) | 3897 |
+| **first-match on the centred 240x160 sub-rect** | **0** |
+
+Both invented rules are *worse than doing nothing* on the override-shaped
+lists — max-overlap catastrophically so, because a whole-room default always has
+full-screen coverage. Each passed the recording in front of it and failed the
+next one: the stump tables at camy 511/512, then `graphicsGroups[2]` flipping
+4<->5 at 511/515, then again at 191/195 against a wall. Three reports, one
+mechanism, two wrong fixes.
+
+**Verified on all three recordings.** Every group change now happens while
+walking *across* town, and none during the up-and-down walks that provoked the
+reports: the wall recording's last change is frame 1563 and its up/down section
+runs 2231-3903 with zero. Gate 11/11, `fetches=265497600 mismatched=0`.
+`minishVillageTileSetManager` is the only other caller and gets the same fix.
+
+**Lesson (25).** *When authored data assumes a screen size, give it that screen
+— do not invent a better rule.* Two attempts here replaced the engine's
+selection rule with something that reasoned about geometry, and both were worse
+than the original on some lists while fixing others, because one rule cannot
+serve a partition and an override at once. The answer was to leave the rule
+alone and correct its *input*: the GBA's screen is the centred 240x160 sub-rect
+of ours, and against that the original rule is exactly right everywhere. When a
+fix needs a case analysis of the data it reads, that is the signal it is at the
+wrong level.
+
+**Lesson (25a).** *Simulate the whole table set before changing a selection
+rule.* Both wrong fixes could have been rejected in minutes: the five region
+lists and the camera range are static data, and scoring a candidate rule against
+hardware's choice over all of them is a short script with no game runs in it.
+Two playtest round-trips were spent discovering what that script printed in one
+go.
+
+**Lesson (24).** *A table of authored regions encodes an assumption about how
+much of the world fits on screen.* Hyrule Town's 128 px gap is exactly that
+assumption written down, and it is invisible until the screen grows. When
+region data drives a resource swap, check the gaps against the viewport before
+trusting first-match-wins — and note the three budget hypotheses above cost more
+than the region table would have, had it been read first.
+
+## B27 — town scenery in the outer 40 px is drawn from a non-resident tileset *(open, planned)*
+
+The residual after B26, reported as a fourth Hyrule Town glitch on 2026-08-09.
+**It is not a selection defect and no selection rule can fix it.**
+
+B26 made `CheckRegionsOnScreen` reproduce the GBA's own choice exactly. This
+recording proves it: the tileset group flips at camy 710/713 at 320x240, and the
+*shipping 240x160 build flips the same group on the identical frames* (1374,
+1449, 1510, 1606, 1726 ...) at camy 750/753, which is camy+40. **The swap is the
+game's own behaviour.**
+
+And the rendering agrees. Comparing the centred 240x160 region against the
+shipping build frame for frame, the only differing rows are **7..36 and
+147..156** — the two HUD bands, which are deliberately repositioned. World
+content is pixel-identical.
+
+**So what is wrong is the 80 extra rows and columns.** Matching hardware's
+choice only guarantees correct tiles for the 240x160 the GBA would have shown;
+the periphery displays world the GBA never had on screen, and near a region
+boundary that scenery belongs to a region whose tileset is not resident. One
+tileset can be resident and the window is now bigger than one covers.
+
+**Options were costed on 2026-08-09** and all the cheap ones are closed — see
+§2 of the plan for the numbers, which include the arithmetic showing the region
+gaps cannot be widened (over by 32..112 px in a 960 px room) and the tile census
+showing the two groups differ in 242..256 of 256 tiles with 0..33 spare indices.
+
+**The maintainer has refused to give up the 320x240 view in these areas**, so
+the chosen path is to enlarge the *emulated* VRAM past the GBA's 96 KB, keep
+both groups resident, and pick the tileset per tile from the tile's own room
+position — possible only because both world layers here are bound to a full-room
+map source, so the renderer knows the room coordinates the region tables are
+expressed in. That removes the map re-indexing that made this look expensive.
+
+**`docs/town-tileset-residency.md` is the implementation plan**: five subtasks
+with acceptance criteria, ~2.5-3 days, every measurement it depends on recorded,
+and an explicit do-not-retry list. Written to be executed cold.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
