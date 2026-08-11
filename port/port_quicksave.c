@@ -47,7 +47,9 @@ typedef struct {
 static StateRegion sRegions[] = {
     { gEwram, 0x40000, "gEwram" },
     { gIwram, 0x8000,  "gIwram" },
-    { gVram,  0x18000, "gVram"  },
+    /* Includes the shadow bank: restoring the GBA's 96 KB without it would
+     * leave the per-tile char offsets pointing at another room's tiles. */
+    { gVram,  PORT_VRAM_TOTAL_SIZE, "gVram"  },
     { gIoMem, 0x400,   "gIoMem" },
     { &gSave,           sizeof(gSave),           "gSave" },
     { &gPlayerEntity,   sizeof(gPlayerEntity),   "gPlayerEntity" },

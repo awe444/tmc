@@ -7,14 +7,14 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and twenty-five of the twenty-seven tracked bugs
-are closed. Three are open. Two are decisions rather than work: frame time is
+complete — every spike landed and twenty-six of the twenty-seven tracked bugs
+are closed. What is left is two decisions rather than work: frame time is
 +41% over the canvas baseline with peak frames past the 16.67 ms deadline, and
 B21's light shaft cannot reach the right edge without reallocating a BG layer's
-screenbase — no go/no-go is recorded for either. **B27 is real work and is
-planned but not started**: town scenery in the outer 40 px is drawn from a
-non-resident tileset, and `docs/town-tileset-residency.md` is a step-by-step
-plan written to be executed cold.**
+screenbase — no go/no-go is recorded for either. **B27 is fixed in Hyrule Town
+and festival town; its Minish Village half is deferred and is a bigger job than
+the plan assumed** — see `docs/town-tileset-residency.md` §8, which supersedes
+the rest of that document on Minish Village.
 
 There is also an **arm64 Android build** (`android/`), which is the same
 viewport on other hardware and is played on an Ayaneo Pocket S 2K.
@@ -94,6 +94,22 @@ every table before changing a selection rule; it is static data and costs
 minutes. **Before blaming a per-frame budget, read the authored data**: B26 also
 cost three measured-and-discarded hypotheses (sprite gfx slots, the 128-entry
 OAM cap, screenblock coverage).
+
+**Above native size the port keeps *both* of a town tileset's alternatives in
+memory and picks between them per tile (B27).** `gVram` carries a shadow bank
+above the GBA's 96 KB — `PORT_VRAM_SHADOW_OFFSET`, unreachable by the engine
+because every `gba_read/write` guard still stops at `0x06017FFF` — and
+`VirtuaPPUMode1CharSlot` tells the renderer to add that offset for tiles whose
+room position falls in a given region. **The slot is found by the tile's
+character address, not its position**: Hyrule Town runs three region tables over
+the same room at once and only the address says which one governs. The engine's
+camera-driven swap is left running on purpose, and the pairing is re-derived
+from it on every load: an earlier version suppressed the swap and remembered
+which group was resident, and that state went stale and silently dropped a slot
+mid-room. **Prefer an invariant the swap re-establishes over state that records
+what the swap did.** Whole-frame pixel deltas cannot score this class of defect
+— one pixel of camera scroll already changes 21,000 pixels — so compare the same
+tiles under both residencies instead, with the camera held still.
 
 **A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
 loads *whole layers* from a gfx group, maps included, and none of them come from

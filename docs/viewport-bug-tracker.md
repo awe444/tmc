@@ -1779,7 +1779,7 @@ region data drives a resource swap, check the gaps against the viewport before
 trusting first-match-wins — and note the three budget hypotheses above cost more
 than the region table would have, had it been read first.
 
-## B27 — town scenery in the outer 40 px is drawn from a non-resident tileset *(open, planned)*
+## B27 — town scenery in the outer 40 px is drawn from a non-resident tileset *(fixed in Hyrule Town and festival town; Minish Village deferred)*
 
 The residual after B26, reported as a fourth Hyrule Town glitch on 2026-08-09.
 **It is not a selection defect and no selection rule can fix it.**
@@ -1813,9 +1813,130 @@ position — possible only because both world layers here are bound to a full-ro
 map source, so the renderer knows the room coordinates the region tables are
 expressed in. That removes the map re-indexing that made this look expensive.
 
-**`docs/town-tileset-residency.md` is the implementation plan**: five subtasks
-with acceptance criteria, ~2.5-3 days, every measurement it depends on recorded,
-and an explicit do-not-retry list. Written to be executed cold.
+**`docs/town-tileset-residency.md` was the implementation plan** and now records
+what was built and what is left.
+
+### The fix, 2026-08-10
+
+**Both of a slot's tilesets are kept resident and the renderer picks between
+them per tile, from the tile's own room position.** Four pieces:
+
+1. `gVram` grows a **shadow bank** above the GBA's 96 KB
+   (`PORT_VRAM_SHADOW_OFFSET`, port_gba_mem.h). Every `gba_read/write` guard
+   still stops at `0x06017FFF`, so no engine access can see or reach it. The
+   bank mirrors the whole 96 KB rather than the 24 KB town needs, so the offset
+   is **one constant** whichever charbase window a tile falls in.
+2. `VirtuaPPUMode1CharSlot` (mode1.h) lets the host say "tiles whose character
+   data is in `[addr_lo, addr_hi)` and whose room position is in this region
+   read at `+offset`". Regions are in tile units, first-match-wins, with a
+   `fallback` for a tile matching none.
+3. `mode1.c` resolves the offset **once per tile column** and adds it to the
+   character address. The bound stays `MODE1_VRAM_SIZE`, so exactly the same
+   addresses read as colour 0 as before; the offset only relocates a read that
+   was already legal.
+4. `port_tileset_residency.c` copies the alternative group into the bank and
+   publishes the slots, driven by `hyruleTownTileSetManager`.
+
+**The slot is found by the tile's character address, not by its position.**
+Hyrule Town runs *three* independent region tables over the same room at once —
+a tile at (0x100, 0x100) is in `regions0`'s group 0, `regions1`'s group 2 and
+`regions2`'s group 4 simultaneously. Which one governs depends on whether its
+tile index lands in slot 0's, 1's or 2's VRAM window. Position alone cannot
+answer it, and a merged region list would be wrong everywhere.
+
+**The engine's camera-driven swap is deliberately left running.** The plan said
+to make it a no-op above native size; that is worse, and the first attempt at it
+is the lesson below. Re-pairing on each swap instead makes "whichever group the
+manager just loaded is the one in the GBA's own VRAM" true *by construction*,
+every time, with no state to go stale.
+
+**Tiles in the authored gaps between regions follow the engine's own camera
+choice**, via `gRoomVars.graphicsGroups`, which the manager still maintains. The
+gap is exactly where the data declines to say which group a tile belongs to, and
+on hardware it is rendered from whichever group is loaded — so this reproduces
+hardware there rather than inventing a rule (lesson 25).
+
+**Evidence.**
+
+| check | result |
+|---|---|
+| canonical route, 240x160 | **11/11, 0 differences** |
+| map-source audit, 240x160 | **`fetches=265497600 mismatched=0`** |
+| town capture at 240x160, before vs after | **byte-identical**, 21 frames |
+| centred 240x160 sub-rect of the 320x240 frame vs the 240x160 build | differs only on rows **6..36 and 147..156** — the two HUD bands |
+| frame time, `fourth_town_glitch`, n=3 | present mean **9.53 -> 9.69 ms (+0.16)**, p99 11.08 -> 10.71, logic unchanged |
+
+The periphery itself is the one thing no gate can score, so it was checked
+against the game's own rendering of the same tiles. At frame 1447 group 5 is
+resident and the bottom 40 px belong to `regions2`'s whole-room default, group
+4. The **shipping build paints that band from group 5** — green bush tiles. The
+fixed build paints it from group 4, and that is **pixel-for-pixel what the
+shipping build itself paints at frame 1451**, once the camera crosses the
+threshold and group 4 becomes resident. The band stops changing when only the
+residency changes, which is the whole claim.
+
+The +0.16 ms is against the plan's +0.3 ms tripwire, so the per-pixel tilemap
+fetch at `mode1.c` was left alone as agreed. The offset is resolved once per
+tile column — 40 lookups a line rather than 320 — because within a column the
+tile entry, and so the index, and so the slot, cannot change.
+
+**Festival town's tables convert correctly and the mechanism engages there**
+(reached by debug warp to area 0x15; `festivalRegions0` -> px 0..399/0..463 and
+0..399/672..959, `festivalRegions2` -> 0..399/432..751, all exact). That is a
+code-path exercise, **not a playtest** — nobody has walked festival town's
+region boundaries at 320x240 and no recording of it exists.
+
+**Lesson (26).** *Prefer an invariant re-established by the thing that can break
+it, over state that records what that thing did.* The first version of this
+suppressed the manager's swap and remembered which group was resident. It was
+wrong within one recording: something moved `gRoomControls.room` without the
+manager's entry path running, a room-identity backstop fired, and it silently
+dropped slot 0 mid-room — the trace showed gfx 2 re-pairing over and over while
+gfx 0 never came back. Letting the swap run and re-deriving the pairing from it
+each time has no such window, costs one 8 KB copy per swap, and made the whole
+change additive. The bug was visible only because the trace printed *every*
+declaration rather than the final state.
+
+**Lesson (27).** *A metric that moves for the ordinary reason cannot measure the
+extraordinary one.* Two attempts to score this defect numerically failed the
+same way: whole-frame pixel deltas across the group swap were ~21,000 pixels
+both before and after, because one pixel of camera scroll already changes that
+many. The defect was settled by rendering the same tiles under both residencies
+and comparing them to each other — a comparison with the camera held still.
+
+### What is left: Minish Village
+
+**Deferred, with the maintainer's agreement, because it is a much larger job
+than the plan assumed.** The plan named Minish Village as the design driver but
+costed it as if it looked like town. It does not — all three of these were
+measured from `gUnk_08108050`, `gUnk_081080A4` and `gUnk_081081E4` before any
+code was written:
+
+| | plan assumed | actually |
+|---|---|---|
+| groups on screen at once, 320x240 | 2 | **3** — 72 of ~8,400 camera positions, worst case `{0,1,4}` at cam (152,160); 2 groups at 2,595. Same for the EU table. |
+| bytes per group | 8 KB | **32 KB** (8 x 4 KB blocks), five alternatives -> 128 KB of shadow for full residency against town's 24 KB |
+| what a group swaps | tile graphics | tile graphics **and a 13-bank BG palette group** — `gUnk_081081E4` maps groups 0..4 to palette groups 0x16/0x17/0x17/0x18/0x18, each loading 13 palettes into banks 2..14 |
+
+The palette is the one that changes the shape of the work. **Per-tile *tileset*
+selection cannot fix Minish Village on its own**: the tiles would be drawn from
+the right graphics and coloured from whichever palette group is loaded. It needs
+a parallel per-tile palette-bank path in the PPU — the same shape as the
+character offset, applied where `mode1.c` indexes `bg_palette` — plus shadow
+palette storage. At 320x240 three palette groups can be needed at once (the same
+72 camera positions); **even at 240x160 two are needed at 308 positions**, so
+part of this is the game's own behaviour rather than the expansion's.
+
+Nothing about Minish Village changed in this commit: no slots are declared
+there, so the port publishes none and the renderer takes the untouched path.
+
+**Note, argued rather than observed:** `BuildSecondOracleHouse` writes tiles to
+`BG_SCREEN_ADDR(3)` = `0x1800`, which is inside slot 1's character range, so
+that overlay lives in whichever copy was resident when it ran. A later swap
+re-copies group 2's *original* bytes into the bank and would lose it. It is
+unreachable: `CheckRegionsOnScreen` picks group 3 only for `camX >= 360`, and
+the oracle house sits at room x 40..88, off screen by then. If slot 1 ever
+misbehaves near the oracle house, start here.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 

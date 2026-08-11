@@ -15,7 +15,25 @@ extern u8 gIwram[0x8000];      // IWRAM (0x03000000-0x03007FFF)
 extern u16 gBgPltt[256];       // 0x200 bytes
 extern u16 gObjPltt[256];      // 0x200 bytes
 extern u16 gOamMem[0x400 / 2]; // 0x400 bytes (OAM)
-extern u8 gVram[0x18000];      // 96 KB VRAM GBA (0x06000000-0x06017FFF)
+
+/* VRAM, plus a port-only shadow bank the GBA does not have.
+ *
+ * The GBA's 96 KB is PORT_VRAM_GBA_SIZE and is all the engine can address:
+ * every gba_read/write guard in port_gba_mem.c still stops at 0x06017FFF, so
+ * no engine write can reach past it and no engine read can see what is there.
+ *
+ * The bank above it holds a *second* copy of character data, for the areas
+ * that swap tilesets by camera position (B27). A tilemap entry's tile index
+ * is 10 bits and BGxCNT's charbase is 2 bits, so no hardware encoding could
+ * reach a second copy — the renderer adds the offset itself, per tile, from
+ * the tile's own room position. The bank mirrors the whole 96 KB rather than
+ * just the 24 KB Hyrule Town needs, so the offset is one constant whichever
+ * charbase window a tile falls in; the slack costs nothing and is what lets
+ * Minish Village, whose groups sit in different windows again, reuse this. */
+#define PORT_VRAM_GBA_SIZE 0x18000u
+#define PORT_VRAM_SHADOW_OFFSET 0x18000u
+#define PORT_VRAM_TOTAL_SIZE (PORT_VRAM_SHADOW_OFFSET + PORT_VRAM_GBA_SIZE)
+extern u8 gVram[PORT_VRAM_TOTAL_SIZE]; // 0x06000000-0x06017FFF, plus the shadow bank
 
 /* OAM Y side channel — the sprite y that attr0's 8 bits cannot hold.
  *

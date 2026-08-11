@@ -17,6 +17,7 @@
 #include "vram.h"
 
 #include "port_gba_mem.h"
+#include "port_tileset_residency.h"
 #include "cpu/mode1.h"
 #include "viewport.h"
 
@@ -786,6 +787,7 @@ void Port_MapSource_Update(void) {
     mapsource_ui_latch_update();
 #endif
     virtuappu_mode1_clear_map_sources();
+    virtuappu_mode1_clear_char_slots();
     for (layer = 0; layer < 2; layer++) {
         int reason = mapsource_reason(layer);
         int bg;
@@ -836,6 +838,11 @@ void Port_MapSource_Update(void) {
             src.origin_x = (int)gRoomControls.scroll_x - (int)gRoomControls.origin_x;
             src.origin_y = (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y;
             virtuappu_mode1_set_map_source(bg, &src);
+            /* Per-tile tileset selection rides on this binding and only on
+             * this binding: it needs the room coordinates the map source
+             * addresses in, so a layer that fell back to a screenblock has
+             * nothing to test and keeps the camera-based group (B27). */
+            Port_TilesetResidency_PublishForBg(bg);
         }
     }
 

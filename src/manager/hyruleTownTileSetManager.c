@@ -14,6 +14,10 @@
 #include "game.h"
 #include "assets/gfx_offsets.h"
 #include "player.h"
+#include "viewport.h"
+#ifdef PC_PORT
+#include "port_tileset_residency.h"
+#endif
 
 void HyruleTownTileSetManager_UpdateLoadGfxGroups(HyruleTownTileSetManager*);
 void HyruleTownTileSetManager_OnEnterRoom(HyruleTownTileSetManager*);
@@ -85,6 +89,52 @@ extern const u8* gGlobalGfxAndPalettes;
 extern const u8 gGlobalGfxAndPalettes[];
 #endif
 
+#if VIEWPORT_TILESET_RESIDENCY
+/* Which region table drives a slot. Festival town runs the same three slots
+ * from its own tables, with slot 1's list empty. */
+static const u16* HyruleTownTileSetManager_RegionsFor(u32 gfxIndex) {
+    if (gRoomControls.area != AREA_FESTIVAL_TOWN) {
+        switch (gfxIndex) {
+            case 0:
+                return gHyruleTownTileSetManager_regions0;
+            case 1:
+                return gHyruleTownTileSetManager_regions1;
+            default:
+                return gHyruleTownTileSetManager_regions2;
+        }
+    }
+    switch (gfxIndex) {
+        case 0:
+            return gHyruleTownTileSetManager_festivalRegions0;
+        case 1:
+            return gHyruleTownTileSetManager_festivalRegions1;
+        default:
+            return gHyruleTownTileSetManager_festivalRegions2;
+    }
+}
+
+/* Put the *other* half of a slot's pair in the shadow bank.
+ *
+ * The gfx-info table lists slot i's two alternatives at 2i and 2i+1 and both
+ * write to the same two destinations, so the pair is one bit. Only the group
+ * that is not already in VRAM needs copying; the renderer then reads either
+ * per tile. */
+static void HyruleTownTileSetManager_MakeGroupPairResident(u32 gfxIndex, u32 gfxGroup) {
+    const HyruleTownTileSetManagerGfxInfo* shadow;
+    u32 shadowGroup = gfxGroup ^ 1;
+
+    if (gRoomControls.area != AREA_FESTIVAL_TOWN) {
+        shadow = &gHyruleTownTileSetManagerGfxInfos[shadowGroup];
+    } else {
+        shadow = &gHyruleTownTileSetManagerGfxInfosFestival[shadowGroup];
+    }
+    Port_TilesetResidency_AddSlot(gfxIndex, HyruleTownTileSetManager_RegionsFor(gfxIndex), gfxGroup,
+                                  shadowGroup, &gGlobalGfxAndPalettes[shadow->gfx1], shadow->dest1,
+                                  &gGlobalGfxAndPalettes[shadow->gfx2], shadow->dest2,
+                                  BG_SCREEN_SIZE * 2);
+}
+#endif
+
 void HyruleTownTileSetManager_Main(HyruleTownTileSetManager* this) {
     if (super->action == 0) {
         super->action = 1;
@@ -93,6 +143,9 @@ void HyruleTownTileSetManager_Main(HyruleTownTileSetManager* this) {
         this->gfxGroup0 = 0xff;
         RegisterTransitionHandler(this, HyruleTownTileSetManager_OnEnterRoom, NULL);
         SetEntityPriority((Entity*)this, PRIO_PLAYER_EVENT);
+#if VIEWPORT_TILESET_RESIDENCY
+        Port_TilesetResidency_Reset();
+#endif
     }
     HyruleTownTileSetManager_UpdateLoadGfxGroups(this);
 }
@@ -104,6 +157,12 @@ void HyruleTownTileSetManager_OnEnterRoom(HyruleTownTileSetManager* this) {
     this->gfxGroup2 = 0xff;
     this->gfxGroup1 = 0xff;
     this->gfxGroup0 = 0xff;
+#if VIEWPORT_TILESET_RESIDENCY
+    /* The room is about to reload every slot, so the pairs the shadow bank
+     * holds are the previous room's. Drop them before the loads below, which
+     * are the ones that decide the new resident groups. */
+    Port_TilesetResidency_Reset();
+#endif
     HyruleTownTileSetManager_UpdateLoadGfxGroups(this);
 }
 
@@ -194,11 +253,26 @@ void HyruleTownTileSetManager_LoadGfxGroup(u32 gfxIndex, u32 gfxGroup) {
     }
     LoadResourceAsync(&gGlobalGfxAndPalettes[gfxInfo->gfx1], gfxInfo->dest1, BG_SCREEN_SIZE * 2);
     LoadResourceAsync(&gGlobalGfxAndPalettes[gfxInfo->gfx2], gfxInfo->dest2, BG_SCREEN_SIZE * 2);
+#if VIEWPORT_TILESET_RESIDENCY
+    /* Put the alternative beside it, so the renderer can pick per tile.
+     *
+     * The camera-driven swap above is deliberately left running rather than
+     * disabled: whichever group it has just loaded is the one in the GBA's
+     * own VRAM, and re-pairing here makes that fact true by construction on
+     * every swap. Suppressing the swap instead means carrying state that
+     * says which group is resident, and that state goes stale on any path
+     * that reloads VRAM without telling the manager — which is what an
+     * earlier attempt at this did, silently losing a slot mid-room. B27. */
+    HyruleTownTileSetManager_MakeGroupPairResident(gfxIndex, gfxGroup);
+#endif
 }
 
 void TryLoadPrologueHyruleTown(void) {
     u32 gfxGroup;
 
+#if VIEWPORT_TILESET_RESIDENCY
+    Port_TilesetResidency_Reset();
+#endif
     if (gRoomControls.area != AREA_FESTIVAL_TOWN) {
         gfxGroup = CheckRegionsOnScreen(gHyruleTownTileSetManager_regions0);
         if (gfxGroup != 0xff) {
