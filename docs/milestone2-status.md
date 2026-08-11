@@ -1,8 +1,9 @@
 # Milestone 2 — status at session close, 2026-08-08
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-five of the twenty-six
-tracked bugs are closed. **Two things are still open and both are judgements
+the items the plan did not anticipate, and twenty-five of the twenty-seven
+tracked bugs are closed. **B27 is planned but not started — see
+`docs/town-tileset-residency.md`.** **Two things are still open and both are judgements
 rather than work: frame time, and B21's light shaft.**
 
 The 2026-08-08 session added four (B22–B25), all in or around Deepwood's

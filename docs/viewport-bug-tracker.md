@@ -7,7 +7,7 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-five of the twenty-six
+complete — see `docs/milestone2-status.md`.** Twenty-five of the twenty-seven
 bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
 **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
@@ -60,6 +60,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
 | B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
 | B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
+| B27 | Town scenery in the outer 40 px drawn from a non-resident tileset | **Open, fully diagnosed, plan written.** The residual B26 cannot reach: one tileset is resident and the viewport now shows more world than any single tileset covers. Not a selection problem — B26's rule is provably optimal. Fix is to keep both resident in enlarged emulated VRAM and choose per tile; **`docs/town-tileset-residency.md`** is a step-by-step plan with every measurement it needs |
 | B26 | Hyrule Town scenery drawn from the wrong tileset past a camera threshold | **Fixed** 2026-08-09 — the tileset managers pick a gfx group by *first* region touching the screen, and 80 extra rows widen the band where two regions match from 32 px to 112 px. Now picks the region covering most of the screen; unchanged at 240x160 |
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
@@ -1777,6 +1778,44 @@ assumption written down, and it is invisible until the screen grows. When
 region data drives a resource swap, check the gaps against the viewport before
 trusting first-match-wins — and note the three budget hypotheses above cost more
 than the region table would have, had it been read first.
+
+## B27 — town scenery in the outer 40 px is drawn from a non-resident tileset *(open, planned)*
+
+The residual after B26, reported as a fourth Hyrule Town glitch on 2026-08-09.
+**It is not a selection defect and no selection rule can fix it.**
+
+B26 made `CheckRegionsOnScreen` reproduce the GBA's own choice exactly. This
+recording proves it: the tileset group flips at camy 710/713 at 320x240, and the
+*shipping 240x160 build flips the same group on the identical frames* (1374,
+1449, 1510, 1606, 1726 ...) at camy 750/753, which is camy+40. **The swap is the
+game's own behaviour.**
+
+And the rendering agrees. Comparing the centred 240x160 region against the
+shipping build frame for frame, the only differing rows are **7..36 and
+147..156** — the two HUD bands, which are deliberately repositioned. World
+content is pixel-identical.
+
+**So what is wrong is the 80 extra rows and columns.** Matching hardware's
+choice only guarantees correct tiles for the 240x160 the GBA would have shown;
+the periphery displays world the GBA never had on screen, and near a region
+boundary that scenery belongs to a region whose tileset is not resident. One
+tileset can be resident and the window is now bigger than one covers.
+
+**Options were costed on 2026-08-09** and all the cheap ones are closed — see
+§2 of the plan for the numbers, which include the arithmetic showing the region
+gaps cannot be widened (over by 32..112 px in a 960 px room) and the tile census
+showing the two groups differ in 242..256 of 256 tiles with 0..33 spare indices.
+
+**The maintainer has refused to give up the 320x240 view in these areas**, so
+the chosen path is to enlarge the *emulated* VRAM past the GBA's 96 KB, keep
+both groups resident, and pick the tileset per tile from the tile's own room
+position — possible only because both world layers here are bound to a full-room
+map source, so the renderer knows the room coordinates the region tables are
+expressed in. That removes the map re-indexing that made this look expensive.
+
+**`docs/town-tileset-residency.md` is the implementation plan**: five subtasks
+with acceptance criteria, ~2.5-3 days, every measurement it depends on recorded,
+and an explicit do-not-retry list. Written to be executed cold.
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
