@@ -510,6 +510,31 @@ extern "C" void Port_PPU_PresentFrame(void) {
     virtuappu_mode1_set_bg2_ref_per_line(port_hdma_drives_bg2_reference() != 0);
 
     Port_PPU_OamYProbe();
+    /* TMC_DISABLE_OBJ=1 drops sprites, TMC_DISABLE_BG0=1 drops the HUD.
+     *
+     * Comparing two frames to decide whether a *background* defect is gone
+     * fails on both of them. Sprite animation differs wherever an NPC moved.
+     * The HUD is worse and less obvious: two frames one pixel of camera apart
+     * have to be shifted a pixel to line the world up, and that shift
+     * misaligns everything drawn at a fixed *screen* position, so the HUD
+     * reports as a difference on every edge it has. Both land in the same
+     * periphery the defect does. B26 measured per-layer contributions the
+     * same way. Diagnostic only. */
+    {
+        static int layerMask = -1;
+        if (layerMask < 0) {
+            layerMask = 0xFF;
+            if (getenv("TMC_DISABLE_OBJ") != nullptr) {
+                layerMask &= ~0x10; /* DISPCNT bit 12: OBJ */
+            }
+            if (getenv("TMC_DISABLE_BG0") != nullptr) {
+                layerMask &= ~0x01; /* DISPCNT bit 8: BG0 */
+            }
+        }
+        if (layerMask != 0xFF) {
+            gIoMem[1] = (u8)(gIoMem[1] & layerMask);
+        }
+    }
     virtuappu_render_frame();
     Port_PPU_ComposeCanvas();
 

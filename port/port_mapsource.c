@@ -757,6 +757,71 @@ static void mapsource_trace_bg3(void) {
     lastRoom = gRoomControls.room;
 }
 
+/* TMC_TILE_PROBE=col,row — what the renderer will do with one room tile.
+ *
+ * Prints, for both world layers, the tilemap entry at that room tile, the
+ * character address it resolves to, and the offset the per-tile tileset
+ * selection would apply. The point is to tell "the region did not match"
+ * apart from "the address is in no slot" apart from "the tile is not drawn
+ * by a map-sourced layer at all" — three explanations for the same symptom,
+ * indistinguishable from the picture. */
+static void mapsource_trace_tile_probe(void) {
+    static int parsed = -1;
+    static int pcol = -1, prow = -1;
+    static unsigned frame = 0;
+    int layer;
+
+    if (parsed < 0) {
+        const char* env = getenv("TMC_TILE_PROBE");
+        parsed = 0;
+        if (env != NULL && sscanf(env, "%d,%d", &pcol, &prow) == 2) {
+            parsed = 1;
+        }
+    }
+    frame++;
+    if (parsed != 1) {
+        return;
+    }
+    {
+        /* Which of the three things that can change under a tileset swap
+         * actually moved: the character window the manager owns, the one it
+         * does not, or the palette. */
+        u32 owned = 0, unowned = 0, pltt = 0;
+        int k;
+        for (k = 0; k < 0x4000; k++) {
+            owned = owned * 31u + gVram[k];
+            owned = owned * 31u + gVram[0x8000 + k];
+            unowned = unowned * 31u + gVram[0x4000 + k];
+        }
+        for (k = 0; k < 256; k++) {
+            pltt = pltt * 31u + gBgPltt[k];
+        }
+        fprintf(stderr, "[probe] f=%u chars_owned=%08X chars_4000_7FFF=%08X bgpltt=%08X\n", frame,
+                owned, unowned, pltt);
+    }
+    for (layer = 0; layer < 2; layer++) {
+        const u16* map = (layer == 0) ? gMapDataBottomSpecial : gMapDataTopSpecial;
+        int bg = mapsource_bg_index((layer == 0) ? gMapBottom.bgSettings : gMapTop.bgSettings);
+        u16 entry;
+        u32 charBase;
+        u32 charAddr;
+
+        if (!virtuappu_mode1_has_map_source(bg) || map == NULL) {
+            fprintf(stderr, "[probe] f=%u layer=%d bg=%d NO MAP SOURCE\n", frame, layer, bg);
+            continue;
+        }
+        entry = map[(size_t)prow * MAPSRC_STRIDE + pcol];
+        charBase = (u32)(((layer == 0) ? gScreen.bg2.control : gScreen.bg1.control) >> 2 & 3) *
+                   0x4000u;
+        charAddr = charBase + (u32)(entry & 0x3FF) * 32u;
+        fprintf(stderr,
+                "[probe] f=%u layer=%d bg=%d tile(%d,%d) entry=0x%04X idx=%u pal=%u "
+                "charAddr=0x%05X offset=0x%05X\n",
+                frame, layer, bg, pcol, prow, entry, entry & 0x3FF, (entry >> 12) & 0xF, charAddr,
+                Port_TilesetResidency_OffsetFor(charAddr, pcol, prow));
+    }
+}
+
 /* TMC_REJECT_TRACE=1: why each world layer was refused a map source. */
 static void mapsource_trace_reject(void) {
     static int en = -1;
@@ -786,6 +851,7 @@ void Port_MapSource_Update(void) {
      * mapsource_bind_ui() must both see the same answer this frame. */
     mapsource_ui_latch_update();
 #endif
+    Port_TilesetResidency_TraceGroups();
     virtuappu_mode1_clear_map_sources();
     virtuappu_mode1_clear_char_slots();
     for (layer = 0; layer < 2; layer++) {
@@ -818,10 +884,11 @@ void Port_MapSource_Update(void) {
                 }
             }
             fprintf(stderr, "[mapsrc-diag] area=0x%02X room=0x%02X layer=%d bg=%d "
-                            "room=%ux%u cam=(%d,%d) ofs=(%d,%d) sb=%d agree=%d/%d\n",
+                            "room=%ux%u cam=(%d,%d) ofs=(%d,%d) sb=%d cb=0x%04X "
+                            "bgcnt=0x%04X agree=%d/%d\n",
                     gRoomControls.area, gRoomControls.room, layer, bg,
                     gRoomControls.width, gRoomControls.height, cx, cy, hofs, vofs, sb,
-                    agree, tot);
+                    ((bgcnt >> 2) & 3) * 0x4000, bgcnt, agree, tot);
         }
         {
             /* origin = camera position in room pixels. This is exactly the
@@ -860,6 +927,7 @@ void Port_MapSource_Update(void) {
      * what regressed B2 (legend artwork repeating past x=240) and disarmed
      * the sprite clip and offset with it. */
     mapsource_bind_ui();
+    mapsource_trace_tile_probe();
     mapsource_trace_reject();
     mapsource_trace_layers();
     mapsource_trace_bg3();

@@ -1,8 +1,10 @@
 # Plan: make both town tilesets resident (B27)
 
-**Status, 2026-08-10: built and landed for Hyrule Town and festival town.
-Minish Village is not done and is a bigger job than this plan assumed — see
-§8, which supersedes what §4.1 and §5 say about it.**
+**Status, 2026-08-11: done, all three areas.** Hyrule Town and festival town
+landed 2026-08-10; Minish Village followed on 2026-08-11 once the maintainer
+supplied four recordings of it. §8 records what this plan got wrong about
+Minish Village and what it actually took; the account of the work and its
+evidence is in `docs/viewport-bug-tracker.md` under B27.
 
 Written 2026-08-09 at the end of a session, for execution by someone starting
 cold. Everything here was measured; nothing is estimated unless it says so. The
@@ -303,11 +305,15 @@ maintainer has refused it, so it is a last resort and needs asking again rather
 than assuming.
 
 
-## 8. Minish Village — the remaining work
+## 8. Minish Village — what this plan got wrong
 
-**Not started.** Deferred with the maintainer's agreement on 2026-08-10, once
-the three measurements below showed it is a different job from town rather than
-a third instance of the same one. All three come from static data —
+**Done, 2026-08-11.** Deferred on 2026-08-10 once the three measurements below
+showed it is a different job from town rather than a third instance of the same
+one, then fixed the next day against four maintainer recordings. Kept as
+written, because the mis-costing is the useful part; the outcome and the two
+things that had to be built differently are in the tracker's B27 entry.
+
+All three measurements come from static data —
 `gUnk_08108050`, `gUnk_081080A4`, `gUnk_081081E4` and `assets/palette_groups.json`
 — and cost minutes, which is lesson 25a doing its job before any code was
 written.
@@ -365,13 +371,28 @@ milestone merely exposed. Whether it is *visible* there has not been checked and
 is the first thing to find out — it decides whether this is a viewport fix or a
 change to the shipping build.
 
-### 8.4 Order of work, when it is picked up
+### 8.4 How it actually went
 
-1. Reproduce it. Nobody has seen this in Minish Village; §8.1's 72 positions say
-   where to stand. Ask for a recording — every bug in this milestone that needed
-   a human at the controls was found that way, usually after inference failed.
-2. Decide the 240x160 question in §8.3 before writing anything.
-3. Palette path first, then residency: the palette is the part that has no
-   precedent, and the character side is already built and exercised.
+The planned order was "reproduce, then palette first, then residency". What
+happened:
+
+1. **Reproduce** — right, and the cheapest step by far. The maintainer supplied
+   four recordings and asked for proof the glitch could be *seen* before
+   anything was changed. Producing that proof is what built every measurement
+   the fix was then judged by, and it caught two traps (the HUD and sprites
+   both report as differences) that would otherwise have made the fix look
+   like it had failed.
+2. **The 240x160 question** — still open, and it turned out not to block
+   anything: the fix is gated above native size regardless. It is now a
+   one-line entry in `milestone2-status.md` rather than a prerequisite.
+3. **Palette first was the wrong order.** The character side went first and
+   fixed two of the four recordings outright, which is what proved the town
+   mechanism transferred before any palette work existed. The palette then
+   turned out to be small — one field on a region plus a rebuild inside
+   `FadeVBlank` — because the fade transform factored cleanly.
 4. `houseDoorExterior.c` uses `CheckRegionsOnScreen`'s single-region form as a
-   plain visibility test and must not be touched. Still true.
+   plain visibility test and was not touched. Still true.
+
+**The estimate that mattered was wrong in the maintainer's favour**, but only
+because the character mechanism already existed. Read §8.1-8.3 as the cost of
+*designing* n-way residency, not of adding an area to it.

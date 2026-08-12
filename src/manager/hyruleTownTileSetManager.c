@@ -113,25 +113,38 @@ static const u16* HyruleTownTileSetManager_RegionsFor(u32 gfxIndex) {
     }
 }
 
-/* Put the *other* half of a slot's pair in the shadow bank.
+/* Make both halves of a slot's pair reachable.
  *
  * The gfx-info table lists slot i's two alternatives at 2i and 2i+1 and both
- * write to the same two destinations, so the pair is one bit. Only the group
- * that is not already in VRAM needs copying; the renderer then reads either
- * per tile. */
+ * write to the same two destinations, so the pair is one bit. The group that
+ * is already in VRAM keeps reading it; the other is copied into its bank, and
+ * the renderer picks per tile. */
 static void HyruleTownTileSetManager_MakeGroupPairResident(u32 gfxIndex, u32 gfxGroup) {
-    const HyruleTownTileSetManagerGfxInfo* shadow;
-    u32 shadowGroup = gfxGroup ^ 1;
+    const HyruleTownTileSetManagerGfxInfo* infos;
+    PortTilesetBlock blocks[4];
+    u32 pair[2];
+    u32 i;
 
     if (gRoomControls.area != AREA_FESTIVAL_TOWN) {
-        shadow = &gHyruleTownTileSetManagerGfxInfos[shadowGroup];
+        infos = gHyruleTownTileSetManagerGfxInfos;
     } else {
-        shadow = &gHyruleTownTileSetManagerGfxInfosFestival[shadowGroup];
+        infos = gHyruleTownTileSetManagerGfxInfosFestival;
     }
-    Port_TilesetResidency_AddSlot(gfxIndex, HyruleTownTileSetManager_RegionsFor(gfxIndex), gfxGroup,
-                                  shadowGroup, &gGlobalGfxAndPalettes[shadow->gfx1], shadow->dest1,
-                                  &gGlobalGfxAndPalettes[shadow->gfx2], shadow->dest2,
-                                  BG_SCREEN_SIZE * 2);
+    pair[0] = gfxGroup;
+    pair[1] = gfxGroup ^ 1;
+    for (i = 0; i < 2; i++) {
+        const HyruleTownTileSetManagerGfxInfo* info = &infos[pair[i]];
+        blocks[i * 2].group = pair[i];
+        blocks[i * 2].src = &gGlobalGfxAndPalettes[info->gfx1];
+        blocks[i * 2].dest = info->dest1;
+        blocks[i * 2].size = BG_SCREEN_SIZE * 2;
+        blocks[i * 2 + 1].group = pair[i];
+        blocks[i * 2 + 1].src = &gGlobalGfxAndPalettes[info->gfx2];
+        blocks[i * 2 + 1].dest = info->dest2;
+        blocks[i * 2 + 1].size = BG_SCREEN_SIZE * 2;
+    }
+    Port_TilesetResidency_DeclareSlot(gfxIndex, HyruleTownTileSetManager_RegionsFor(gfxIndex),
+                                      gfxGroup, blocks, 4);
 }
 #endif
 
