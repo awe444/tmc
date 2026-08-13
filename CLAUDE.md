@@ -118,8 +118,12 @@ pixel deltas are useless — one pixel of camera scroll already changes 21,000
 pixels — and so are the obvious refinements: aligning two frames a pixel apart
 misaligns the HUD, which is drawn at a fixed screen position, and sprites differ
 between any two frames. `TMC_DISABLE_OBJ` and `TMC_DISABLE_BG0` take both out;
-`TMC_TILESET_OFF` gives before and after from one binary. With those, the four
-Minish recordings score 0.00%.
+`TMC_TILESET_OFF` gives before and after from one binary. With those, all six
+Minish recordings score 0.00% across the threshold — **but that is stability,
+not correctness.** Two of the six were still visibly wrong at 0.00%, because
+the palette was wrong on both sides of the flip. **The oracle is to walk the
+same world content into the centred 240x160, where the GBA draws it right, and
+compare against that**; it needs no assumption about which group is loaded.
 
 **A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
 loads *whole layers* from a gfx group, maps included, and none of them come from

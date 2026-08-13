@@ -150,8 +150,7 @@ void Port_TilesetResidency_Reset(void) {
 void Port_TilesetResidency_SetGroupPalette(u32 group, u32 paletteGroupId) {
     u16 saved[RESIDENCY_PALETTE_ENTRIES];
     u32 savedUsed;
-    u32 changed = 0;
-    int i;
+    u32 written;
 
     if (group >= PORT_VRAM_BANKS || sPaletteValid[group]) {
         return;
@@ -160,29 +159,36 @@ void Port_TilesetResidency_SetGroupPalette(u32 group, u32 paletteGroupId) {
     /* Snapshot by loading it for real and putting everything back. Going
      * through the engine's own loader is the point: it is what decides where
      * a palette group lands and what the port's asset path substitutes, and
-     * a second implementation here would be a second thing to keep right. */
+     * a second implementation here would be a second thing to keep right.
+     *
+     * Which banks it wrote comes from gUsedPalettes, which LoadPalettes sets
+     * for exactly the banks it touched — on the asset path too, because that
+     * goes through LoadPalettes as well.
+     *
+     * It must *not* be derived by diffing the result against what was loaded
+     * before. That was the first version and it is wrong in a way that hides:
+     * the group whose palette is already live diffs to nothing, so its mask
+     * comes out empty, every one of its banks then follows the live palette,
+     * and its tiles turn whatever colour the current group is. Which is the
+     * defect this is meant to fix, reintroduced one level down. */
     memcpy(saved, gPaletteBuffer, sizeof(saved));
     savedUsed = gUsedPalettes;
+    gUsedPalettes = 0;
     LoadPaletteGroup(paletteGroupId);
+    written = gUsedPalettes;
     memcpy(sRawPalette[group], gPaletteBuffer, sizeof(sRawPalette[group]));
-    for (i = 0; i < RESIDENCY_PALETTE_ENTRIES / 16; i++) {
-        int j;
-        for (j = 0; j < 16; j++) {
-            if (sRawPalette[group][i * 16 + j] != saved[i * 16 + j]) {
-                changed |= 1u << i;
-                break;
-            }
-        }
-    }
     memcpy(gPaletteBuffer, saved, sizeof(saved));
     gUsedPalettes = savedUsed;
 
-    /* Only the banks this group actually writes are its own; the rest follow
-     * the live palette, so record which they are rather than assuming the
-     * table's dest/count, which differs per palette group. */
-    sPaletteBanks[group] = changed;
+    /* Only the banks this group writes are its own; the rest follow the live
+     * palette. Bits above the BG half address OBJ palettes and are not ours. */
+    sPaletteBanks[group] = written & 0xFFFFu;
     sPaletteValid[group] = 1;
     virtuappu_mode1_set_bg_palette_set((int)group + 1, sFadedPalette[group]);
+    if (residency_trace()) {
+        fprintf(stderr, "[tileset] palette group 0x%02X for gfx group %u -> banks 0x%08X\n",
+                paletteGroupId, group, sPaletteBanks[group]);
+    }
 }
 
 void Port_TilesetResidency_UpdatePalettes(void) {

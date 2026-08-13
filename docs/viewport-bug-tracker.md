@@ -1906,7 +1906,8 @@ and comparing them to each other — a comparison with the camera held still.
 
 ### Minish Village, 2026-08-11
 
-**Reported with four recordings on 2026-08-11 and fixed the same day.** The
+**Reported with six recordings on 2026-08-11 and fixed the same day** — four,
+then two more against the first build of the fix. The
 maintainer asked first for proof the glitch could be *seen* — absence and
 presence — before anything was changed. That is why the numbers below are
 paired: the same measurement with the selection suppressed and applied.
@@ -1931,6 +1932,8 @@ exist to take them out of the picture; with them, the numbers are clean.
 | 2 | 0 ↔ 1 | 0x16 / 0x17 — **differ** | 7.58% | **0.00%** |
 | 3 | 1 ↔ 2 | 0x17 / 0x17 — same | 2.24% | **0.00%** |
 | 4 | 4 ↔ 3 | 0x18 / 0x18 — same | 2.41% | **0.00%** |
+| 5 | 0 ↔ 1 | 0x16 / 0x17 — **differ** | 7.58% | **0.00%** |
+| 6 | 1 ↔ 2 | 0x17 / 0x17 — same | 2.24% | **0.00%** |
 
 The centred 240x160 measures 0.00% in every case both before and after, which
 is what makes this the expansion's defect rather than the game's.
@@ -1952,6 +1955,25 @@ scoped to one region's band: **no single unfixed frame is a correct reference
 across the whole periphery**, because two or three groups are on screen at once
 and only one can be loaded — which is the defect stated as a measurement
 problem.
+
+**The better oracle, found on recordings 5 and 6, is to walk the same world
+content into the centre.** Whatever the periphery ought to look like, the GBA
+draws it correctly once the camera brings it inside the centred 240x160 — so
+capture that frame and compare the same world rows or columns against it. It
+needs no assumption about which group is loaded when, and it is what caught
+the palette-mask bug that "0.00% across the threshold" had passed:
+
+| | unfixed | fixed |
+|---|---|---|
+| recording 5, top 40 rows vs the centred reference | 34.85% | **0.00%** |
+| recording 6, left 40 columns vs the centred reference | 8.39% | **0.00%** |
+
+**Lesson (29).** *Stability is not correctness, and a metric that only compares
+two peripheral frames can only measure stability.* Recordings 5 and 6 scored
+0.00% across the threshold — the number this work had been using throughout —
+while the ledge was plainly the wrong colour, because the palette was wrong on
+*both* sides of the flip. The centred view is the reference that was available
+all along.
 
 Three things had to change beyond what town needed.
 
@@ -1981,6 +2003,24 @@ bank every VBlank, and a snapshot taken at room entry would leave the periphery
 bright while the rest of the screen faded. `Port_FadeApply16` is the fade
 transform split out of `Port_MakeFadeBuff256` so both can use it rather than
 keeping two copies in step.
+
+**Which banks belong to a group has to come from `gUsedPalettes`, not from a
+diff.** Only the banks a group's palette group writes are its own; the rest
+must follow the live palette. The first version worked out which those were by
+comparing the loaded result against what had been loaded before — and that is
+wrong in a way that hides. **The group whose palette is already live diffs to
+nothing**, so its mask comes out empty, every one of its banks then tracks the
+live palette, and its tiles turn whatever colour the current group is. Which is
+the defect this exists to fix, one level down. `LoadPalettes` already records
+exactly the banks it touched in `gUsedPalettes` — including on the port's asset
+path, which goes through the same function — so zero it, load, and read it
+back. The correct mask is `0x7FFC` for all five groups: banks 2..14, which is
+what `palette_groups.json` declares.
+
+This is what recordings 5 and 6 were: reported 2026-08-11 against the build
+that had the first version in it. Recording 5's ledge and ladder had the right
+shapes in the wrong colours — the maintainer's diagnosis, "purely a palette
+issue", was exactly right and named the bug.
 
 Gate 11/11 and `fetches=265497600 mismatched=0`. Town's flip frames are
 byte-identical to the ones the town fix was verified on, across both the
