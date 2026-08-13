@@ -1968,12 +1968,36 @@ the palette-mask bug that "0.00% across the threshold" had passed:
 | recording 5, top 40 rows vs the centred reference | 34.85% | **0.00%** |
 | recording 6, left 40 columns vs the centred reference | 8.39% | **0.00%** |
 
+**And a third report, of two Minish Village *interiors* rendering with the
+wrong palette** — different areas entirely, which the residency has no business
+touching. It was retiring a slot wrongly. When the room no longer matches, the
+published entry was blanked in place: `count = 0`, `fallback = 0` — and
+`fallback_palette_set` left as it was, because blanking has to remember every
+field and that one was added later. The address range stayed live, an
+interior's tiles share the village's character addresses, so every one of them
+matched a slot that had nothing to say about them and took a village palette.
+57% and 38% of those two rooms.
+
+The published array is now **rebuilt from the slots on every publish** rather
+than edited in place, so a slot that does not apply is simply absent. That also
+fixes the trap in the obvious repair: emptying the address range instead would
+have stranded the slot, because `DeclareSlot` early-outs when the room matches
+what it recorded and would never have put the range back.
+
 **Lesson (29).** *Stability is not correctness, and a metric that only compares
 two peripheral frames can only measure stability.* Recordings 5 and 6 scored
 0.00% across the threshold — the number this work had been using throughout —
 while the ledge was plainly the wrong colour, because the palette was wrong on
 *both* sides of the flip. The centred view is the reference that was available
 all along.
+
+**Lesson (30).** *Prefer rebuilding derived state to blanking it.* Both of this
+entry's own regressions are the same shape: a value carried from a moment when
+it was right into one where it was not, because the code that was supposed to
+neutralise it enumerated fields — the palette-bank mask derived by diffing, and
+the retired slot blanked in place. Neither list was wrong when written; both
+were outgrown. Deriving the whole thing from its inputs each time has no list
+to keep current.
 
 Three things had to change beyond what town needed.
 

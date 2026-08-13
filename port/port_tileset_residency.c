@@ -106,7 +106,8 @@ typedef struct {
     bool valid;
     VirtuaPPUMode1CharRegion regions[RESIDENCY_MAX_REGIONS];
     int regionCount;
-    int firstRange; /* index into sPublished */
+    u32 lo[RESIDENCY_MAX_RANGES]; /* the character spans this slot governs */
+    u32 hi[RESIDENCY_MAX_RANGES];
     int rangeCount;
 } ResidencySlot;
 
@@ -114,7 +115,14 @@ static ResidencySlot sSlots[RESIDENCY_MAX_SLOTS];
 static int sSlotCount;
 
 /* What is handed to the PPU: one entry per address range, every range of a
- * slot sharing that slot's region list. */
+ * slot sharing that slot's region list.
+ *
+ * Rebuilt from the slots on every publish rather than edited in place. A slot
+ * that does not apply is then simply absent, instead of present with its
+ * answers blanked — which is a distinction with teeth: blanking has to
+ * remember every field, and the one it forgot (`fallback_palette_set`)
+ * recoloured two Minish Village interiors. Rebuilding also means retiring a
+ * slot cannot destroy state only DeclareSlot could put back. */
 static VirtuaPPUMode1CharSlot sPublished[RESIDENCY_MAX_PUBLISHED];
 static int sPublishedCount;
 
@@ -226,7 +234,6 @@ static ResidencySlot* residency_slot_for(u32 gfxIndex) {
     }
     memset(&sSlots[sSlotCount], 0, sizeof(sSlots[sSlotCount]));
     sSlots[sSlotCount].gfxIndex = gfxIndex;
-    sSlots[sSlotCount].firstRange = -1;
     return &sSlots[sSlotCount++];
 }
 
@@ -386,26 +393,11 @@ void Port_TilesetResidency_DeclareSlot(u32 gfxIndex, const u16* regions, u32 res
         slot->regionCount++;
     }
 
-    /* Ranges are published contiguously per slot, and a slot's range count
-     * cannot change within a room, so the first declaration fixes the span. */
-    if (slot->firstRange < 0) {
-        if (sPublishedCount + rangeCount > RESIDENCY_MAX_PUBLISHED) {
-            fprintf(stderr, "[tileset] no room to publish gfx %u — slot skipped\n", gfxIndex);
-            slot->valid = false;
-            return;
-        }
-        slot->firstRange = sPublishedCount;
-        slot->rangeCount = rangeCount;
-        sPublishedCount += rangeCount;
+    for (i = 0; i < rangeCount; i++) {
+        slot->lo[i] = lo[i];
+        slot->hi[i] = hi[i];
     }
-    for (i = 0; i < slot->rangeCount && i < rangeCount; i++) {
-        VirtuaPPUMode1CharSlot* published = &sPublished[slot->firstRange + i];
-        published->addr_lo = lo[i];
-        published->addr_hi = hi[i];
-        published->regions = slot->regions;
-        published->count = slot->regionCount;
-        published->fallback = 0u;
-    }
+    slot->rangeCount = rangeCount;
 
     slot->residentGroup = residentGroup;
     slot->area = gRoomControls.area;
@@ -466,43 +458,55 @@ void Port_TilesetResidency_PublishForBg(int bg) {
     if (disabled < 0) {
         disabled = (getenv("TMC_TILESET_OFF") != NULL);
     }
-    if (disabled || sPublishedCount == 0) {
+    if (disabled || sSlotCount == 0) {
         return;
     }
 
-    /* A tile matching none of a slot's regions is in one of the authored
-     * gaps between them, and there is no per-tile answer for it: the gap is
+    /* Rebuilt from scratch every publish. A slot that does not apply is left
+     * out entirely rather than blanked in place — see sPublished.
+     *
+     * A tile matching none of a slot's regions is in one of the authored gaps
+     * between them, and there is no per-tile answer for it: the gap is
      * exactly where the data declines to say. Give it the group the engine
      * itself loaded, so those tiles keep rendering the way hardware renders
      * them — the manager's own camera-driven selection still runs and
      * gRoomVars.graphicsGroups still tracks it. */
+    sPublishedCount = 0;
     for (i = 0; i < sSlotCount; i++) {
         const ResidencySlot* slot = &sSlots[i];
         u32 fallback;
+        int fallbackPalette;
         u8 group;
 
-        /* Slots describe one room's VRAM. Leaving the area stops the offsets
-         * rather than applying them to the room that followed; the manager
-         * declares again on the way back in. */
+        /* Slots describe one room's VRAM. Leaving the area stops them rather
+         * than applying them to the room that followed; the manager declares
+         * again on the way back in. */
         if (!slot->valid || slot->area != gRoomControls.area || slot->room != gRoomControls.room) {
-            for (j = 0; j < slot->rangeCount; j++) {
-                sPublished[slot->firstRange + j].count = 0;
-                sPublished[slot->firstRange + j].fallback = 0u;
-            }
             continue;
         }
         group = gRoomVars.graphicsGroups[slot->gfxIndex];
         fallback = (group == slot->residentGroup || group >= PORT_VRAM_BANKS)
                        ? 0u
                        : PORT_VRAM_BANK_OFFSET(group);
+        fallbackPalette = (group < PORT_VRAM_BANKS && sPaletteValid[group]) ? (int)group + 1 : 0;
         for (j = 0; j < slot->rangeCount; j++) {
-            sPublished[slot->firstRange + j].count = slot->regionCount;
-            sPublished[slot->firstRange + j].fallback = fallback;
-            sPublished[slot->firstRange + j].fallback_palette_set =
-                (group < PORT_VRAM_BANKS && sPaletteValid[group]) ? (int)group + 1 : 0;
+            VirtuaPPUMode1CharSlot* published;
+            if (sPublishedCount >= RESIDENCY_MAX_PUBLISHED) {
+                break;
+            }
+            published = &sPublished[sPublishedCount++];
+            published->addr_lo = slot->lo[j];
+            published->addr_hi = slot->hi[j];
+            published->regions = slot->regions;
+            published->count = slot->regionCount;
+            published->fallback = fallback;
+            published->fallback_palette_set = fallbackPalette;
         }
     }
 
+    if (sPublishedCount == 0) {
+        return;
+    }
     virtuappu_mode1_set_char_slots(bg, sPublished, sPublishedCount);
 }
 
