@@ -34,6 +34,11 @@ bool Port_Capture_ScriptActive(void);
  * headless runs complete as fast as the machine allows. */
 bool Port_Capture_Uncapped(void);
 
+/* Frames presented so far — the same number a script's `dump` directives and
+ * the `[capture] frame N` lines are counted in, so a diagnostic that prints
+ * it can be lined up against a capture without guessing. */
+uint32_t Port_Capture_Frame(void);
+
 /* Called at the end of Port_UpdateInput: while a script is active,
  * overwrites the committed KEYINPUT with the script's held-key state. */
 void Port_Capture_OverrideInput(volatile uint16_t* keyinput);

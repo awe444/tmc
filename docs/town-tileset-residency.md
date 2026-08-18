@@ -1,9 +1,19 @@
 # Plan: make both town tilesets resident (B27)
 
-**Status: planned, not started. Written 2026-08-09 at the end of a session, for
-execution by someone starting cold.** Everything here was measured; nothing is
-estimated unless it says so. The numbers are the point — re-deriving them cost
-most of a session and four playtest round-trips.
+**Status, 2026-08-11: done, all three areas.** Hyrule Town and festival town
+landed 2026-08-10; Minish Village followed on 2026-08-11 once the maintainer
+supplied four recordings of it. §8 records what this plan got wrong about
+Minish Village and what it actually took; the account of the work and its
+evidence is in `docs/viewport-bug-tracker.md` under B27.
+
+Written 2026-08-09 at the end of a session, for execution by someone starting
+cold. Everything here was measured; nothing is estimated unless it says so. The
+numbers are the point — re-deriving them cost most of a session and four
+playtest round-trips.
+
+The account of what was actually built, and the evidence for it, is in
+`docs/viewport-bug-tracker.md` under B27. This document keeps the costing that
+led to the approach, and §8 is the remaining work.
 
 Read `docs/viewport-bug-tracker.md` B26 first. This document is what B26 could
 not fix.
@@ -81,6 +91,11 @@ Everything below was measured on 2026-08-09 unless noted. Frame numbers refer to
 | Minish Village | `0x01` | `mapsrc_mask=0x6`, both layers **bound** | `dispcnt=0x1740` -> GBA mode 0 |
 | Hyrule Town | `0x02` | `mapsrc_mask=0x6`, both layers **bound** | `dispcnt=0x1740` -> GBA mode 0 |
 | Festival Town | `0x15` | `mapsrc_mask=0x6`, both layers **bound** | `dispcnt=0x1740` -> GBA mode 0 |
+
+**"Structurally identical" is true of the map source and the display mode and
+false of everything else.** Minish Village's groups are four times the size,
+three of them can be needed at once rather than two, and each one swaps a
+palette group as well as tile graphics. §8.
 
 Same layer control words in all three: `bg1ctl=0x1D45`, `bg2ctl=0x1C42`.
 
@@ -160,6 +175,11 @@ deliberate branch with a comment, not an accident.
 
 ## 5. Subtasks
 
+**All five are done for Hyrule Town and festival town, 2026-08-10.** Step 4 was
+built the other way round from what it says here, and the reason is worth
+reading before touching this again — see the note under it. Each step's
+acceptance criterion held; the results are in the tracker's B27 entry.
+
 Each step lists its acceptance criterion. Do not proceed past a failing one.
 
 ### Step 1 — Enlarge the emulated VRAM (0.25 d)
@@ -230,6 +250,18 @@ a plain visibility test and must not be touched.
 **Acceptance:** with the trace from step 2, the resident pair no longer changes
 as the camera moves in any of the three areas.
 
+> **Built the other way round, and deliberately.** Making the swap a no-op means
+> carrying "which group is resident" as state, and that state goes stale on any
+> path that reloads VRAM without the manager's entry path running. It did:
+> within one recording, `gRoomControls.room` moved without an entry, a
+> room-identity backstop fired, and slot 0 was silently dropped mid-room while
+> slot 2 kept re-pairing. **Letting the swap run and re-deriving the pairing
+> from it on every load** makes "whichever group the manager just loaded is the
+> one in real VRAM" true by construction, costs one 8 KB copy per swap, and
+> makes the change purely additive. The acceptance criterion above is therefore
+> the wrong one — the resident pair *does* keep changing, and the test that
+> matters is that the picture no longer changes with it.
+
 ### Step 5 — Verification (0.5–1 d)
 
 1. All four town recordings in `build/play-320x240/`: `town_sprite_glitch`,
@@ -271,3 +303,96 @@ machinery already in `port_mapsource.c` (`affine_screen`, around line 646),
 which is what B22 does for the rolling barrel. Roughly half a day. The
 maintainer has refused it, so it is a last resort and needs asking again rather
 than assuming.
+
+
+## 8. Minish Village — what this plan got wrong
+
+**Done, 2026-08-11.** Deferred on 2026-08-10 once the three measurements below
+showed it is a different job from town rather than a third instance of the same
+one, then fixed the next day against four maintainer recordings. Kept as
+written, because the mis-costing is the useful part; the outcome and the two
+things that had to be built differently are in the tracker's B27 entry.
+
+All three measurements come from static data —
+`gUnk_08108050`, `gUnk_081080A4`, `gUnk_081081E4` and `assets/palette_groups.json`
+— and cost minutes, which is lesson 25a doing its job before any code was
+written.
+
+### 8.1 Three groups can be needed at once, not two
+
+Simulating first-match-per-tile over every camera position in the 1008x1008
+room, counting distinct groups in the window:
+
+| viewport | 1 group | 2 groups | 3 groups |
+|---|---|---|---|
+| 240x160 | 8,720 | 595 | 0 |
+| **320x240** | 5,583 | 2,595 | **72** |
+
+The EU table scores the same within a few positions. Worst case is `{0, 1, 4}`
+at cam (152, 160), where region 4's rectangle contributes only an 8x64 px
+sliver in the top-right corner — small, but a sliver of wrong scenery is what
+this bug is.
+
+So "keep *both* resident" is not the right frame here. The mechanism that
+landed is N-way already — a slot's regions each carry their own offset — but
+the bank is sized for one alternative.
+
+### 8.2 The groups are 32 KB, and there are five
+
+`gUnk_081080A4` loads **8 x 4 KB blocks** per group, to `0x0000-0x3FFF` and
+`0x8000-0xBFFF`, for five groups. Full residency is four extra copies = 128 KB
+of shadow, against town's 24 KB. That is nothing in host memory; it is listed
+because the plan's "3 x 8 KB = 24 KB" sizing is Hyrule Town's shape only.
+
+### 8.3 Each group also swaps a 13-bank palette group — this is the real cost
+
+`gUnk_081081E4` maps groups 0..4 to palette groups `0x16, 0x17, 0x17, 0x18,
+0x18`, and each of those loads **13 palettes into BG banks 2..14**
+(`dest_palette_num: 2, num_palettes: 13`, palette ids 1118-1130 / 1131-1143 /
+1144-1156 — three disjoint payloads).
+
+**Per-tile tileset selection alone therefore cannot fix Minish Village.** The
+tiles would come from the right graphics and be coloured from whichever palette
+group happens to be loaded. It needs a parallel per-tile *palette bank* path —
+the same shape as the character offset, applied where `mode1.c` indexes
+`bg_palette`, plus shadow palette storage and a second selector in
+`VirtuaPPUMode1CharSlot` or beside it.
+
+Distinct palette groups needed at once, same simulation:
+
+| viewport | 1 | 2 | 3 |
+|---|---|---|---|
+| 240x160 | 9,007 | **308** | 0 |
+| 320x240 | 6,688 | 1,490 | **72** |
+
+Note the 308 at 240x160: **part of this is the game's own behaviour**, not the
+expansion's, which puts it in the same family as the six other defects this
+milestone merely exposed. Whether it is *visible* there has not been checked and
+is the first thing to find out — it decides whether this is a viewport fix or a
+change to the shipping build.
+
+### 8.4 How it actually went
+
+The planned order was "reproduce, then palette first, then residency". What
+happened:
+
+1. **Reproduce** — right, and the cheapest step by far. The maintainer supplied
+   four recordings and asked for proof the glitch could be *seen* before
+   anything was changed. Producing that proof is what built every measurement
+   the fix was then judged by, and it caught two traps (the HUD and sprites
+   both report as differences) that would otherwise have made the fix look
+   like it had failed.
+2. **The 240x160 question** — still open, and it turned out not to block
+   anything: the fix is gated above native size regardless. It is now a
+   one-line entry in `milestone2-status.md` rather than a prerequisite.
+3. **Palette first was the wrong order.** The character side went first and
+   fixed two of the four recordings outright, which is what proved the town
+   mechanism transferred before any palette work existed. The palette then
+   turned out to be small — one field on a region plus a rebuild inside
+   `FadeVBlank` — because the fade transform factored cleanly.
+4. `houseDoorExterior.c` uses `CheckRegionsOnScreen`'s single-region form as a
+   plain visibility test and was not touched. Still true.
+
+**The estimate that mattered was wrong in the maintainer's favour**, but only
+because the character mechanism already existed. Read §8.1-8.3 as the cost of
+*designing* n-way residency, not of adding an area to it.

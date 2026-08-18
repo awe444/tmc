@@ -15,7 +15,36 @@ extern u8 gIwram[0x8000];      // IWRAM (0x03000000-0x03007FFF)
 extern u16 gBgPltt[256];       // 0x200 bytes
 extern u16 gObjPltt[256];      // 0x200 bytes
 extern u16 gOamMem[0x400 / 2]; // 0x400 bytes (OAM)
-extern u8 gVram[0x18000];      // 96 KB VRAM GBA (0x06000000-0x06017FFF)
+
+/* VRAM, plus port-only shadow banks the GBA does not have.
+ *
+ * The GBA's 96 KB is PORT_VRAM_GBA_SIZE and is all the engine can address:
+ * every gba_read/write guard in port_gba_mem.c still stops at 0x06017FFF, so
+ * no engine write can reach past it and no engine read can see what is there.
+ *
+ * Above it sits one bank per tileset gfx *group*, holding that group's
+ * character data for the areas that swap tilesets by camera position (B27).
+ * A tilemap entry's tile index is 10 bits and BGxCNT's charbase is 2 bits, so
+ * no hardware encoding could reach a second copy — the renderer adds the
+ * offset itself, per tile, from the tile's own room position.
+ *
+ * Indexed by group id rather than by "the other one", because Minish Village
+ * has five alternatives for the same addresses and can need three of them on
+ * screen at once; group id keeps the mapping constant and stateless. Each
+ * bank mirrors the whole 96 KB so one stride serves any charbase window. Six
+ * banks covers Hyrule Town's group ids 0..5, the widest in use.
+ *
+ * The group the engine has actually loaded keeps reading the GBA's own VRAM
+ * — offset 0, no bank — so anything that writes character data behind the
+ * manager's back is still seen. Hyrule Town's second oracle house is exactly
+ * that: an overlay written into slot 1's range after the group load. */
+#define PORT_VRAM_GBA_SIZE 0x18000u
+#define PORT_VRAM_BANK_STRIDE 0x18000u
+#define PORT_VRAM_BANKS 6u
+#define PORT_VRAM_SHADOW_OFFSET PORT_VRAM_GBA_SIZE
+#define PORT_VRAM_BANK_OFFSET(group) (PORT_VRAM_SHADOW_OFFSET + (u32)(group) * PORT_VRAM_BANK_STRIDE)
+#define PORT_VRAM_TOTAL_SIZE (PORT_VRAM_GBA_SIZE + PORT_VRAM_BANKS * PORT_VRAM_BANK_STRIDE)
+extern u8 gVram[PORT_VRAM_TOTAL_SIZE]; // 0x06000000-0x06017FFF, plus the group banks
 
 /* OAM Y side channel — the sprite y that attr0's 8 bits cannot hold.
  *

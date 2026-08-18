@@ -4,9 +4,11 @@
 #include "screen.h"
 #include "structures.h"
 
+#include "viewport.h"
 #ifdef PC_PORT
 #include "port_gba_mem.h"
 #include "port_rom.h"
+#include "port_tileset_residency.h"
 #include <stdio.h>
 #endif
 
@@ -42,7 +44,15 @@ static const u32 sFadeTableOffsets[NUM_FADE_BRIGHTNESS][3] = {
     { 0x1104, 0x1144, 0x1184 }, /* brightness 2 */
 };
 
-static void Port_MakeFadeBuff256(u8* src, u8* dest, u16 intensity, u8 color) {
+/* The transform itself, on native pointers.
+ *
+ * Split out from Port_MakeFadeBuff256 so the port can run it against a
+ * destination that is not GBA palette RAM. The per-tile tileset selection
+ * (B27) keeps a shadow BG palette per tileset group, and those have to carry
+ * the same fade the live palette does or the periphery stays bright while
+ * the screen fades. Reproducing the fade rather than reusing it was the
+ * alternative, and would be a second copy of this to keep in step. */
+void Port_FadeApply16(const u16* srcPtr, u16* dstPtr, u16 intensity, u8 color) {
     u32 bias = (u32)intensity * (u32)color;
     u32 factor = 0x400 - (u32)intensity * 4;
 
@@ -56,13 +66,6 @@ static void Port_MakeFadeBuff256(u8* src, u8* dest, u16 intensity, u8 color) {
     u16* tableR = (u16*)(gRomData + sFadeTableOffsets[brightness][0]);
     u16* tableG = (u16*)(gRomData + sFadeTableOffsets[brightness][1]);
     u16* tableB = (u16*)(gRomData + sFadeTableOffsets[brightness][2]);
-
-    u16* srcPtr = (u16*)src;
-    /* dest is a GBA palette RAM address — resolve it */
-    u16* dstPtr = (u16*)port_resolve_addr((uintptr_t)dest);
-
-    if (!dstPtr)
-        return; // Safety check
 
     for (int i = 0; i < 16; i++) {
         u16 col = srcPtr[i];
@@ -80,6 +83,15 @@ static void Port_MakeFadeBuff256(u8* src, u8* dest, u16 intensity, u8 color) {
            so r/2 gives the array index. ARM uses ldrh [base, r] with r as byte offset. */
         dstPtr[i] = tableR[r >> 1] | tableG[g >> 1] | tableB[b >> 1];
     }
+}
+
+static void Port_MakeFadeBuff256(u8* src, u8* dest, u16 intensity, u8 color) {
+    /* dest is a GBA palette RAM address — resolve it */
+    u16* dstPtr = (u16*)port_resolve_addr((uintptr_t)dest);
+
+    if (!dstPtr)
+        return; // Safety check
+    Port_FadeApply16((const u16*)src, dstPtr, intensity, color);
 }
 #endif
 
@@ -111,6 +123,12 @@ void FadeVBlank(void) {
         ptrUnk++;
         usedPalettesTmp >>= 1;
     }
+#if defined(PC_PORT) && VIEWPORT_TILESET_RESIDENCY
+    /* Here, and not in the port's own VBlank work, because the shadow BG
+     * palettes have to carry whatever fade this loop just applied — so they
+     * must be rebuilt after it, every frame, not when a room is entered. */
+    Port_TilesetResidency_UpdatePalettes();
+#endif
 }
 
 void InitFade(void) {

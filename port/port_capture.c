@@ -509,6 +509,10 @@ bool Port_Capture_Uncapped(void) {
     return sUncapped;
 }
 
+uint32_t Port_Capture_Frame(void) {
+    return sFrame;
+}
+
 void Port_Capture_OverrideInput(volatile uint16_t* keyinput) {
     if (!sScriptActive) {
         return;

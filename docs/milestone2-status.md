@@ -1,10 +1,10 @@
-# Milestone 2 — status at session close, 2026-08-08
+# Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-five of the twenty-seven
-tracked bugs are closed. **B27 is planned but not started — see
-`docs/town-tileset-residency.md`.** **Two things are still open and both are judgements
-rather than work: frame time, and B21's light shaft.**
+the items the plan did not anticipate, and twenty-six of the twenty-seven
+tracked bugs are closed, **B27 included — Hyrule Town, festival town and
+Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
+than work: frame time, and B21's light shaft.**
 
 The 2026-08-08 session added four (B22–B25), all in or around Deepwood's
 rolling barrel, and **two of them — B23 and B25 — turned out to be live at
@@ -55,6 +55,7 @@ and several carry inline "superseded" notes pointing back here.
 | **B24** — lily pad strands the player outside the room | bug tracker | The vehicle's carry state exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad quit 28 frames before the room changed. Carry distance then trimmed to a GBA slide's worth |
 | **B25** — barrel returns as noise after a pause | bug tracker | A port-only forced buffer→VRAM copy wrote text tilemaps over both of the room's own maps. Frame is now pixel-identical across the pause. Was wrong at 240x160 too |
 | **B26** — town scenery from the wrong tileset | bug tracker | Region tables that drive a tileset swap are authored with a gap sized for a 160-row screen; 80 extra rows make two regions match at once and first-match-wins loads the earlier one. Now picks the region covering most of the screen |
+| **B27** — scenery in the outer 40 px drawn from a non-resident tileset | bug tracker | The residual B26 could not reach: matching hardware's choice only guarantees the 240×160 the GBA would have shown. Emulated VRAM now carries a bank per tileset group above the GBA's 96 KB, every alternative stays resident, and the renderer picks character data *and palette* per tile from the tile's own room position. All three areas; four Minish Village recordings go from 2.2–10.7% periphery change across a threshold to **0.00%** |
 
 ## Gates
 
@@ -129,6 +130,8 @@ the new layout. Nothing else was found. No decision is recorded.
 | **The debug-warp crash** | **Open.** Warping to some destinations segfaults, and a second intermittent crash near teardown is tangled with it. Two real validation gaps were closed (room existence, coordinates inside the room) and coverage widened measurably, but it is not fixed. It is what stops the screenblock sweep from covering more than a fraction of the ~128 areas. |
 | **`subTileMap rebound`** | **Never observed.** The one map-source rejection class the sweep could not reach, and therefore the most likely place for a fourth screenblock-fallback instance. Blocked behind the warp crash. |
 | **Tile mutation in degraded rooms** | B17's fix makes the mutators maintain that map; the maintenance itself was verified by reading the code, not by driving a mutation. Cutting grass or lifting a pot inside a Minish house is the check nobody has run. |
+| **Festival town** | **Never playtested for B27.** Its tables convert correctly and the mechanism engages — verified by debug warp — but nobody has walked its region boundaries at 320×240 and no recording of it exists. The 2026-08-11 playtest covered Hyrule Town and Minish Village, which is where all ten reports came from. |
+| **Minish Village at 240×160** | **Never looked at.** Two of its palette groups are needed at once in 308 camera positions at the *shipping* size, so a little of what B27 fixed above may also be visible there. Not reported, not reproduced; the 240×160 play build is where to check. |
 | **B21 — Minish Woods light shaft ends 80 px short** | **Open, fully diagnosed, every route blocked.** Not a clip or a clamp: the shaft is a 256 px BG3 layer whose artwork already ends at its own right edge, so at 320 the screen simply got wider. No offset helps — the layer wraps at 256, so a shaft at the right edge implies one at the left, and repeated shafts were rejected by the maintainer 2026-08-07. A 512-wide BG3 would fit exactly (512-320=192, no wrap) and needs no new artwork, but there is no free adjacent screenblock pair: 28/29/30/31 are BG1/BG2/BG3/BG0 and everything below is character data. Prototyped and reverted — it overwrote BG0 and garbled the HUD. Fixing it means reallocating a layer's screenbase. Full account and lesson 19 in the tracker. |
 | **`sub_0807D280` reads before its map for short rooms** | **Latent, not reproduced.** B19 fixed the *unsigned wrap* in `case 2`. `case 1` and the `default` branch feed a negative `ydiff` — `-40` in the steady state of any room shorter than the viewport — to `(ydiff >> 4) * 0x100`. Signed, so no wrap and no crash; it reads a kilobyte or two before `gMapDataBottomSpecial` into the screenblock. Above native size the world is drawn from the map source instead, which is likely why nothing has been seen. Wants its own reproduction first. |
 | **`gUnk_0811C0F8` / `gUnk_0811C108` read past their end** | **Latent, not reproduced.** Both are four-entry `u16` tables sitting contiguously in ROM with B16's `gUnk_0811C110`, and both are indexed by `direction >> 2`, which reaches 63. On hardware the index wraps into an identical adjacent copy — `0x0811C108[4..7]` is byte-identical to `0x0811C110[0..3]` — so every direction lands on a real value. Ported, each array is its own object. B16 extended only `gUnk_0811C110`. Reachable only on the *swim* branch, so it needs a scene where the player is swimming through a room transition; `TMC_OOB_TRACE=1` reports it and stayed silent across the dungeon-softlock recording. Lesson 13 says the ROM bytes are the specification, so the fix is B16's: extend both with the real bytes, PC_PORT only. |

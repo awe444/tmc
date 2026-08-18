@@ -10,6 +10,11 @@
 #include "functions.h"
 #include "game.h"
 #include "main.h"
+#include "room.h"
+#include "viewport.h"
+#ifdef PC_PORT
+#include "port_tileset_residency.h"
+#endif
 
 void sub_08057E30(void*);
 bool32 sub_08057E40(MinishVillageTileSetManager*);
@@ -57,6 +62,57 @@ const u32 gUnk_081080A4[0x50] = {
 };
 
 const u8 gUnk_081081E4[] = { 0x16, 0x17, 0x17, 0x18, 0x18 };
+
+#if VIEWPORT_TILESET_RESIDENCY
+/* Number of alternative tilesets, and blocks each loads. gUnk_081080A4 is
+ * five groups of eight {source, destination} pairs. */
+#define MINISH_VILLAGE_GROUPS 5
+#define MINISH_VILLAGE_BLOCKS 8
+
+/* Make every alternative tileset reachable, so the renderer can draw each
+ * tile from the group its own room position says it belongs to.
+ *
+ * Minish Village is not Hyrule Town with different numbers. Its groups are
+ * 32 KB rather than 8, there are five of them rather than a pair, and a
+ * 320x240 window can need *three* on screen at once — measured over every
+ * camera position in the room, 72 of ~8,400 need three. So residency here is
+ * n-way, and the group the engine has loaded is simply the one that keeps
+ * reading the GBA's own VRAM.
+ *
+ * No group reads the GBA's own VRAM here. The manager owns the whole
+ * character range — eight blocks covering 0x0000-0x3FFF and 0x8000-0xBFFF,
+ * with nothing else writing into it — and its load is *staged over eight
+ * frames*, so for those frames VRAM holds half the outgoing group and half
+ * the incoming one and is not honestly any group at all. Reading banks
+ * throughout is both simpler and correct across the stage; it also means the
+ * declaration depends only on the room, so it is built once on entry rather
+ * than re-derived on every camera swap.
+ *
+ * This is the character half only. Each group also loads a palette group
+ * (gUnk_081081E4). B27. */
+static void MinishVillageTileSetManager_MakeGroupsResident(void) {
+    PortTilesetBlock blocks[MINISH_VILLAGE_GROUPS * MINISH_VILLAGE_BLOCKS];
+    u32 group;
+    u32 i;
+
+    for (group = 0; group < MINISH_VILLAGE_GROUPS; group++) {
+        const u32* pair = &gUnk_081080A4[group << 4];
+        /* Each group swaps thirteen BG palettes as well as its tiles, so the
+         * renderer needs the matching palette or it draws the right shapes
+         * in the wrong colours. */
+        Port_TilesetResidency_SetGroupPalette(group, gUnk_081081E4[group]);
+        for (i = 0; i < MINISH_VILLAGE_BLOCKS; i++, pair += 2) {
+            PortTilesetBlock* block = &blocks[group * MINISH_VILLAGE_BLOCKS + i];
+            block->group = group;
+            block->src = &gGlobalGfxAndPalettes[pair[0]];
+            block->dest = (void*)(uintptr_t)pair[1];
+            block->size = 0x1000;
+        }
+    }
+    Port_TilesetResidency_DeclareSlot(0, gUnk_08108050, PORT_TILESET_NO_RESIDENT, blocks,
+                                      MINISH_VILLAGE_GROUPS * MINISH_VILLAGE_BLOCKS);
+}
+#endif
 
 #ifdef EU
 void MinishVillageTileSetManager_Main(MinishVillageTileSetManager* this) {
@@ -155,6 +211,11 @@ void MinishVillageTileSetManager_Main(MinishVillageTileSetManager* this) {
             super->timer++;
             break;
     }
+#if VIEWPORT_TILESET_RESIDENCY
+    /* Cheap after the first call in a room: the banks depend on the room and
+     * nothing else, so this returns immediately once they are built. */
+    MinishVillageTileSetManager_MakeGroupsResident();
+#endif
 }
 #endif
 
@@ -194,4 +255,7 @@ void sub_08057E7C(u32 unk1) {
         DmaCopy32(3, &gGlobalGfxAndPalettes[tmp2[0]], tmp2[1], 0x400 * 4);
     }
     gRoomVars.graphicsGroups[0] = unk1;
+#if VIEWPORT_TILESET_RESIDENCY
+    MinishVillageTileSetManager_MakeGroupsResident();
+#endif
 }

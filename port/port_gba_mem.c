@@ -17,7 +17,7 @@ u8 gIwram[0x8000];
 u16 gBgPltt[256];
 u16 gObjPltt[256];
 u16 gOamMem[0x400 / 2];
-u8 gVram[0x18000];
+u8 gVram[PORT_VRAM_TOTAL_SIZE];
 
 /* See port_gba_mem.h for why the sprite y needs a channel of its own. */
 s16 gOamYExtShadow[0x80];

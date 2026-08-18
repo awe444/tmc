@@ -210,6 +210,35 @@
 #define VIEWPORT_MAINTAIN_DEGRADED_MAP 0
 #endif
 
+/* Whether both of an area's alternative tilesets are kept resident and
+ * chosen between per tile, instead of swapped by camera position.
+ *
+ * Hyrule Town, festival town and Minish Village are each too large for one
+ * tileset and swap tile graphics from a table of authored regions. B26 made
+ * that selection reproduce the GBA's exactly, and the selection is now
+ * right; what is left is that a 320x240 window shows 80 more rows and
+ * columns than the tables were authored against, so near a region boundary
+ * the periphery displays scenery belonging to a region whose tileset is not
+ * the resident one. No selection rule fixes that — one tileset can be
+ * resident and the window is bigger than one covers.
+ *
+ * Above native size the port keeps the alternative resident too, in a bank
+ * of emulated VRAM the GBA does not have, and the renderer picks per tile
+ * from the tile's own room position. That is only possible here because
+ * both world layers in these areas are bound to a full-room map source, so
+ * the renderer knows the room coordinates the region tables are written in
+ * — information the camera-driven swap never had.
+ *
+ * At GBA-native size this is 0 and the engine's own swap runs untouched:
+ * the tables fit the screen they were authored for, and the shipping build
+ * must not move. B27.
+ */
+#if VIEWPORT_WIDTH > DISPLAY_WIDTH || VIEWPORT_HEIGHT > DISPLAY_HEIGHT
+#define VIEWPORT_TILESET_RESIDENCY 1
+#else
+#define VIEWPORT_TILESET_RESIDENCY 0
+#endif
+
 /* Fade rate for that transition, in fade progress per frame out of 0x100 —
  * 8 gives 32 frames each way, matching the inter-card fade the Picori legend
  * uses (cutscene.c) rather than inventing a new pace. */
