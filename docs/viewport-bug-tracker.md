@@ -7,19 +7,26 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-five of the twenty-seven
-bugs are closed: twenty fixed with a root cause and evidence, and B4 closed as
-**no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
+complete — see `docs/milestone2-status.md`.** Twenty-seven of the twenty-eight
+bugs are closed: twenty-six fixed with a root cause and evidence, and B4 closed
+as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
 
-**Six of these were live in the shipping 240×160 build or through all of
+**Seven of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
-veto, B23's angle-gate bypass and B25's post-menu buffer copy. The expansion
-exposed them; it did not cause them, and the last two were only found because
-the 320×240 build made the rolling barrel worth playing. This document stays
-the authoritative record of what the expansion actually did to the engine —
-which includes distinguishing that from what it merely revealed.
+veto, B23's angle-gate bypass, B25's post-menu buffer copy and B28's truncated
+room properties. The expansion exposed them; it did not cause them, and B23 and
+B25 were only found because the 320×240 build made the rolling barrel worth
+playing. This document stays the authoritative record of what the expansion
+actually did to the engine — which includes distinguishing that from what it
+merely revealed.
+
+**B28 is the first of these that the viewport had nothing to do with at all.**
+It is a port data bug: the same picture and the same walk-through door at both
+sizes, reported only because someone was playing the 320×240 build. Kept here
+because this is where the port's bugs are tracked, not because it is a
+viewport defect.
 
 **B22 is the fourth appearance of one assumption — that the screen is the
 room.** B5, B15 and B17 were the first three, all horizontal. B22 is the
@@ -64,6 +71,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B26 | Hyrule Town scenery drawn from the wrong tileset past a camera threshold | **Fixed** 2026-08-09 — the tileset managers pick a gfx group by *first* region touching the screen, and 80 extra rows widen the band where two regions match from 32 px to 112 px. Now picks the region covering most of the screen; unchanged at 240x160 |
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
+| B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
 
 ---
 
@@ -2092,6 +2100,176 @@ re-copies group 2's *original* bytes into the bank and would lose it. It is
 unreachable: `CheckRegionsOnScreen` picks group 3 only for `camX >= 360`, and
 the oracle house sits at room x 40..88, off screen by then. If slot 1 ever
 misbehaves near the oracle house, start here.
+
+## B28 — Lon Lon Ranch's locked door is walk-through, its neighbour is an open doorway *(fixed)*
+
+Reported 2026-08-17 with a recording (`lon_lon_ranch_door.script`) ending with
+the player facing the ranch house's left-hand door. Two symptoms, one cause:
+
+- the **left** door should be locked until Talon has his key back, and the
+  player walks straight through it into the bedroom;
+- the **right** door should show as a blue door and instead shows the map's
+  bare black doorway.
+
+**Identical at 240x160.** The first question this build exists to answer said
+"not the expansion" in one run, and that is where the search should have
+started rather than in the renderer — the second symptom looks like a drawing
+bug and is not one.
+
+### Root cause: extracted room properties are cut at their embedded pointers
+
+House doors are not map tiles. A room property holds a list of 12-byte door
+records, `HouseDoorExterior_Type0` (`src/object/houseDoorExterior.c`) walks it
+and spawns one child entity per door that is on screen. The list for
+Hyrule Field / Lon Lon Ranch is property `0x11`, which the entity table names
+`gUnk_additional_11_HyruleField_LonLonRanch`:
+
+```
+  x=0x148 y=0x263 layer=1 sub=0 type2=3 type=5  script=script_LonLonRanchDoor
+  x=0x178 y=0x263 layer=1 sub=0 type2=2 type=5  script=NULL
+  0xFFFF ...                                     terminator
+```
+
+36 bytes. The extracted asset the port actually read was **8 bytes** — the
+first record with its script pointer chopped off.
+
+The decomp emits a pointer inside a data blob as `.4byte <symbol>` between two
+`.incbin`s, because the address is a link-time relocation and not a byte the
+`.bin` can carry. `port/port_asset_index.c` is generated from those `.incbin`
+directives, so one symbol appears in it as several fragments with an
+**unindexed four-byte hole** wherever a pointer sits:
+
+```
+{ 0x000F7A20, 0x0008, "…/gUnk_additional_11_HyruleField_LonLonRanch.bin"   },
+                    ← 0x000F7A28..2B: script_LonLonRanchDoor, in no entry
+{ 0x000F7A2C, 0x0018, "…/gUnk_additional_11_HyruleField_LonLonRanch_1.bin" },
+```
+
+`extract_area_tables` sized each room property from the single index entry at
+its address, so the property stopped at the first pointer. Everything after it
+— including the whole second door — came from whatever the heap held past the
+end of an 8-byte buffer.
+
+From there both symptoms follow mechanically:
+
+- Record 0's script address is read four bytes past the buffer, so
+  `Port_ResolveRomData` gets a host pointer and returns NULL, the spawner never
+  calls `StartCutscene`, and `HouseDoorExterior_Type3` returns at its
+  `context == NULL` guard. A Type3 door that returns there never reaches
+  `sub_080868EC`, which is what calls `sub_0800445C` — the push-the-player-out
+  collision — on every frame the door's `frameIndex` is 0. **The door drew
+  itself perfectly and was not there.**
+- Record 1 is never read as a record at all, so no entity is spawned at
+  x=0x178 and the map's own black doorway is what you see. The right door was
+  never "drawn wrong"; nothing was drawn.
+
+The three port-only guards in `houseDoorExterior.c` are all this bug. Each was
+added against a symptom, each named a cause that did not exist ("EntityData
+read the wrong byte for type2's high half"), and between them they converted a
+crash into a silent wrong-looking door — which is why it survived to be
+reported as a rendering glitch. `01948f13` had the right instinct and the wrong
+model: it read the short buffer as a *native 16-byte struct* rather than a
+truncated packed one, which is why it was reverted twice without ever fixing
+anything.
+
+### It is already on the issue tracker, three times
+
+`CHANGELOG.md`'s still-open list carries **#37 "Lon Lon Ranch shrink/door"**,
+**#40 "Hyrule Town door texture"** and **#28 "random door above staircase"**.
+The first two are this bug reported from the two rooms above. The third is its
+other half: a garbage record that happens to pass `CheckRegionOnScreen` spawns a
+door at a nonsense position, which is exactly what "#28, #29, #30" meant in the
+comments the port left in `houseDoorExterior.c`. All three should be gone — the
+lists now terminate where the data says they do, so there are no garbage records
+left to spawn from. **#21 "Link's house glitched doors"** is worth re-testing
+against this too; it was not investigated here.
+
+### Reach — four properties, three areas
+
+| Area / room | Prop | Consumer | Was | Now |
+|---|---|---|---|---|
+| Hyrule Field / Lon Lon Ranch | `0x11` | house doors | 8 B — 1½ of 2 doors | 36 B — both |
+| Hyrule Town (`Room_HyruleTown_0`) | `0x0c` | house doors | 44 B — 3½ of 15 doors | 192 B — all 15 |
+| Cave of Flames / boss door | `0x08` | lava platforms | 32 B — 2 of 10, then off the end | 176 B — all 10 |
+| Cave of Flames / Rollobite | `0x08` | lava platforms | 4 B — *the pointer word only* | 32 B — its 1 platform |
+
+Only Lon Lon Ranch was seen fixed. **A debug `warp 0x02 0x00` does not reach
+`Room_HyruleTown_0`** — it lands in `Room_HyruleTown_1`, which the runtime
+reports as area 21 (`AREA_FESTIVAL_TOWN`) room 0 and which reads its doors from
+property `0x08` (`gUnk_additional_8_HyruleTown_1`, a macro-emitted list that was
+never truncated). Both signals agree: the trace names property 8, and only
+`Entities_HyruleTown_1_1`'s door parent asks for it. That is also why the gate's
+`town` waypoint could not have moved, and it means the town half of this fix is
+**verified in the data and not on screen**. `Room_HyruleTown_0` is the everyday
+town — every `destArea=0x2` exit lands there, including the ones out of Dr.
+Left's, Romio's and the Cucco house — and record 3 of its list carries
+`script_DrLeftDoor`, the same Type3-with-a-script shape that failed at the
+ranch.
+
+The Cave of Flames pair are the same defect in `lavaPlatform.c`, which walks
+16-byte records to a `raw[9] == 0xff` terminator: neither truncated blob
+contained one, so both rooms were reading past their buffers on entry. The
+Rollobite room's blob begins *with* a pointer, so its indexed fragment starts
+four bytes in and the extractor fell back to the boundary rule and wrote the
+pointer word alone.
+
+### The fix
+
+`infer_room_property_size` in `tools/src/assets_extractor/assets_extractor.hpp`
+rejoins the fragments: take the entry at the property's address (or, when the
+symbol opens with a pointer, the one four bytes in), then keep absorbing
+`four-byte hole + indexed entry` pairs. **Only a hole continues the walk** — an
+indexed entry that starts exactly where the previous one ended is the next
+symbol, not the next fragment, and `gUnk_additional_8_HyruleTown_1` sits flush
+against the end of `gUnk_additional_c_HyruleTown_0_2` waiting to be swallowed
+by a rule that does not check. The continuation's *name* is checked too
+(`X.bin` → `X_1.bin` → `X_2.bin`), so the walk models "fragments of one decomp
+symbol" rather than "whatever is four bytes later".
+
+Rejoined blobs are written to the generated `room_properties/offset_XXXXX.bin`
+path instead of the indexed one. An indexed path must keep the size the index
+gives it — the decomp's own `.incbin` of that file depends on it — so the
+merged view gets its own file and the fragments keep their identity.
+
+**A fix in the extractor reaches nobody who is past first run**, because
+`RuntimeAssetsUpToDateImpl` only fingerprints the ROM, and the ROM has not
+changed. `kExtractorFormatVersion` (`assets_extractor_api.cpp`) is now recorded
+in `.asset_build_state.json` and compared on launch, so an existing `assets/`
+re-extracts once. Both play builds and the APK's baked tree were regenerated
+this way; the four blobs are byte-identical to ROM at their addresses.
+
+### Evidence
+
+- Same input script, same 320x240 binary, only the door list differing: before,
+  the player is inside the bedroom by frame 3800; after, he is still outside
+  after 500 frames of holding *up* against the door, which rattles and stays
+  shut. The right door is blue in the same frames.
+- Regression gate at 240x160: canonical route 11/11 pixel-identical, map-source
+  audit `fetches=265497600 mismatched=0`. The route's `town` waypoint is not in
+  the affected room at all — see above — so the gate says nothing either way
+  about the town doors, and everything about nothing else having moved.
+
+### Worth keeping
+
+**A defensive guard whose comment names a cause nobody confirmed is a bug that
+cannot be found.** Three of them here each turned a crash into plausible-looking
+output, and the report that eventually came in described the *rendering*. When
+adding one, say what was actually observed and leave the failure loud enough to
+be traced.
+
+**Extracted assets are not the ROM.** Anything the decomp writes as a
+relocation — every `.4byte <symbol>` inside a data blob — is a byte the
+extraction pipeline cannot represent and must reconstruct. Room properties are
+the case found; the same shape exists anywhere an `.incbin` run is interrupted
+by a symbol reference. Scanning `data/map/entity_headers.s` for symbols whose
+body mixes `.incbin` with `.4byte` enumerates every one of them — there are
+five, and it takes seconds.
+
+**When the data layer is fixable, fix it there.** Every reader of these
+properties — the door spawner, `lavaPlatform.c`, anything found later — was
+wrong for one reason, and none of them needed to change.
+
+---
 
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 

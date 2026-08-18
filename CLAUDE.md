@@ -137,6 +137,26 @@ can see** — `LoadGfxGroup(0x16)` writes four destinations and two are maps.
 `grep DISPCNT_MODE_ src/` still returns exactly two sites: the title screen and
 the rolling barrel.
 
+**Extracted assets are not the ROM, and the gap is exactly where pointers
+live.** The decomp writes a pointer inside a data blob as `.4byte <symbol>` —
+a relocation, not bytes — so `port_asset_index.c` describes such a symbol as
+several `.incbin` fragments with an unindexed four-byte hole per pointer. Any
+consumer sized from one index entry stops at the first pointer and then walks
+records off the end of the buffer. B28: Lon Lon Ranch's house-door list was 8 of
+its 36 bytes, so the locked door drew itself and had no collision, and its
+neighbour was never spawned. `infer_room_property_size` in the extractor rejoins
+the fragments; **a change there reaches nobody who is past first run** unless
+`kExtractorFormatVersion` is bumped, because the up-to-date check only
+fingerprints the ROM. Scan `data/map/entity_headers.s` for symbols whose body
+mixes `.incbin` with `.4byte` to enumerate the rest — there are five.
+
+**A defensive guard whose comment names an unconfirmed cause is a bug that
+cannot be found.** Three of them in `houseDoorExterior.c` each turned B28's
+crash into plausible output, and the report that eventually arrived described
+the *rendering*. `01948f13` was reverted twice for reading the short buffer as a
+native 16-byte struct — right instinct, wrong model; the buffer is packed and
+merely short.
+
 **A platform-only symptom is not a platform bug.** B16 reproduced on Android 2
 runs in 3 and never on desktop, and six rounds went into what was different
 about the device — all wrong. The engine was identical; one out-of-bounds read
