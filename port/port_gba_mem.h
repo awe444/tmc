@@ -16,6 +16,30 @@ extern u16 gBgPltt[256];       // 0x200 bytes
 extern u16 gObjPltt[256];      // 0x200 bytes
 extern u16 gOamMem[0x400 / 2]; // 0x400 bytes (OAM)
 
+/* The HUD/UI tilemap. Standalone on PC rather than an alias into gEwram
+ * (Spike 6), but on the GBA it lived at EWRAM 0x02034CB0 and some data
+ * still names it by that raw address — see GBA_BG0_BUFFER_ADDR below. */
+extern u16 gBG0Buffer[UI_BG0_ENTRIES];
+
+/* Where gBG0Buffer sat in the GBA's EWRAM.
+ *
+ * Spike 6 moved the buffer out of gEwram and fixed the one C-source Font
+ * that had hardcoded this address. It could not fix the ones stored as
+ * *data*: a 24-byte GBA Font blob in ROM carries its `dest` as a raw
+ * pointer, so Port_DecodeFontGBA resolves e.g. 0x02034E0E — row 5 of this
+ * buffer, where the area-name banner is drawn — and without the mapping
+ * below it lands in dead gEwram and the text is never seen.
+ *
+ * The mapping is linear, which is only right while the buffer keeps the
+ * GBA's 32x32 shape. viewport.h explains why it does (widening was tried
+ * and abandoned; the whole layer is centred instead) and warns that the
+ * failures from changing the stride are silent. Assert it here so a second
+ * attempt at widening stops at a compile error on this line. */
+#define GBA_BG0_BUFFER_ADDR 0x02034CB0u
+PORT_STATIC_ASSERT(UI_BG0_WIDTH_TILES == 32 && UI_BG0_ENTRIES == 0x400,
+                   "gBG0Buffer no longer has the GBA's 32x32 shape: the linear GBA_BG0_BUFFER_ADDR "
+                   "mapping in gba_TryMemPtr would silently write to the wrong rows");
+
 /* VRAM, plus port-only shadow banks the GBA does not have.
  *
  * The GBA's 96 KB is PORT_VRAM_GBA_SIZE and is all the engine can address:
@@ -116,6 +140,10 @@ u32 gba_read32(uint32_t addr);
  * Returns native pointer for known GBA ranges, NULL otherwise.
  */
 static inline void* gba_TryMemPtr(uint32_t addr) {
+    /* Before the generic EWRAM case: this range is gBG0Buffer, which no
+     * longer lives inside gEwram. */
+    if (addr >= GBA_BG0_BUFFER_ADDR && addr < GBA_BG0_BUFFER_ADDR + sizeof(gBG0Buffer))
+        return (u8*)gBG0Buffer + (addr - GBA_BG0_BUFFER_ADDR);
     if (addr >= 0x02000000u && addr < 0x02040000u)
         return &gEwram[addr - 0x02000000u];
     if (addr >= 0x03000000u && addr < 0x03008000u)

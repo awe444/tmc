@@ -1,10 +1,17 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-seven of the twenty-eight
+the items the plan did not anticipate, and twenty-eight of the twenty-nine
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
+
+**B29 (2026-08-18) is a Milestone 1 regression that the gate could not catch.**
+Spike 6 moved `gBG0Buffer` out of `gEwram`, and the ROM `Font` blobs that draw
+the area-name banner carry the old EWRAM address in their data, where Spike 6's
+source grep could not see it — so the banner has rendered into dead memory since
+2026-07-29. The canonical route spawns five of them per run and samples none,
+which is why 11/11 stayed green throughout.
 
 **B28 (2026-08-17) is in the tracker but is not a viewport bug at all** — the
 asset extractor was truncating room-property blobs at the ROM pointers embedded
