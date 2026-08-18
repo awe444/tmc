@@ -1,10 +1,17 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-six of the twenty-seven
+the items the plan did not anticipate, and twenty-seven of the twenty-eight
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
+
+**B28 (2026-08-17) is in the tracker but is not a viewport bug at all** — the
+asset extractor was truncating room-property blobs at the ROM pointers embedded
+in them, so Lon Lon Ranch's locked door had no script and could be walked
+through, at 240×160 exactly as at 320×240. It is here because it was reported
+off the 320×240 play build, and because it closes three of `CHANGELOG.md`'s open
+issues (#28, #37, #40).
 
 The 2026-08-08 session added four (B22–B25), all in or around Deepwood's
 rolling barrel, and **two of them — B23 and B25 — turned out to be live at

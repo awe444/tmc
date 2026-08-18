@@ -54,13 +54,17 @@ void HouseDoorExterior(HouseDoorExteriorEntity* this) {
         HouseDoorExterior_Type2,
         HouseDoorExterior_Type3,
     };
-    /* Defensive: a child door entity can get spawned with type2 > 3 when
-     * the parent's room-property iteration reads garbage bytes (see #29,
-     * #30 — bridge/Trilby random crashes). The dispatch would run off the
-     * end of the table and call a random function pointer. Skip the
-     * dispatch if out of range so the bad child stays inert instead of
-     * crashing. The root cause (wrong room-property index) needs separate
-     * investigation. */
+    /* Defensive: a child door entity can get spawned with type2 > 3 when the
+     * parent's room-property iteration reads garbage bytes (see #29, #30 —
+     * bridge/Trilby random crashes). The dispatch would run off the end of the
+     * table and call a random function pointer.
+     *
+     * The cause of those was the door list itself being short: the asset
+     * extractor truncated a room-property blob at the first ROM pointer
+     * embedded in it, so Type0 below walked its 12-byte records off the end of
+     * the buffer. Fixed in the extractor (infer_room_property_size,
+     * tools/src/assets_extractor/assets_extractor.hpp); this stays as
+     * belt-and-braces because an out-of-range index here is a wild call. */
     if (super->type2 >= (sizeof(HouseDoorExterior_Types) / sizeof(HouseDoorExterior_Types[0]))) {
         return;
     }
@@ -78,19 +82,13 @@ void HouseDoorExterior_Type0(HouseDoorExteriorEntity* this) {
         SetEntityPriority(super, PRIO_PLAYER_EVENT);
     }
 
-    if (this->unk_6c < 8) {
-        return;
-    }
-
 #ifdef PC_PORT
     /* Property indices 0..7 are reserved for the standard room
      * functions/lists (entities, tile entities, room init/update, etc.).
-     * Door property data lives at index 8+ (additional). If a parent
-     * door's super->timer somehow lands at a reserved index — usually
-     * because EntityData read the wrong byte for type2's high half — we'd
-     * read e.g. the entity list as 12-byte door property records and
-     * spawn dozens of garbage children (#28, #29, #30 root cause).
-     * Bail out instead. */
+     * Door property data lives at index 8+ (additional): every authored door
+     * list is at 0x08, 0x0c or 0x11. A reserved index here would mean
+     * super->timer did not survive entity loading, and we would read e.g. the
+     * room's init function pointer as 12-byte door records. Bail out instead. */
     if (this->unk_6c < 8) {
         return;
     }
@@ -224,7 +222,14 @@ void HouseDoorExterior_Type3(HouseDoorExteriorEntity* this) {
     /* On the port, Port_ResolveRomData can return NULL for door scripts whose
      * GBA address isn't backed by the loaded ROM (or whose asset is missing),
      * leaving entity->context unset by the spawner. The GBA original always
-     * had valid pointers; here we skip the script path instead of crashing. */
+     * had valid pointers; here we skip the script path instead of crashing.
+     *
+     * This used to fire on every Type3 door in the game, because the truncated
+     * door list handed the spawner four bytes of heap for the script address —
+     * and a Type3 door that returns here never runs its script, so Lon Lon
+     * Ranch's locked door drew itself but never closed off the doorway. Once
+     * the list is whole this is unreachable; keep it so a missing asset stays
+     * a missing door rather than a crash. */
     if (this->context == NULL) {
         return;
     }

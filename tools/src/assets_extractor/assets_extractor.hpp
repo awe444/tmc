@@ -1408,19 +1408,109 @@ inline uint32_t infer_asset_size(uint32_t offset, const std::unordered_map<uint3
     return offset < Rom.size() ? static_cast<uint32_t>(Rom.size()) - offset : 0;
 }
 
+/* Is `next` the fragment that follows `current` in the same decomp symbol?
+ *
+ * The index names split symbols `X.bin`, `X_1.bin`, `X_2.bin`, ... so the
+ * continuation of stem S is either S_1 (S has no fragment suffix yet) or,
+ * when S already ends in _k, the same stem with k+1. Comparing names rather
+ * than just adjacency keeps the walk below from stepping into an unrelated
+ * symbol that happens to sit four bytes past the end of this one. */
+inline bool is_next_asset_fragment(const std::filesystem::path& current, const std::filesystem::path& next)
+{
+    if (current.parent_path() != next.parent_path()) {
+        return false;
+    }
+
+    const std::string stem = current.stem().string();
+    const std::string next_stem = next.stem().string();
+
+    if (next_stem == stem + "_1") {
+        return true;
+    }
+
+    const std::size_t underscore = stem.rfind('_');
+    if (underscore == std::string::npos || underscore + 1 >= stem.size()) {
+        return false;
+    }
+    const std::string tail = stem.substr(underscore + 1);
+    /* Digits only, and short enough that the conversion below cannot throw.
+     * Fragment indices are single digits; anything longer is some other
+     * naming convention and is not a continuation. This runs inside a
+     * parallel-for, where an exception would take the extraction with it. */
+    if (tail.size() > 4 || tail.find_first_not_of("0123456789") != std::string::npos) {
+        return false;
+    }
+    return next_stem == stem.substr(0, underscore + 1) + std::to_string(std::stoul(tail) + 1);
+}
+
+/* Size of a room-property blob, which the plain index size gets wrong.
+ *
+ * A property blob can hold ROM pointers — a door list stores the address of
+ * each door's script. The decomp emits those words as `.4byte <symbol>`
+ * between `.incbin`s, so the asset index (generated from those .incbin
+ * directives) describes one symbol as several fragments with an *unindexed*
+ * four-byte hole wherever a pointer sits. Taking the size from the single
+ * index entry at `offset` therefore truncates the property at its first
+ * pointer, and the engine walks its fixed-stride records off the end of the
+ * extracted buffer into whatever the heap holds: Lon Lon Ranch's two house
+ * doors become one-and-a-half, Hyrule Town's fifteen become three.
+ *
+ * Rejoin the fragments. Only a four-byte hole continues the walk — an indexed
+ * entry that begins exactly where the previous one ended is the next symbol
+ * rather than the next fragment (gUnk_additional_8_HyruleTown_1 sits flush
+ * against the end of gUnk_additional_c_HyruleTown_0_2). */
+inline uint32_t infer_room_property_size(uint32_t offset,
+                                         const std::unordered_map<uint32_t, IndexedAssetInfo>& lookup,
+                                         const std::vector<uint32_t>& boundaries)
+{
+    uint32_t end;
+    std::filesystem::path fragment;
+
+    if (const auto first = lookup.find(offset); first != lookup.end()) {
+        end = offset + first->second.size;
+        fragment = first->second.path;
+    } else if (const auto after_ptr = lookup.find(offset + 4); after_ptr != lookup.end()) {
+        /* Symbol opens with a pointer word, so its first fragment is indexed
+         * four bytes in (gUnk_additional_8_CaveOfFlames_Rollobite). */
+        end = offset + 4 + after_ptr->second.size;
+        fragment = after_ptr->second.path;
+    } else {
+        return infer_asset_size(offset, lookup, boundaries, 4);
+    }
+
+    for (int guard = 0; guard < 64; ++guard) {
+        if (lookup.count(end) != 0) {
+            break;
+        }
+        const auto next = lookup.find(end + 4);
+        if (next == lookup.end() || !is_next_asset_fragment(fragment, next->second.path)) {
+            break;
+        }
+        end = end + 4 + next->second.size;
+        fragment = next->second.path;
+    }
+
+    return end > offset ? end - offset : infer_asset_size(offset, lookup, boundaries, 4);
+}
+
 inline std::filesystem::path extract_asset_or_raw(uint32_t rom_offset, uint32_t size,
                                                   const std::unordered_map<uint32_t, IndexedAssetInfo>& lookup,
                                                   const std::filesystem::path& output_root,
                                                   const std::filesystem::path& runtime_output_root,
                                                   const std::filesystem::path& generated_prefix,
-                                                  const Config* active_pak_config = nullptr)
+                                                  const Config* active_pak_config = nullptr,
+                                                  bool force_generated_path = false)
 {
     auto found = lookup.find(rom_offset);
     std::filesystem::path relative_path;
-    if (found != lookup.end()) {
+    if (found != lookup.end() && !force_generated_path) {
         relative_path = found->second.path;
         size = found->second.size;
     } else {
+        /* force_generated_path keeps `size` as the caller computed it and
+         * writes to our own file, so an indexed name never ends up
+         * describing a different number of bytes than the index says it
+         * has — the decomp's .incbin of the same path depends on that. */
         relative_path = generated_prefix / ("offset_" + hex_offset_string(rom_offset) + ".bin");
     }
 
@@ -1683,10 +1773,13 @@ inline bool extract_area_tables(const Config& config, const std::unordered_map<u
                             }
                         }
 
-                        const uint32_t data_size = infer_asset_size(data_offset, lookup, boundaries, 4);
+                        const uint32_t data_size = infer_room_property_size(data_offset, lookup, boundaries);
+                        const auto indexed = lookup.find(data_offset);
+                        const bool rejoined =
+                            indexed == lookup.end() || indexed->second.size != data_size;
                         const std::filesystem::path relative_path = extract_asset_or_raw(
                             data_offset, data_size, lookup, config.outputRoot, config.runtimeOutputRoot,
-                            "room_properties", &config);
+                            "room_properties", &config, rejoined);
                         json_room.push_back(json_path_string(relative_path));
                     }
                 }

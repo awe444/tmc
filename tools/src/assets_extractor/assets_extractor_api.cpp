@@ -26,6 +26,18 @@ struct RomFingerprint {
     int64_t mtime = 0;
 };
 
+/* Bump when a change to the extractor makes a previously written assets/
+ * tree wrong rather than merely stale. The ROM fingerprint alone can't see
+ * such a change — the ROM is untouched — so without this an install that
+ * already extracted keeps its bad files forever and the fix reaches nobody
+ * who is past first run.
+ *
+ * 1: room-property blobs rejoined across the four-byte pointer holes the
+ *    asset index leaves between fragments of one decomp symbol (house-door
+ *    lists in Hyrule Town and Lon Lon Ranch were truncated at their first
+ *    embedded script pointer). */
+constexpr int kExtractorFormatVersion = 1;
+
 RomFingerprint ComputeRomFingerprint(const std::filesystem::path& rom_path)
 {
     RomFingerprint fp;
@@ -70,6 +82,9 @@ bool RuntimeAssetsUpToDateImpl(const std::filesystem::path& runtime_root,
         if (desired != recorded) {
             return false;
         }
+        if (state.value("extractor_format", 0) != kExtractorFormatVersion) {
+            return false;
+        }
         return true;
     } catch (...) {
         return false;
@@ -94,6 +109,7 @@ void StampRomFingerprint(const std::filesystem::path& runtime_root,
     state["rom_size"] = fp.size;
     state["rom_mtime"] = fp.mtime;
     state["pack_format"] = pack_runtime ? "v1" : "loose";
+    state["extractor_format"] = kExtractorFormatVersion;
 
     PortAssetLog::EnsureDir(runtime_root);
     std::ofstream out(state_path);
