@@ -24,7 +24,7 @@ device-only symptom here as a viewport bug until a trace says otherwise.
 
 ```bash
 export JAVA_HOME=/snap/android-studio/235/jbr
-export ANDROID_HOME=/home/awaszczak/Android/Sdk
+export ANDROID_HOME=${HOME}/Android/Sdk
 git submodule update --init libs/SDL
 ```
 
