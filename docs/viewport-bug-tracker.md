@@ -1779,7 +1779,7 @@ region data drives a resource swap, check the gaps against the viewport before
 trusting first-match-wins — and note the three budget hypotheses above cost more
 than the region table would have, had it been read first.
 
-## B27 — scenery in the outer 40 px is drawn from a non-resident tileset *(fixed: Hyrule Town, festival town and Minish Village)*
+## B27 — scenery in the outer 40 px is drawn from a non-resident tileset *(fixed: Hyrule Town, festival town and Minish Village; playtested 2026-08-11)*
 
 The residual after B26, reported as a fourth Hyrule Town glitch on 2026-08-09.
 **It is not a selection defect and no selection rule can fix it.**
@@ -1907,7 +1907,12 @@ and comparing them to each other — a comparison with the camera held still.
 ### Minish Village, 2026-08-11
 
 **Reported with six recordings on 2026-08-11 and fixed the same day** — four,
-then two more against the first build of the fix. The
+then two more against the first build of the fix, then two interiors against
+the build after that. **The maintainer playtested the result and confirmed it
+2026-08-11.** That is worth separating from everything measured below: the
+numbers say the periphery stopped changing and matches the centre, and the
+playtest says the areas look right to someone playing them, which no
+measurement here establishes. The
 maintainer asked first for proof the glitch could be *seen* — absence and
 presence — before anything was changed. That is why the numbers below are
 paired: the same measurement with the selection suppressed and applied.
