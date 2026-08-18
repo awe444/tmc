@@ -150,6 +150,25 @@ the fragments; **a change there reaches nobody who is past first run** unless
 fingerprints the ROM. Scan `data/map/entity_headers.s` for symbols whose body
 mixes `.incbin` with `.4byte` to enumerate the rest — there are five.
 
+**A grep over source cannot see an address that only exists as data.** Spike 6
+relocated `gBG0Buffer` out of `gEwram[0x34CB0]`, searched the tree for code
+naming that address, found the one site and fixed it. The area-name banner's
+`Font` is twenty-four bytes of ROM whose `dest` becomes `0x02034E0E` only inside
+`Port_DecodeFontGBA`, so it was invisible to that search and the banner drew
+into dead memory for three weeks (B29). When relocating something the GBA
+addressed by a fixed number, make the resolver itself know where it went —
+`gba_TryMemPtr` now maps the BG0 range — rather than chasing the callers.
+
+**The 240x160 build answers "was it the expansion's geometry", not "was it the
+expansion".** B29 reproduces there and is still a Milestone 1 regression,
+because the buffer move applies at every size. A port-wide change is invisible
+to a size comparison.
+
+**A regression gate that runs a mechanism is not a gate that covers it.** The
+canonical route enters five new areas per run — five banners — and dumps each
+waypoint 300 frames after its warp, while a banner lives 120. 11/11 stayed
+green across the regression and across the fix.
+
 **A defensive guard whose comment names an unconfirmed cause is a bug that
 cannot be found.** Three of them in `houseDoorExterior.c` each turned B28's
 crash into plausible output, and the report that eventually arrived described

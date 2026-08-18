@@ -7,9 +7,9 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-seven of the twenty-eight
-bugs are closed: twenty-six fixed with a root cause and evidence, and B4 closed
-as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
+complete — see `docs/milestone2-status.md`.** Twenty-eight of the twenty-nine
+bugs are closed: twenty-seven fixed with a root cause and evidence, and B4
+closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
 
@@ -27,6 +27,13 @@ It is a port data bug: the same picture and the same walk-through door at both
 sizes, reported only because someone was playing the 320×240 build. Kept here
 because this is where the port's bugs are tracked, not because it is a
 viewport defect.
+
+**B29 looks identical from the outside and is the opposite.** It too reproduces
+at 240×160, but it is a Milestone 1 regression: Spike 6 relocated `gBG0Buffer`
+and the relocation is unconditional, so the damage is the same at every size.
+"Present at the shipping size" answers *"did the expansion's geometry cause
+this"*, not *"did the expansion cause this"* — the first thing the 240×160
+build is for is a narrower instrument than it looks.
 
 **B22 is the fourth appearance of one assumption — that the screen is the
 room.** B5, B15 and B17 were the first three, all horizontal. B22 is the
@@ -72,6 +79,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
+| B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
 
 ---
 
@@ -2268,6 +2276,99 @@ five, and it takes seconds.
 **When the data layer is fixable, fix it there.** Every reader of these
 properties — the door spawner, `lavaPlatform.c`, anything found later — was
 wrong for one reason, and none of them needed to change.
+
+---
+
+## B29 — the area-name banner never appears *(fixed)*
+
+Reported 2026-08-18: the stylized area name that appears on first entering an
+area — "Minish Woods" in white with a blue swirl either side, no enclosing box
+— is simply absent. Present at 240x160 too, so the first question said "not the
+expansion" again; that answer was **wrong this time**, and the reason it was
+wrong is the interesting part.
+
+### Root cause: Spike 6 relocated gBG0Buffer, and a Font can name it in *data*
+
+The banner is ordinary UI text. `EnterRoomTextboxManager` (`sub_0805E1F8`)
+picks one of two 24-byte GBA `Font` blobs in ROM — `gUnk_08108E30` for an
+overworld name, `gUnk_08108E48` for a dungeon's red one — and hands it to
+`ShowTextBox`. A GBA `Font` carries its destination as a raw 32-bit pointer;
+both of these say `dest = 0x02034E0E`, which on hardware is row 5, column 15 of
+`gBG0Buffer` at EWRAM `0x02034CB0`.
+
+`Port_DecodeFontGBA` resolves that through `gba_TryMemPtr`, which mapped every
+EWRAM address into `gEwram[]`. Until Spike 6 that was right, because
+`gBG0Buffer` *was* `gEwram[0x34CB0]` — a `#define`, not an array. Spike 6 made
+it a standalone array so a wide viewport could have more than 32 columns, and
+from that commit on the banner has been rendered, correctly and completely,
+into 2 KB of dead EWRAM that nothing draws.
+
+Spike 6 knew about this hazard and went looking for it. Its commit message
+records finding `phonograph.c`, which held a `Font` whose destination was the
+literal `(u16*)0x2034fce`, and concludes "every other Font table names the
+buffer symbolically". That was true of every Font *in C source* — which is
+where a grep can look. It could not be true of a Font that exists only as
+twenty-four bytes of ROM, whose `dest` is not a symbol, not a literal in any
+file, and not present until `Port_DecodeFontGBA` assembles it at runtime.
+
+### Why nothing caught it for three weeks
+
+The canonical route enters five new areas and spawns a banner in each — the
+mechanism runs. Every waypoint dump lands 300 frames after its warp, and the
+banner lives 120. **The route exercises this every run and samples it never**,
+so the gate reference (captured at Spike 0, two days *before* the regression)
+still matches, both before this fix and after. 11/11 was never evidence about
+this.
+
+Adding a waypoint 60 frames after a warp would close that, at the cost of
+regenerating the reference set. Not done here — the gate's definition is quoted
+in several places and changing it is the maintainer's call.
+
+### The fix
+
+`gba_TryMemPtr` now maps `[0x02034CB0, +0x800)` onto the real `gBG0Buffer`
+before its generic EWRAM case, so a GBA address naming the UI tilemap reaches
+the UI tilemap however it arrives — decoded from a ROM Font blob, resolved by
+`port_resolve_addr`, or written by a DMA.
+
+The mapping is linear, which is only correct while the buffer keeps the GBA's
+32x32 shape. It does, and `viewport.h` explains why: widening BG0 was tried and
+abandoned, and the whole 240-wide layer is centred instead. That file also
+warns that the failures from changing the stride are silent, so the mapping is
+guarded by a `PORT_STATIC_ASSERT` on `UI_BG0_WIDTH_TILES` — a second attempt at
+widening now stops at a compile error on that line instead of quietly writing
+into the wrong rows.
+
+### Evidence
+
+- Both fonts, both viewports: "Minish Woods" in the overworld colour and
+  "Deepwood Shrine" in the dungeon one, matching the reference screenshot the
+  maintainer supplied.
+- Position is exact rather than approximate. Diffing the frame against its
+  pre-fix twin isolates the banner: bbox centre **x=120 of 240** and **x=160 of
+  320**, i.e. centred at both sizes, and the 320 copy is the 240 one shifted by
+  exactly `UI_CENTER_DX` (40 px).
+- Blast radius is one font family. Tracing every `ShowTextBox` call across the
+  canonical route: the four banner calls move into `gBG0Buffer`; the three that
+  still resolve into `gEwram` target `gBG1Buffer` (0x02021F30 + 0x42, 0x12C,
+  0x39E), which is still aliased there and correct.
+- Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0` —
+  which, as above, says nothing about the banner and everything about nothing
+  else having moved.
+
+### Worth keeping
+
+**A grep over source cannot see an address that only exists as data.** Spike 6
+did the right search and got a complete answer to the wrong question. When
+relocating something the GBA addressed by a fixed number, the search has to
+cover ROM blobs the engine decodes at runtime — Fonts, room properties (B28),
+anything with a pointer field — and the cheapest way to cover all of them at
+once is to make the address resolver itself know where the thing moved to,
+which is what the fix does.
+
+**A regression gate that runs a mechanism is not a gate that covers it.** This
+is the concrete case CLAUDE.md's "count the frames that exercise the mechanism"
+line was written about, and even so it took a bug report to find.
 
 ---
 
