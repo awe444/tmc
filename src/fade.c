@@ -9,6 +9,7 @@
 #include "port_gba_mem.h"
 #include "port_rom.h"
 #include "port_tileset_residency.h"
+#include "port_border_color.h"
 #include <stdio.h>
 #endif
 
@@ -128,6 +129,12 @@ void FadeVBlank(void) {
      * palettes have to carry whatever fade this loop just applied — so they
      * must be rebuilt after it, every frame, not when a room is entered. */
     Port_TilesetResidency_UpdatePalettes();
+#endif
+#ifdef PC_PORT
+    /* Same placement, same reason: the per-scene border colour replaces the
+     * backdrop the loop above just faded, so it has to be applied after it and
+     * carry the same fade. */
+    Port_BorderColor_Apply();
 #endif
 }
 

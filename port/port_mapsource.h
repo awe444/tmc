@@ -54,6 +54,12 @@ bool Port_MapSource_Enabled(void);
  * palette entry 0 happens to be (pale yellow on the title screen). */
 bool Port_MapSource_UiCentered(void);
 
+/* The world-view twin of the above: a room drawn from an affine layer is a
+ * 240x160-authored surface too, so it is centred as well (Deepwood's rolling
+ * barrel). Kept separate from UiCentered because everything *else* about the
+ * two differs — see mapsource_bind_ui. */
+bool Port_MapSource_AffineCentered(void);
+
 /* Tile columns the text box should shift itself by. Zero on UI screens,
  * where the whole BG0 layer is already shifted (see the note in the .c). */
 int Port_MapSource_MessageTileShift(void);
