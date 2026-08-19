@@ -1,10 +1,15 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-eight of the twenty-nine
+the items the plan did not anticipate, and twenty-nine of the thirty
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
+
+**B30 (2026-08-18) closed the last of B27's outer-40 px cases.** A tileset slot
+whose regions the centred 240x160 never touches is never loaded, and loading was
+the only thing that declared a slot to the per-tile renderer — so it had no
+answer at all and drew the previous room's tiles until the camera moved.
 
 **B29 (2026-08-18) is a Milestone 1 regression that the gate could not catch.**
 Spike 6 moved `gBG0Buffer` out of `gEwram`, and the ROM `Font` blobs that draw

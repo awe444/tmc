@@ -104,6 +104,12 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**And a slot the camera never selects was never declared at all (B30)**, because
+the declaration hung off `LoadGfxGroup` and B26's centred sub-rect means some
+slots never match — so their tiles drew the previous room's until the camera
+moved. `TMC_TILESET_TRACE=2` prints the per-frame `groups`; a `255` there is the
+whole diagnosis.
+
 Two things about it are load-bearing and were each learned by getting them
 wrong. **Whether a group reads real VRAM is a per-area decision**: town names a
 resident group so the oracle-house overlay survives, Minish names

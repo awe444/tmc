@@ -119,7 +119,7 @@ static const u16* HyruleTownTileSetManager_RegionsFor(u32 gfxIndex) {
  * write to the same two destinations, so the pair is one bit. The group that
  * is already in VRAM keeps reading it; the other is copied into its bank, and
  * the renderer picks per tile. */
-static void HyruleTownTileSetManager_MakeGroupPairResident(u32 gfxIndex, u32 gfxGroup) {
+static void HyruleTownTileSetManager_MakeGroupPairResident(u32 gfxIndex, u32 gfxGroup, u32 residentGroup) {
     const HyruleTownTileSetManagerGfxInfo* infos;
     PortTilesetBlock blocks[4];
     u32 pair[2];
@@ -144,7 +144,38 @@ static void HyruleTownTileSetManager_MakeGroupPairResident(u32 gfxIndex, u32 gfx
         blocks[i * 2 + 1].size = BG_SCREEN_SIZE * 2;
     }
     Port_TilesetResidency_DeclareSlot(gfxIndex, HyruleTownTileSetManager_RegionsFor(gfxIndex),
-                                      gfxGroup, blocks, 4);
+                                      residentGroup, blocks, 4);
+}
+
+/* Declare a slot the camera never selected.
+ *
+ * UpdateRoomGfxGroup only loads a slot whose regions CheckRegionsOnScreen
+ * matches, and B26 made that test the centred DISPLAY_WIDTH x DISPLAY_HEIGHT
+ * sub-rect — the screen the GBA would have had. So a slot whose scenery is
+ * only ever in the outer 40 px is never loaded, gRoomVars.graphicsGroups
+ * keeps the 0xff OnEnterRoom put there, and LoadGfxGroup — the only thing
+ * that declares a slot — never runs for it. Those tiles then read whatever
+ * the previous room left in that VRAM range.
+ *
+ * On hardware that is unreachable and therefore harmless: the 240x160 screen
+ * cannot show the scenery in question, which is why the engine is right not
+ * to load it. Above native size it is on screen from the moment the room
+ * loads, and pops to its proper tiles the instant the camera moves far enough
+ * for the region test to match.
+ *
+ * Declare the pair anyway. No group is resident, because this room put
+ * neither of them in the GBA's own VRAM — unlike the loaded case, where the
+ * resident group is named so the second oracle house survives. Tiles in the
+ * authored gaps between regions still fall back to VRAM (their group is
+ * 0xff, which PublishForBg reads as "no bank"), so this only ever adds an
+ * answer where the region tables have one. */
+static void HyruleTownTileSetManager_DeclareUnselectedSlot(u32 gfxIndex) {
+    if (gRoomVars.graphicsGroups[gfxIndex] != 0xff) {
+        return; /* loaded, so LoadGfxGroup already declared it */
+    }
+    /* The gfx-info table lists slot i's alternatives at 2i and 2i+1, and
+     * MakeGroupPairResident takes either of a pair. */
+    HyruleTownTileSetManager_MakeGroupPairResident(gfxIndex, gfxIndex * 2, PORT_TILESET_NO_RESIDENT);
 }
 #endif
 
@@ -196,6 +227,11 @@ void HyruleTownTileSetManager_UpdateLoadGfxGroups(HyruleTownTileSetManager* this
                                                         gHyruleTownTileSetManager_regions2) != 0) {
             HyruleTownTileSetManager_LoadGfxGroup(2, this->gfxGroup2);
         }
+#if VIEWPORT_TILESET_RESIDENCY
+        HyruleTownTileSetManager_DeclareUnselectedSlot(0);
+        HyruleTownTileSetManager_DeclareUnselectedSlot(1);
+        HyruleTownTileSetManager_DeclareUnselectedSlot(2);
+#endif
     } else {
         if (HyruleTownTileSetManager_UpdateRoomGfxGroup(this, 0, &this->gfxGroup0,
                                                         gHyruleTownTileSetManager_festivalRegions0) != 0) {
@@ -205,6 +241,12 @@ void HyruleTownTileSetManager_UpdateLoadGfxGroups(HyruleTownTileSetManager* this
                                                         gHyruleTownTileSetManager_festivalRegions2) != 0) {
             HyruleTownTileSetManager_LoadGfxGroup(2, this->gfxGroup2);
         }
+#if VIEWPORT_TILESET_RESIDENCY
+        /* Slot 1 is left out here as it is above: festival town's list for it
+         * is empty, so there are no regions to answer with. */
+        HyruleTownTileSetManager_DeclareUnselectedSlot(0);
+        HyruleTownTileSetManager_DeclareUnselectedSlot(2);
+#endif
     }
 }
 
@@ -276,7 +318,7 @@ void HyruleTownTileSetManager_LoadGfxGroup(u32 gfxIndex, u32 gfxGroup) {
      * says which group is resident, and that state goes stale on any path
      * that reloads VRAM without telling the manager — which is what an
      * earlier attempt at this did, silently losing a slot mid-room. B27. */
-    HyruleTownTileSetManager_MakeGroupPairResident(gfxIndex, gfxGroup);
+    HyruleTownTileSetManager_MakeGroupPairResident(gfxIndex, gfxGroup, gfxGroup);
 #endif
 }
 
