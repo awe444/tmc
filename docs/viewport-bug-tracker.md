@@ -2372,6 +2372,70 @@ line was written about, and even so it took a bug report to find.
 
 ---
 
+## D3 addendum: three scenes override their border colour
+
+**Requested 2026-08-18 by the maintainer, not a bug fix.** D3 accepts whatever
+the PPU backdrop happens to be around a centred 240x160 surface (B14), which is
+what hardware shows outside every layer. Three scenes now override it:
+
+| Scene | Was | Is | Because |
+|---|---|---|---|
+| Title screen | `0x57FF` pale yellow | `0x46C8` green | file select's colour |
+| Pause menu | `0x46C8` green | `0x57FF` pale yellow | the title's colour |
+| Rolling barrel (Deepwood) | `0x57FF` pale yellow | `0x0000` black | — |
+
+`port/port_border_color.c`. Both replacement colours are the values those other
+scenes already carry, read out of `gPaletteBuffer[0]` on the scenes themselves
+rather than mixed by eye.
+
+**It is one palette entry, not a repaint.** The border *is* BG palette entry 0,
+so the override writes that — which means it needs no knowledge of where the
+border is, cannot clip the HUD sprites that sit in the barrel's bands, and is
+one store per frame instead of 38 400. It runs at the end of `FadeVBlank`, and
+runs the chosen colour through `Port_FadeApply16` with bank 0's current fade
+parameters, so the border fades with its scene instead of staying lit through
+every transition. That is the same placement and the same reason as the B27
+shadow palettes two lines above it.
+
+**This is not B14 coming back.** B14 was a *global* repaint of the horizontal
+band only, left behind by a reversed decision, which made a screen's two axes
+disagree. This is per-scene, applies to all four bands by construction (it
+changes the colour rather than the pixels), and is deliberate. Measured on
+every waypoint: the three scenes change **0 px inside the centred 240x160** and
+their whole ring outside it; file select, the figurine gallery and all six
+world waypoints are byte-identical.
+
+**Eligibility comes from the renderer, not from a second opinion.**
+`Port_MapSource_UiCentered()` and the new `Port_MapSource_AffineCentered()` are
+the decisions that centre the surface in the first place, so a scene can never
+be recoloured in a border it does not have.
+
+### The one that needed a second condition
+
+The Nintendo/Capcom logo screen shares `TASK_TITLE` with the title, and the
+intro step (`gUI.lastState`, indexing `sIntroSequenceHandlers`) advances one
+fade *before* the picture does — so gating on the step alone recoloured the
+logos for the 32 frames they spend fading out. Worse, that screen is the one
+place here where the backdrop is drawn **inside** the centred 240x160 as well —
+it is the screen's own white background — so the override repainted the whole
+screen, logos and all, not its border.
+
+The rule is therefore "the title screen, *and* its backdrop is the pale yellow
+this is about" (`0x57FF`). The logo screen is `0x7FFF` throughout, fade
+included, so it is never eligible. **The measurement that justifies this whole
+approach — backdrop invisible inside the frame — held for the three scenes I
+checked and not for the fourth I had not**, which is worth remembering before
+adding a scene to the table: check it, do not assume it.
+
+### Adding a scene
+
+Add a case to `Port_BorderColor_Target`. Before doing so, capture the scene and
+count how many pixels *inside* the centred 240x160 already carry the backdrop
+colour. If that is not 0, this mechanism will repaint them too and the scene
+needs the pixel-level treatment instead.
+
+---
+
 ## Decision reversal: D1 is now *centered*, not edge-anchored
 
 Recorded because the plan's §0 still shows the original choice.

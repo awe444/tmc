@@ -278,10 +278,15 @@ bool Port_MapSource_LayerAuthoritative(int layer) {
  * edge-anchored HUD, authored out to the viewport edges. The text box also
  * lives on BG0 there and centres itself per-window (message.c). */
 static bool sUiCentered = false;
+static bool sAffineCentered = false;
 static int sClippedBgMask = 0; /* which BGs the clip rule caught, for the trace */
 
 bool Port_MapSource_UiCentered(void) {
     return sUiCentered;
+}
+
+bool Port_MapSource_AffineCentered(void) {
+    return sAffineCentered;
 }
 
 /* Is the screen currently showing a full-screen surface that was *authored*
@@ -589,6 +594,7 @@ static void mapsource_bind_ui(void) {
 
     virtuappu_mode1_clear_bg_clips();
     sUiCentered = ui_screen;
+    sAffineCentered = affine_screen;
 
     /* One rule, applied uniformly: a layer with no map source is reading a
      * 32-tile screenblock. It covers 256 px and wraps, so it cannot fill a
