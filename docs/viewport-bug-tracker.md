@@ -1225,6 +1225,20 @@ anyway. Building with BG3 forced off and differencing gave the answer in one
 run — `BG3 contributes to columns 115..239, and 0 px beyond` — and that is the
 technique to reach for first next time.
 
+**That technique answers the question and leaves nothing to look at, which is
+its cost.** It is a subtraction between two builds: the number is trustworthy
+and the frame it came from still shows nothing anyone can point at. All three
+of the discarded readings above were attempts to read the shaft off the picture
+directly, and the picture will not support it — the layer is blank across two
+thirds of its columns and alpha-blended at eva=9 over foliage of nearly its own
+hue everywhere else. `TMC_MASK_BG3=1` (2026-08-20) paints the layer's every
+non-transparent pixel flat magenta and drops it out of the blend, which turns
+the same question into a census of one frame from one binary: the shaft reads
+`cols=115..239` at both sizes, and at 320x240 the 80 empty columns to its right
+are *visible* rather than inferred. Reach for the mask first and the difference
+second — the difference is still what proves a change moved something, but it
+cannot show you what you are changing.
+
 **The fix that would work is blocked by VRAM, not by artwork.** BGCNT's size
 field offers 512x256, which covers 320 with no wrap at all — `512 - 320 = 192`,
 so the screen shows map 192..511. Everything downstream already supports it:
