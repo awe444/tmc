@@ -1,12 +1,19 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and thirty of the thirty-one
+the items the plan did not anticipate, and thirty-one of the thirty-two
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
 
-**B31 (2026-08-20) was the actual last of them.** The town manager's init reset
+**B32 (2026-08-20) is the same "the window was sized for the GBA's screen"
+shape one level up.** MinishPaths' parallax layers re-base their 32-tile
+screenblock every 64 px, which leaves `yOffset + 240` running past the block's
+256 px and wrapping; re-basing every 16 px keeps the whole screen inside it.
+Its horizontal twin cannot be fixed the same way and is untouched — see the
+tracker.
+
+**B31 (2026-08-20) was the actual last of B27's cases.** The town manager's init reset
 ran a frame after `OnEnterRoom` had declared the room's slots and wiped all
 three, and only a camera-driven group change re-declares one — so from every
 room entry the periphery drew from the centred screen's group until the camera

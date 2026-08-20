@@ -104,6 +104,16 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**A hand-scrolled layer's window is sized for the GBA's screen too (B32).**
+MinishPaths' parallax layers keep a fine `yOffset` and re-point `subTileMap`
+every 64 px; the block they index is 32 tiles, so the screen must fit in
+`256 - yOffset` and at 240 rows it does not. Re-base on a smaller step. The
+horizontal twin needs `xOffset + 320 <= 256` and cannot be fixed this way at
+all. **And a scene with parallax cannot be judged by whole-frame diffs** —
+three layers at three rates means no alignment exists; `TMC_DISABLE_BG1/2/3`
+leave one layer on, and then "did it scroll cleanly" has an exact answer: zero
+residual under a pure shift on every consecutive pair.
+
 **Declaring a slot and *keeping* it declared are different problems (B31).**
 The manager's init reset ran a frame after `OnEnterRoom` had already declared
 the room's slots and wiped all three; only a camera-driven group change

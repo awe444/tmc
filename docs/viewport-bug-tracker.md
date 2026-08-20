@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Thirty of the thirty-one
-bugs are closed: twenty-nine fixed with a root cause and evidence, and B4
+complete — see `docs/milestone2-status.md`.** Thirty-one of the thirty-two
+bugs are closed: thirty fixed with a root cause and evidence, and B4
 closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
@@ -79,6 +79,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
+| B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
 | B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
@@ -2545,6 +2546,96 @@ is what stopped it shipping.
 **`TMC_TILESET_TRACE=2` is still the first thing to reach for**, but its `groups`
 line only reports the engine's choice. A slot can be perfectly chosen and still
 not be *declared*; that needs the residency side, not the manager side.
+
+---
+
+## B32 — MinishPaths parallax grass pops in as the camera scrolls *(fixed)*
+
+Reported 2026-08-20 with a recording. On the Minish Village entry path — the
+vertical corridor strewn with oversized acorns — the foreground grass blades on
+either side arrive in discontinuous jumps instead of scrolling in. The room is
+`AREA_MINISH_PATHS` room 0, **240x800**, so it is also one of the narrow rooms
+the viewport centres: `camx` is pinned at -40 and only the vertical axis moves.
+
+### Root cause: a 64 px re-base step against a 256 px screenblock
+
+`VerticalMinishPathBackgroundManager` scrolls its two parallax layers by hand.
+Each is a 32-tile screenblock — 256 px — and `sub_0805754C` keeps a fine offset
+in `yOffset` while re-pointing `subTileMap` a whole 64 px at a time:
+
+```c
+bgOffset = scroll_y - origin_y;
+bgOffset += bgOffset >> 3;                 /* BG3 runs 9/8, BG1 5/4 */
+gScreen.bg3.yOffset   = bgOffset & 0x3f;
+gScreen.bg3.subTileMap = gMapDataTopSpecial + (bgOffset / 0x40) * 0x200;
+```
+
+The window the block has to cover is `yOffset + screen height`, so the fine
+offset may only range over `256 - height`. At 160 rows that is 96 and the
+engine's 64 fits with room to spare. **At 240 rows it is 16**, and 64 does not:
+for most of every cycle the bottom of the screen ran past the end of the block
+and wrapped to its top, and each re-base swapped what that wrapped strip
+contained. That is the pop.
+
+It is the vertical, parallax cousin of B5/B15/B17 — "32 tiles cover 256 px, not
+320" — with the arithmetic one level up: the layer never lost its map, the
+*window into it* was sized for the GBA's screen.
+
+### The fix
+
+Re-base on a step small enough that the whole screen stays inside the block:
+16 px, with the map pointer moving 2 tile rows (0x80) instead of 8 (0x200).
+Position is unchanged either way — `64*(B/64) + (B&63)` and `16*(B/16) +
+(B&15)` are both `B` — only how often the pointer moves differs, and a
+`static_assert` on `MINISH_PATH_REBASE + VIEWPORT_HEIGHT <= 256` keeps the two
+in step if either changes. At 160 rows the constant is still 64 and the code is
+the engine's.
+
+### Evidence, and the measurement that made it possible
+
+Whole-frame diffs are useless here for a reason the earlier bugs did not have:
+this scene has **three layers moving at three rates**, so no single alignment
+exists and every frame pair reports thousands of differing pixels whichever
+shift you pick. The pre-fix mean residual was 913 px per frame pair — all of it
+parallax, none of it the bug.
+
+`TMC_DISABLE_BG1/BG2/BG3` (new, beside the existing OBJ and BG0 switches) leave
+one layer on. Against a single layer the question has an answer, and the answer
+is exact: **a clean scroll is a residual of zero at some shift, on every
+consecutive pair.**
+
+| Layer, alone | Before | After |
+|---|---|---|
+| BG3, 109 consecutive pairs | one 5115 px discontinuity, mean 104.4 | **0 px on every pair, mean 0.0** |
+| BG1, 109 consecutive pairs | one 5408 px discontinuity, mean 49.6 | **0 px on every pair, mean 0.0** |
+
+Both re-base events the manager reports (`cam_y=52` for BG1, `cam_y=57` for
+BG3) line up with the two discontinuities.
+
+Whole-frame, 45 samples across the recording: 37 differ and **every difference
+is a band at the bottom of the screen** (`y 213..240` and narrower) — precisely
+the strip that was wrapping.
+
+Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0`; the
+constant is 64 there and the code is byte-for-byte the engine's.
+
+### Worth keeping
+
+**A scrolling layer has a better oracle than "did the periphery change".**
+Zero residual under a pure shift, on every consecutive frame pair, says the
+layer is one coherent image being scrolled — which is the actual thing being
+claimed. It is stronger than a before/after comparison and it needs no
+reference build.
+
+**Parallax defeats whole-frame comparison, and the fix is a switch not a
+cleverer metric.** Two of the earlier bugs were measured by removing sprites
+and the HUD; this one needed the same treatment applied to the backgrounds.
+
+**The horizontal twin is untouched and cannot be fixed this way.**
+`horizontalMinishPathBackgroundManager.c` has the same shape on x, where the
+requirement is `xOffset + 320 <= 256` — impossible at any re-base step. If a
+horizontal Minish path shows the same pop it needs a map source, not a smaller
+step. Not reproduced, not attempted.
 
 ---
 
