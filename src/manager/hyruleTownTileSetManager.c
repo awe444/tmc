@@ -188,7 +188,16 @@ void HyruleTownTileSetManager_Main(HyruleTownTileSetManager* this) {
         RegisterTransitionHandler(this, HyruleTownTileSetManager_OnEnterRoom, NULL);
         SetEntityPriority((Entity*)this, PRIO_PLAYER_EVENT);
 #if VIEWPORT_TILESET_RESIDENCY
-        Port_TilesetResidency_Reset();
+        /* Drop the previous room's pairs — but only if they *are* the previous
+         * room's. This entity is created a frame after OnEnterRoom has already
+         * declared the new room's slots, and resetting unconditionally threw
+         * those away. Nothing re-declares a loaded slot except a group change,
+         * so they stayed gone until the camera crossed a region threshold, and
+         * until then every tile in their character range read whatever the
+         * centred 240x160's own group had left in VRAM (B31). */
+        if (!Port_TilesetResidency_SlotDeclared(0)) {
+            Port_TilesetResidency_Reset();
+        }
 #endif
     }
     HyruleTownTileSetManager_UpdateLoadGfxGroups(this);

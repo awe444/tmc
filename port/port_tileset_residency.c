@@ -310,6 +310,12 @@ static int residency_collect_ranges(const PortTilesetBlock* blocks, int blockCou
     return count;
 }
 
+bool Port_TilesetResidency_SlotDeclared(u32 gfxIndex) {
+    const ResidencySlot* slot = residency_slot_for(gfxIndex);
+    return slot != NULL && slot->valid && slot->area == gRoomControls.area &&
+           slot->room == gRoomControls.room;
+}
+
 void Port_TilesetResidency_DeclareSlot(u32 gfxIndex, const u16* regions, u32 residentGroup,
                                        const PortTilesetBlock* blocks, int blockCount) {
     ResidencySlot* slot;
@@ -511,6 +517,11 @@ void Port_TilesetResidency_PublishForBg(int bg) {
 }
 
 #else
+
+bool Port_TilesetResidency_SlotDeclared(u32 gfxIndex) {
+    (void)gfxIndex;
+    return false;
+}
 
 void Port_TilesetResidency_Reset(void) {
 }

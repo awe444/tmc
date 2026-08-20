@@ -69,6 +69,14 @@ typedef struct {
 void Port_TilesetResidency_DeclareSlot(u32 gfxIndex, const u16* regions, u32 residentGroup,
                                        const PortTilesetBlock* blocks, int blockCount);
 
+/* Do this slot's regions and banks already describe the room the game is in?
+ *
+ * Reset() drops every slot, and only a *group change* re-declares one — so a
+ * reset that lands after the room's slots are already correct leaves them gone
+ * until the camera happens to cross a region threshold. See the guard in
+ * HyruleTownTileSetManager_Main (B31). */
+bool Port_TilesetResidency_SlotDeclared(u32 gfxIndex);
+
 /* Say that a group also swaps the BG palette, and which palette group it
  * loads. Call before declaring the slot; the raw palette is snapshotted
  * once, and the faded copy the renderer uses is rebuilt every frame.

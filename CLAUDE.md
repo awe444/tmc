@@ -104,6 +104,16 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**Declaring a slot and *keeping* it declared are different problems (B31).**
+The manager's init reset ran a frame after `OnEnterRoom` had already declared
+the room's slots and wiped all three; only a camera-driven group change
+re-declares one, so from every town entry the periphery drew from the centred
+screen's group until the camera crossed a threshold. `TMC_TILESET_TRACE=2`
+cannot see this — its `groups` line reports the engine's choice, which was
+right the whole time. The question to ask the renderer is *why it chose what it
+chose*; "no published slot holds this character address" is the answer that
+names it, and then you look for who emptied the table.
+
 **And a slot the camera never selects was never declared at all (B30)**, because
 the declaration hung off `LoadGfxGroup` and B26's centred sub-rect means some
 slots never match — so their tiles drew the previous room's until the camera

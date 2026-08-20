@@ -1,12 +1,19 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and twenty-nine of the thirty
+the items the plan did not anticipate, and thirty of the thirty-one
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
 
-**B30 (2026-08-18) closed the last of B27's outer-40 px cases.** A tileset slot
+**B31 (2026-08-20) was the actual last of them.** The town manager's init reset
+ran a frame after `OnEnterRoom` had declared the room's slots and wiped all
+three, and only a camera-driven group change re-declares one — so from every
+room entry the periphery drew from the centred screen's group until the camera
+crossed a region threshold. B30's fix hid half of it, because the slots *it*
+covers are re-declared every frame.
+
+**B30 (2026-08-18) closed what looked like the last of B27's outer-40 px cases.** A tileset slot
 whose regions the centred 240x160 never touches is never loaded, and loading was
 the only thing that declared a slot to the per-tile renderer — so it had no
 answer at all and drew the previous room's tiles until the camera moved.

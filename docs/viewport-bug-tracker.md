@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-nine of the thirty
-bugs are closed: twenty-eight fixed with a root cause and evidence, and B4
+complete — see `docs/milestone2-status.md`.** Thirty of the thirty-one
+bugs are closed: twenty-nine fixed with a root cause and evidence, and B4
 closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
@@ -79,6 +79,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
+| B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
 | B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
 
@@ -2458,6 +2459,92 @@ engine has no reason to think about.
 **Its instrument already existed and named the bug in one run.**
 `TMC_TILESET_TRACE=2` prints `groups` per frame; `255` in that line is the
 whole diagnosis. Reaching for it first would have skipped the frame-diffing.
+
+---
+
+## B31 — every Hyrule Town slot is undeclared from room entry until its first swap *(fixed)*
+
+Reported 2026-08-20 with a recording. Link stands still at the town entrance,
+walks down, and a strip of scenery at the bottom of the viewport is drawn from
+the wrong tileset until the camera crosses a region threshold, at which point it
+pops to its proper tiles. The maintainer added the two facts that broke the case
+open: **it persists while walking rather than flashing, and coming back to the
+same spot later is stable.**
+
+### Root cause: the init reset throws away what OnEnterRoom just declared
+
+`HyruleTownTileSetManager_Main`'s first-frame branch called
+`Port_TilesetResidency_Reset()` to drop the previous room's pairs. But the
+manager entity is created a frame *after* `OnEnterRoom` has already declared the
+new room's three slots, so the reset destroyed those instead:
+
+```
+[dbg] f=1059 RESET had 0 slots      <- OnEnterRoom, then declares gfx 0/1/2
+[dbg] f=1060 RESET had 3 slots      <- Main's init, wipes all three
+```
+
+Nothing re-declares a *loaded* slot: `UpdateRoomGfxGroup` only calls
+`LoadGfxGroup` when the camera changes the group, and `LoadGfxGroup` is the only
+thing that declares. So all three slots stayed gone, and every tile in their
+character ranges fell through `Port_TilesetResidency_OffsetFor` to offset 0 —
+real VRAM, holding whatever group the *centred* 240x160 had selected. That is
+the whole bug, and it explains each observation exactly: it persists because
+nothing restores the slot; it ends at a swap because the swap re-declares; and
+it stays fixed on a return visit because the declaration then survives.
+
+Measured, the slots came back one at a time, hundreds of frames apart:
+
+```
+[dbg] f=1568 LOAD slot 1 group 3 declared=0
+[dbg] f=1814 LOAD slot 2 group 5 declared=0
+[dbg] f=5173 LOAD slot 0 group 1 declared=0      <- the reported pop
+```
+
+### The fix
+
+Reset in that branch only when the slots are not already this room's, which is
+what the reset was for. `Port_TilesetResidency_SlotDeclared` answers that.
+
+### Why B30 hid half of it
+
+B30's `DeclareUnselectedSlot` runs from `UpdateLoadGfxGroups` every frame, so
+the slots it covers — the ones the camera never selects — were re-declared a
+frame after the wipe and looked fine. The slots the camera *does* select had no
+such path, so exactly those stayed undeclared. Fixing the visible half of a
+defect can leave the other half looking like a separate bug, which is how this
+came back as a fresh report.
+
+### Evidence
+
+- The reported corner: **29/448 px** matching the correct tiles before, **448/448**
+  after — the same oracle B30 used, the pop being the engine catching up.
+- Frame-by-frame across the walk, aligned for scroll: the single corner event at
+  5173→5174 is gone and nothing replaces it.
+- Both town recordings, 135 sampled frames: every difference is **outside the
+  centred 240x160** — the bottom-right band in one, the top band in the other —
+  i.e. the periphery now follows the region tables instead of the centred
+  screen's group. That is the fix reaching further than the one corner reported.
+- Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0`; the
+  code is behind `VIEWPORT_TILESET_RESIDENCY`, which is 0 there.
+
+### Worth keeping
+
+**Two wrong diagnoses cost most of this, and the instrument that settled it was
+the one measuring the thing itself.** The first theory was a bank/VRAM flip at
+the swap; the second was an in-flight `LoadResourceAsync`. Both were plausible,
+both fit the one-frame pop, and both were wrong. What settled it was printing,
+per tile, *why* the renderer chose what it chose — "no published slot holds this
+character address" — and then asking who emptied the table.
+
+**A no-op-looking A/B is worth running before believing a fix.** The in-flight
+theory produced a fix that removed the pop *and* changed 384 px of unrelated
+periphery on every frame. A null test — clean rebuild versus the installed
+binary — showed 0 px, which proved the change was mine and not noise, and that
+is what stopped it shipping.
+
+**`TMC_TILESET_TRACE=2` is still the first thing to reach for**, but its `groups`
+line only reports the engine's choice. A slot can be perfectly chosen and still
+not be *declared*; that needs the residency side, not the manager side.
 
 ---
 
