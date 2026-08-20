@@ -7,11 +7,17 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all twenty-seven tracked bugs are closed.
-What is left is two decisions rather than work: frame time is +41% over the
-canvas baseline with peak frames past the 16.67 ms deadline, and B21's light
-shaft cannot reach the right edge without reallocating a BG layer's screenbase
-— no go/no-go is recorded for either.
+complete — every spike landed and thirty-two of the thirty-three tracked bugs
+are closed. B21 is the one still open, and what is left is two decisions rather
+than work: frame time is +41% over the canvas baseline with peak frames past the
+16.67 ms deadline, and B21's light shaft cannot reach the right edge without
+reallocating a BG layer's screenbase — no go/no-go is recorded for either.
+
+**The tracker keeps growing from playtest reports, not from sweeps.** B28-B33
+all arrived as recordings after the milestone was called complete, and four of
+them (B30, B31, B33 and B27 before them) are the same theme: the periphery shows
+world the authored data never expected anyone to see. Expect more of that shape
+rather than fewer.
 
 There is also an **arm64 Android build** (`android/`), which is the same
 viewport on other hardware and is played on an Ayaneo Pocket S 2K.
@@ -20,14 +26,21 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Twenty-seven
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-three
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
-   that cost the most to learn.
+   that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
+   one theme — the periphery showing world the authored data never expected to
+   be visible — and each later one was mistaken for a fresh bug at first.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
+   The switches matter more than the prose: `TMC_TILESET_TRACE`,
+   `TMC_TILE_PROBE` and the per-layer `TMC_DISABLE_*` are what turned the last
+   six reports from guesswork into measurement.
 4. `android/README.md` — the Android build, and how to drive the same
    capture/replay tooling on a device.
-5. `docs/town-tileset-residency.md` — the **next piece of work**: plan for
-   B27, with every measurement it depends on and a do-not-retry list.
+5. `docs/town-tileset-residency.md` — the plan B27 was built from, kept as the
+   record of what it measured and its do-not-retry list. **B27 itself is
+   closed**; the residency mechanism it created is still where B30, B31 and B33
+   live.
 6. `docs/viewport-expansion-research-plan.md` — the original plan and the
    per-spike write-ups, a historical record.
 
