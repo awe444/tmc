@@ -104,6 +104,17 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**A tile in an authored *gap* has no hardware answer once it is in the
+periphery (B33).** B27 gave gap tiles the group the engine loaded — correct
+inside the GBA's screen, arbitrary outside it, where the tile then changes
+tileset whenever the camera crosses an unrelated threshold. Peripheral gap tiles
+take the group of the region they adjoin instead. **Growing the rectangles alone
+is wrong**: simulated over 8,439 camera positions it overrules hardware on
+162,922 gap tiles *inside* the screen. A guard rect covering the centred
+`DISPLAY_WIDTH x DISPLAY_HEIGHT`, published ahead of the grown copies and
+carrying the old fallback, makes that zero by construction rather than by
+argument — cheaper than proving a rule safe.
+
 **A hand-scrolled layer's window is sized for the GBA's screen too (B32).**
 MinishPaths' parallax layers keep a fine `yOffset` and re-point `subTileMap`
 every 64 px; the block they index is 32 tiles, so the screen must fit in

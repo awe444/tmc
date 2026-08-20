@@ -1,10 +1,17 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and thirty-one of the thirty-two
+the items the plan did not anticipate, and thirty-two of the thirty-three
 tracked bugs are closed, **B27 included — Hyrule Town, festival town and
 Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
 than work: frame time, and B21's light shaft.**
+
+**B33 (2026-08-20) is B27's authored-gap decision meeting the periphery.** A
+tile in a gap between region rectangles takes the group the engine loaded, which
+is what hardware shows it — right inside the GBA's screen, arbitrary outside it,
+where the tile changes tileset whenever the camera crosses a threshold that has
+nothing to do with it. Peripheral gap tiles now take the group of the region
+they adjoin, with a guard rect keeping the centred screen byte-identical.
 
 **B32 (2026-08-20) is the same "the window was sized for the GBA's screen"
 shape one level up.** MinishPaths' parallax layers re-base their 32-tile
