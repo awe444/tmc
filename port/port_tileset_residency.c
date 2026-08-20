@@ -88,7 +88,11 @@ void Port_TilesetResidency_TraceGroups(void) {
 /* Hyrule Town declares three; Minish Village declares one. */
 #define RESIDENCY_MAX_SLOTS 4
 /* The longest authored list is Minish Village's eight. */
-#define RESIDENCY_MAX_REGIONS 8
+/* The authored rectangles, plus the two extra kinds PublishForBg appends:
+ * one guard rect for the centred screen and one grown copy per authored
+ * region. Minish Village authors eight, so 8 + 1 + 8 = 17. */
+#define RESIDENCY_MAX_AUTHORED_REGIONS 8
+#define RESIDENCY_MAX_REGIONS (RESIDENCY_MAX_AUTHORED_REGIONS * 2 + 1)
 /* Character-address ranges one slot governs, after merging adjacent blocks.
  * Hyrule Town's groups are two 4 KB blocks in different charbase windows;
  * Minish Village's are eight, which merge down to two. */
@@ -105,7 +109,7 @@ typedef struct {
     u8 room;
     bool valid;
     VirtuaPPUMode1CharRegion regions[RESIDENCY_MAX_REGIONS];
-    int regionCount;
+    int regionCount; /* authored only; PublishForBg appends the rest */
     u32 lo[RESIDENCY_MAX_RANGES]; /* the character spans this slot governs */
     u32 hi[RESIDENCY_MAX_RANGES];
     int rangeCount;
@@ -124,6 +128,10 @@ static int sSlotCount;
  * recoloured two Minish Village interiors. Rebuilding also means retiring a
  * slot cannot destroy state only DeclareSlot could put back. */
 static VirtuaPPUMode1CharSlot sPublished[RESIDENCY_MAX_PUBLISHED];
+/* Per-slot scratch: the authored regions plus the guard and grown copies
+ * PublishForBg appends. Rebuilt every publish because the guard moves with
+ * the camera; the published slots point into it. */
+static VirtuaPPUMode1CharRegion sPublishedRegions[RESIDENCY_MAX_SLOTS][RESIDENCY_MAX_REGIONS];
 static int sPublishedCount;
 
 /* Per-group BG palettes.
@@ -376,7 +384,7 @@ void Port_TilesetResidency_DeclareSlot(u32 gfxIndex, const u16* regions, u32 res
      * tables and both Minish ones is 8-aligned, so this is exact; anything
      * that is not would silently lose up to 7 px, so it is checked. */
     slot->regionCount = 0;
-    for (entry = regions; *entry != 0xff && slot->regionCount < RESIDENCY_MAX_REGIONS; entry += 5) {
+    for (entry = regions; *entry != 0xff && slot->regionCount < RESIDENCY_MAX_AUTHORED_REGIONS; entry += 5) {
         VirtuaPPUMode1CharRegion* region = &slot->regions[slot->regionCount];
 
         if ((entry[1] | entry[2] | entry[3] | entry[4]) & 7u) {
@@ -480,9 +488,12 @@ void Port_TilesetResidency_PublishForBg(int bg) {
     sPublishedCount = 0;
     for (i = 0; i < sSlotCount; i++) {
         const ResidencySlot* slot = &sSlots[i];
+        VirtuaPPUMode1CharRegion* built = sPublishedRegions[i];
+        int builtCount = 0;
         u32 fallback;
         int fallbackPalette;
         u8 group;
+        int k;
 
         /* Slots describe one room's VRAM. Leaving the area stops them rather
          * than applying them to the room that followed; the manager declares
@@ -495,6 +506,49 @@ void Port_TilesetResidency_PublishForBg(int bg) {
                        ? 0u
                        : PORT_VRAM_BANK_OFFSET(group);
         fallbackPalette = (group < PORT_VRAM_BANKS && sPaletteValid[group]) ? (int)group + 1 : 0;
+
+        /* The list handed to the PPU is first-match-wins, and it is built in
+         * three parts.
+         *
+         * 1. The authored rectangles, unchanged. A tile inside one has an
+         *    answer from the data and takes it.
+         *
+         * 2. A guard rect covering the centred DISPLAY_WIDTH x DISPLAY_HEIGHT
+         *    — the screen the GBA would have had — carrying the fallback.
+         *    A gap tile *inside* that rect therefore still gets the group the
+         *    engine loaded, which is exactly what hardware shows it and what
+         *    this code did before. Simulated over all 8,439 camera positions
+         *    in Minish Village, the grown rectangles below would otherwise
+         *    disagree with hardware on 162,922 gap tiles inside the screen;
+         *    the guard makes that number zero by construction.
+         *
+         * 3. A copy of each authored rectangle grown by the margin the wider
+         *    viewport adds. Only a gap tile in the *periphery* reaches these,
+         *    and it takes the group of the nearest authored region rather
+         *    than whatever the centred screen happens to have loaded — which
+         *    is what stopped Minish Village's blue house changing tileset
+         *    every time the camera crossed a region threshold (B33). */
+        for (k = 0; k < slot->regionCount && builtCount < RESIDENCY_MAX_REGIONS; k++) {
+            built[builtCount++] = slot->regions[k];
+        }
+        if (builtCount < RESIDENCY_MAX_REGIONS) {
+            VirtuaPPUMode1CharRegion* guard = &built[builtCount++];
+            guard->x0 = (((int)gRoomControls.scroll_x - (int)gRoomControls.origin_x) + UI_CENTER_DX) >> 3;
+            guard->y0 = (((int)gRoomControls.scroll_y - (int)gRoomControls.origin_y) + UI_CENTER_DY) >> 3;
+            guard->w = DISPLAY_WIDTH / 8;
+            guard->h = DISPLAY_HEIGHT / 8;
+            guard->offset = fallback;
+            guard->palette_set = fallbackPalette;
+        }
+        for (k = 0; k < slot->regionCount && builtCount < RESIDENCY_MAX_REGIONS; k++) {
+            VirtuaPPUMode1CharRegion* grown = &built[builtCount++];
+            *grown = slot->regions[k];
+            grown->x0 -= UI_CENTER_DX / 8;
+            grown->y0 -= UI_CENTER_DY / 8;
+            grown->w += (UI_CENTER_DX / 8) * 2;
+            grown->h += (UI_CENTER_DY / 8) * 2;
+        }
+
         for (j = 0; j < slot->rangeCount; j++) {
             VirtuaPPUMode1CharSlot* published;
             if (sPublishedCount >= RESIDENCY_MAX_PUBLISHED) {
@@ -503,8 +557,8 @@ void Port_TilesetResidency_PublishForBg(int bg) {
             published = &sPublished[sPublishedCount++];
             published->addr_lo = slot->lo[j];
             published->addr_hi = slot->hi[j];
-            published->regions = slot->regions;
-            published->count = slot->regionCount;
+            published->regions = built;
+            published->count = builtCount;
             published->fallback = fallback;
             published->fallback_palette_set = fallbackPalette;
         }

@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Thirty-one of the thirty-two
-bugs are closed: thirty fixed with a root cause and evidence, and B4
+complete — see `docs/milestone2-status.md`.** Thirty-two of the thirty-three
+bugs are closed: thirty-one fixed with a root cause and evidence, and B4
 closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
@@ -79,6 +79,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
+| B33 | Minish Village's blue house changes tileset when the camera crosses a threshold | **Fixed** 2026-08-20 — a tile in an authored *gap* takes the group the engine loaded, which is right inside the GBA's screen and arbitrary outside it. Peripheral gap tiles now take the group of the region they adjoin; a guard rect keeps the inside byte-identical |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -2636,6 +2637,92 @@ and the HUD; this one needed the same treatment applied to the backgrounds.
 requirement is `xOffset + 320 <= 256` — impossible at any re-base step. If a
 horizontal Minish path shows the same pop it needs a map source, not a smaller
 step. Not reproduced, not attempted.
+
+---
+
+## B33 — Minish Village's blue house changes tileset at a camera threshold *(fixed)*
+
+Reported 2026-08-20 with a recording: walking left and right across one spot
+makes the blue house at the left edge flip appearance, and the maintainer
+recognised the location as an older report with the same symptom.
+
+`TMC_TILESET_TRACE=2` shows the engine swapping slot 0 between groups 1 and 2
+every time the camera crosses x=88, which is the threshold; the picture changes
+on exactly those frames and on no others.
+
+### Root cause: the authored gap, seen from outside the GBA's screen
+
+The per-tile classifier says the affected tiles are **class 3 — in no region at
+all**. They sit at room y 560..599, immediately below region [1] (group 1,
+y 464..560) and in the same columns; the only other region in those columns is
+far above. They are in one of the authored gaps.
+
+B27 decided what a gap tile gets, and the reasoning was sound: *"there is no
+per-tile answer for it — the gap is exactly where the data declines to say.
+Give it the group the engine itself loaded, so those tiles keep rendering the
+way hardware renders them."* That is right for a gap tile the GBA can see,
+because hardware shows it with the loaded group and the gaps are sized so that
+works out on a 160-row screen.
+
+It is not right in the **periphery**. Those tiles are ones hardware never shows,
+so "the way hardware renders them" is undefined, and following the centred
+screen's group means a tile 40 px outside the screen changes tileset whenever
+the camera crosses a threshold that has nothing to do with it. The blue house
+is that tile.
+
+### The rule, and why it needed a guard
+
+The obvious fix — grow each authored rectangle by the margin the wider viewport
+adds, so a gap tile takes the group of the region it adjoins — is **wrong on
+its own**, and simulating it first is what showed that. Over all 8,439 camera
+positions in the room:
+
+```
+gap tiles inside the centred 240x160 : 3,176,480, grown rule disagrees with hardware on 162,922
+gap tiles in the periphery           : 3,150,580, grown rule changes            367,460
+```
+
+162,922 tiles where it would have overruled hardware inside the screen. That is
+B26's lesson again — a rule that fixes the report in front of you and breaks
+what the authored data already had right.
+
+So the published list gains **two** things rather than one, and first-match-wins
+does the rest:
+
+1. the authored rectangles, unchanged;
+2. a **guard rect** covering the centred `DISPLAY_WIDTH x DISPLAY_HEIGHT`,
+   carrying the old fallback — so a gap tile inside the GBA's screen still gets
+   the engine's group, exactly as before;
+3. the grown copies, which only a gap tile in the periphery can reach.
+
+The guard makes the inside-the-screen disagreement zero *by construction*
+rather than by argument, which is the property worth having: no simulation of
+mine has to be right for hardware-visible output to be untouched.
+
+### Evidence
+
+- The discontinuity at the swap frame — 781 px — is gone; no frame pair in the
+  window has one.
+- 101 frames sampled across the recording: **0 changed pixels inside the centred
+  240x160**, periphery changed on 54 frames.
+- Both Hyrule Town recordings, 169 frames: **0 changed pixels anywhere.** Town's
+  regions leave few peripheral gaps, so the guard and grown rects never fire
+  there — the change is confined to where the defect was.
+- Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0`.
+
+### Worth keeping
+
+**"There is no answer for this tile" was true, and stopped being true when the
+viewport grew.** B27's gap decision was correct for the screen it was written
+against. What changed is that the periphery reaches into gaps the authored data
+never expected to be visible — so the question is no longer "what does hardware
+do here" but "what does this tile belong to", and the region it adjoins is the
+only evidence there is.
+
+**A guard rect is cheaper than being right.** The alternative was to prove the
+grown rule never disagrees with hardware inside the screen, which the simulation
+says is false. Publishing the old behaviour as a higher-priority rectangle makes
+the proof unnecessary and costs one entry in a list that is already scanned.
 
 ---
 
