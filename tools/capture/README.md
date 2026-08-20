@@ -65,6 +65,7 @@ Run-time (all off unless set):
 | `TMC_STUCK_TRACE=1` | report when the player has been in `PLAYER_ROOMTRANSITION` for 180 frames, with the direction, collisions and position that decide whether he can walk off the doorway tile. The instrument B16 needed and did not have — a hang in that state produces no error and no log line, only silence. Set it to a frame count instead of 1 to lower the threshold; `=5` fires on every ordinary doorway, which is how you prove it runs before trusting its silence |
 | `TMC_UILATCH_TRACE=1` | report every frame the UI/world classification wants to change but is being held, with the black-screen verdict and the hold count. The instrument behind B20 — it is what showed the first two "is the screen black" tests returning false on *every* frame, i.e. a fix that appeared to work while running entirely on its timeout |
 | `TMC_DISABLE_BG1=1`, `TMC_DISABLE_BG2=1`, `TMC_DISABLE_BG3=1` | drop those layers, beside the existing `TMC_DISABLE_OBJ` / `TMC_DISABLE_BG0`. For a scene with **parallax** no single alignment exists — layers move at different rates, so a two-frame comparison reports a difference for every layer except the one it is shifted for. Leaving exactly one on turns "did this layer scroll cleanly" into a question with an exact answer: zero residual under a pure shift, on every consecutive pair. This is what measured B32 |
+| `TMC_MASK_BG0..3=1` | paint every non-transparent pixel of that layer flat magenta and take it out of the alpha blend, so a layer you cannot see can be located *in the frame* rather than by differencing two builds. The case it was built for is B21's light shaft: a 32x64 map blank across two thirds of its columns, alpha-blended at eva=9 over foliage of nearly its own hue — invisible to a human and to a screenshot reader alike. Magenta is not a colour the GBA palette can produce (5-bit channels stop at 0xF8), so counting it has no false positives; set the value to `RRGGBB` hex for another. Priority, windows and the OBJ stack are untouched, so a pixel hardware would have hidden stays hidden — **pure magenta means exactly "this layer is what you see here"** |
 | `TMC_BORDER_TRACE=1` | per frame: task/state/substate, the current subtask, whether the renderer is centring this scene (UI or affine), and the scene's own backdrop `gPaletteBuffer[0]`. The instrument behind the per-scene border colours (`port/port_border_color.c`) — it is how each replacement colour was read off the scene that already wears it, and how the Nintendo/Capcom logo screen was caught sharing `TASK_TITLE` with the title |
 | `TMC_OOB_TRACE=1` | report any read of `gUnk_0811C0F8` / `gUnk_0811C108` past their four declared entries. These sit contiguously in ROM with `gUnk_0811C110` and are indexed by `direction >> 2` (reaches 63) and `animationState >> 1` (reaches 127); on hardware the index wraps into an identical adjacent copy, ported it reads whatever the toolchain placed next. B16 extended only `gUnk_0811C110` |
 
@@ -367,6 +368,32 @@ everywhere.
 World coverage — non-black pixels in columns 280–319 of a room wider than the
 viewport. Should be ~6400 (the full band); 0 means the world has been
 wrongly clipped to native width.
+
+Layer extent — which columns a masked layer actually reaches, from one run of
+one binary. `TMC_MASK_BG<n>` makes this a census rather than a difference, so
+it needs no second build and no reference frame:
+
+```bash
+python3 - <<'PY'
+import sys, glob
+sys.path.insert(0, "tools/capture")
+from ppm2png import read_ppm
+from pathlib import Path
+MASK = b'\xff\x00\xff'
+for p in sorted(glob.glob("/tmp/out/*.ppm")):
+    w, h, rgb = read_ppm(Path(p))
+    cols = [sum(1 for y in range(h) if rgb[(y*w+x)*3:(y*w+x)*3+3] == MASK)
+            for x in range(w)]
+    hit = [x for x, c in enumerate(cols) if c]
+    print(f"{Path(p).stem}: px={sum(cols)} cols="
+          f"{min(hit) if hit else '-'}..{max(hit) if hit else '-'} of {w}")
+PY
+```
+
+On the `lightray` waypoint with `TMC_MASK_BG3=1` this prints `cols=115..239` at
+**both** 240x160 and 320x240 — the same extent B21 established by building
+twice with BG3 forced off, in one run instead of two builds, and the 80 empty
+columns are visible in the dump rather than inferred from it.
 
 ## Regression gate
 

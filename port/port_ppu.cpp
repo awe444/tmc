@@ -550,6 +550,44 @@ extern "C" void Port_PPU_PresentFrame(void) {
             gIoMem[1] = (u8)(gIoMem[1] & layerMask);
         }
     }
+
+    /* TMC_MASK_BG<n>=1 paints that layer's every non-transparent pixel flat
+     * magenta instead of its palette colour, and takes it out of the alpha
+     * blend, so a layer that cannot be seen can be located.
+     *
+     * Dropping the other layers answers "where does this one contribute" by
+     * subtraction and needs two builds to compare; this answers it in the
+     * frame itself, which is what a mostly-transparent, translucent overlay
+     * of nearly the colour it covers needs. B21's light shaft is the case:
+     * both a human and a screenshot reader can point at a magenta band, and
+     * neither could point at the shaft.
+     *
+     * Magenta is deliberately not a colour the GBA palette can make — 5-bit
+     * channels top out at 0xF8 — so counting it in a dump has no false
+     * positives. Set the value to RRGGBB hex to choose another. Diagnostic
+     * only; unset, every layer renders exactly as before. */
+    {
+        static bool maskInit = false;
+        if (!maskInit) {
+            maskInit = true;
+            for (int bg = 0; bg < 4; ++bg) {
+                char name[16];
+                snprintf(name, sizeof(name), "TMC_MASK_BG%d", bg);
+                const char* v = getenv(name);
+                if (v == nullptr) {
+                    continue;
+                }
+                uint32_t rgb = 0xFF00FFu;
+                if (v[0] != '\0' && strcmp(v, "1") != 0) {
+                    rgb = (uint32_t)strtoul(v, nullptr, 16) & 0xFFFFFFu;
+                }
+                virtuappu_mode1_set_bg_highlight(
+                    bg, 0xFF000000u | ((rgb & 0xFFu) << 16u) |
+                            (rgb & 0xFF00u) | ((rgb >> 16u) & 0xFFu));
+                fprintf(stderr, "[bgmask] BG%d -> #%06X\n", bg, rgb);
+            }
+        }
+    }
     virtuappu_render_frame();
     Port_PPU_ComposeCanvas();
 

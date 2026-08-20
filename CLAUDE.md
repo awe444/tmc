@@ -34,7 +34,9 @@ Read in this order:
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
    The switches matter more than the prose: `TMC_TILESET_TRACE`,
    `TMC_TILE_PROBE` and the per-layer `TMC_DISABLE_*` are what turned the last
-   six reports from guesswork into measurement.
+   six reports from guesswork into measurement. `TMC_MASK_BG*` is the newest
+   and answers a different question — *where is this layer* rather than *what
+   did it contribute* — by painting it flat magenta in the frame itself.
 4. `android/README.md` — the Android build, and how to drive the same
    capture/replay tooling on a device.
 5. `docs/town-tileset-residency.md` — the plan B27 was built from, kept as the
