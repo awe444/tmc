@@ -9,11 +9,39 @@
 #include "game.h"
 #include "screen.h"
 #include "room.h"
+#include "viewport.h"
 
 extern void VerticalMinishPathBackgroundManager_OnEnterRoom(void*);
 extern void sub_0805754C(VerticalMinishPathBackgroundManager*);
 
 extern u8 gMapDataTopSpecial[];
+
+/* How far the camera moves between re-bases of the two parallax layers.
+ *
+ * Each layer is a 32-tile screenblock — 256 px — and the engine scrolls it by
+ * keeping a fine offset in `yOffset` and re-pointing `subTileMap` a whole
+ * 64 px at a time. The window the block has to cover is therefore
+ * `yOffset + screen height`, so the fine offset may only range over
+ * `256 - height` before the bottom of the screen wraps around to the top of
+ * the block.
+ *
+ * At 160 rows that is 96 and the engine's 64 fits with room to spare. At 240
+ * it is 16, and the engine's 64 does not: for most of each cycle the bottom
+ * 48 px showed the top of the block instead, and every re-base swapped what
+ * that wrapped strip contained — the discontinuous pop-in of the foreground
+ * grass. Re-basing on a smaller step keeps the whole screen inside the block.
+ *
+ * The position itself is unchanged either way: base*8 + yOffset is the scroll
+ * offset in both, since 64*(B/64) + (B&63) and 16*(B/16) + (B&15) are both B.
+ * Only how often the map pointer moves differs. */
+#if (256 - VIEWPORT_HEIGHT) < 64
+#define MINISH_PATH_REBASE 16
+#else
+#define MINISH_PATH_REBASE 64
+#endif
+#define MINISH_PATH_MAP_STEP ((MINISH_PATH_REBASE / 8) * 64) /* whole tile rows, 64 bytes each */
+static_assert(MINISH_PATH_REBASE + VIEWPORT_HEIGHT <= 256,
+              "MinishPaths parallax layers would wrap their 32-tile screenblock");
 
 void VerticalMinishPathBackgroundManager_Main(VerticalMinishPathBackgroundManager* this) {
     if (super->action == 0) {
@@ -30,16 +58,17 @@ void sub_0805754C(VerticalMinishPathBackgroundManager* this) {
 
     bgOffset = (gRoomControls.scroll_y - gRoomControls.origin_y);
     bgOffset += bgOffset >> 3;
-    gScreen.bg3.yOffset = bgOffset & 0x3f;
-    gScreen.bg3.subTileMap = gMapDataTopSpecial + (bgOffset / 0x40) * 0x200;
+    gScreen.bg3.yOffset = bgOffset & (MINISH_PATH_REBASE - 1);
+    gScreen.bg3.subTileMap = gMapDataTopSpecial + (bgOffset / MINISH_PATH_REBASE) * MINISH_PATH_MAP_STEP;
     if (this->field_0x38 != gScreen.bg3.subTileMap) {
         this->field_0x38 = gScreen.bg3.subTileMap;
         gScreen.bg3.updated = 1;
     }
     bgOffset = (gRoomControls.scroll_y - gRoomControls.origin_y);
     bgOffset += bgOffset >> 2;
-    gScreen.bg1.yOffset = bgOffset & 0x3f;
-    gScreen.bg1.subTileMap = gMapDataTopSpecial + 0x2000 + (bgOffset / 0x40) * 0x200;
+    gScreen.bg1.yOffset = bgOffset & (MINISH_PATH_REBASE - 1);
+    gScreen.bg1.subTileMap =
+        gMapDataTopSpecial + 0x2000 + (bgOffset / MINISH_PATH_REBASE) * MINISH_PATH_MAP_STEP;
     if (this->field_0x3c != gScreen.bg1.subTileMap) {
         this->field_0x3c = gScreen.bg1.subTileMap;
         gScreen.bg1.updated = 1;
@@ -56,17 +85,18 @@ void sub_080575C8(u32 param) {
 
     bgOffset = (gRoomControls.scroll_y - gRoomControls.origin_y);
     bgOffset += bgOffset >> 3;
-    gScreen.bg3.yOffset = bgOffset & 0x3f;
+    gScreen.bg3.yOffset = bgOffset & (MINISH_PATH_REBASE - 1);
     gScreen.bg3.xOffset = 0;
-    gScreen.bg3.subTileMap = &gMapDataTopSpecial[(bgOffset / 0x40) * 0x200];
+    gScreen.bg3.subTileMap = &gMapDataTopSpecial[(bgOffset / MINISH_PATH_REBASE) * MINISH_PATH_MAP_STEP];
     gScreen.bg3.control = BGCNT_SCREENBASE(29) | BGCNT_PRIORITY(1) | BGCNT_CHARBASE(2) | BGCNT_MOSAIC;
     gScreen.bg3.updated = 1;
 
     bgOffset = (gRoomControls.scroll_y - gRoomControls.origin_y);
     bgOffset += bgOffset >> 2;
-    gScreen.bg1.yOffset = bgOffset & 0x3f;
+    gScreen.bg1.yOffset = bgOffset & (MINISH_PATH_REBASE - 1);
     gScreen.bg1.xOffset = 0;
-    gScreen.bg1.subTileMap = &gMapDataTopSpecial[0x2000 + (bgOffset / 0x40) * 0x200];
+    gScreen.bg1.subTileMap =
+        &gMapDataTopSpecial[0x2000 + (bgOffset / MINISH_PATH_REBASE) * MINISH_PATH_MAP_STEP];
     gScreen.bg1.control = BGCNT_SCREENBASE(30) | BGCNT_PRIORITY(1) | BGCNT_CHARBASE(2) | BGCNT_MOSAIC;
     gScreen.bg1.updated = 1;
     gScreen.controls.layerFXControl =

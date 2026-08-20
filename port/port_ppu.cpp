@@ -530,6 +530,21 @@ extern "C" void Port_PPU_PresentFrame(void) {
             if (getenv("TMC_DISABLE_BG0") != nullptr) {
                 layerMask &= ~0x01; /* DISPCNT bit 8: BG0 */
             }
+            /* And the rest, because a scene with parallax has no single
+             * alignment: BG1/BG2/BG3 move at different rates, so a two-frame
+             * comparison of the whole picture reports a difference for every
+             * layer except the one it happens to be shifted for. Leaving one
+             * layer on is what makes "did *this* layer scroll cleanly" a
+             * question with an answer (MinishPaths, B32). */
+            if (getenv("TMC_DISABLE_BG1") != nullptr) {
+                layerMask &= ~0x02;
+            }
+            if (getenv("TMC_DISABLE_BG2") != nullptr) {
+                layerMask &= ~0x04;
+            }
+            if (getenv("TMC_DISABLE_BG3") != nullptr) {
+                layerMask &= ~0x08;
+            }
         }
         if (layerMask != 0xFF) {
             gIoMem[1] = (u8)(gIoMem[1] & layerMask);

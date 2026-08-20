@@ -104,6 +104,32 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**A hand-scrolled layer's window is sized for the GBA's screen too (B32).**
+MinishPaths' parallax layers keep a fine `yOffset` and re-point `subTileMap`
+every 64 px; the block they index is 32 tiles, so the screen must fit in
+`256 - yOffset` and at 240 rows it does not. Re-base on a smaller step. The
+horizontal twin needs `xOffset + 320 <= 256` and cannot be fixed this way at
+all. **And a scene with parallax cannot be judged by whole-frame diffs** —
+three layers at three rates means no alignment exists; `TMC_DISABLE_BG1/2/3`
+leave one layer on, and then "did it scroll cleanly" has an exact answer: zero
+residual under a pure shift on every consecutive pair.
+
+**Declaring a slot and *keeping* it declared are different problems (B31).**
+The manager's init reset ran a frame after `OnEnterRoom` had already declared
+the room's slots and wiped all three; only a camera-driven group change
+re-declares one, so from every town entry the periphery drew from the centred
+screen's group until the camera crossed a threshold. `TMC_TILESET_TRACE=2`
+cannot see this — its `groups` line reports the engine's choice, which was
+right the whole time. The question to ask the renderer is *why it chose what it
+chose*; "no published slot holds this character address" is the answer that
+names it, and then you look for who emptied the table.
+
+**And a slot the camera never selects was never declared at all (B30)**, because
+the declaration hung off `LoadGfxGroup` and B26's centred sub-rect means some
+slots never match — so their tiles drew the previous room's until the camera
+moved. `TMC_TILESET_TRACE=2` prints the per-frame `groups`; a `255` there is the
+whole diagnosis.
+
 Two things about it are load-bearing and were each learned by getting them
 wrong. **Whether a group reads real VRAM is a per-area decision**: town names a
 resident group so the oracle-house overlay survives, Minish names

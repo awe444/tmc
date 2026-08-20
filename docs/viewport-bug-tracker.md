@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Twenty-eight of the twenty-nine
-bugs are closed: twenty-seven fixed with a root cause and evidence, and B4
+complete — see `docs/milestone2-status.md`.** Thirty-one of the thirty-two
+bugs are closed: thirty fixed with a root cause and evidence, and B4
 closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
 full, but every route to a fix is blocked, so it is a decision rather than
 work.
@@ -79,6 +79,9 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B25 | Rolling barrel comes back as noise after a pause | **Fixed** 2026-08-08 — a port-only forced buffer→VRAM copy wrote text tilemaps over *both* of the room's own maps, BG2's affine one and BG1's grain layer. Reproduces at 240x160, so pre-existing. Frame is now pixel-identical across the pause |
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
+| B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
+| B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
+| B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
 | B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
 
 ---
@@ -2369,6 +2372,270 @@ which is what the fix does.
 **A regression gate that runs a mechanism is not a gate that covers it.** This
 is the concrete case CLAUDE.md's "count the frames that exercise the mechanism"
 line was written about, and even so it took a bug report to find.
+
+---
+
+## B30 — a tileset slot the camera never selects is never declared *(fixed)*
+
+Reported 2026-08-18 with a recording (`hyrule_town_residual_glitch.script`).
+Link stands at the Hyrule Town entrance; the sliver of building at the
+lower-left edge is drawn from the wrong tileset, and pops to its proper tiles
+the moment he walks far enough left. The residual B27 case, and the last one
+the outer 40 px had left.
+
+### Root cause
+
+`HyruleTownTileSetManager_UpdateRoomGfxGroup` loads a slot only when
+`CheckRegionsOnScreen` matches, and **B26 made that test the centred 240x160
+sub-rect** — the screen the GBA would have had, which is what makes the
+original first-match-wins rule right everywhere. A slot whose scenery only ever
+appears in the outer 40 px therefore never matches: `gRoomVars.graphicsGroups`
+keeps the `0xff` `OnEnterRoom` wrote, and `LoadGfxGroup` never runs.
+
+**`LoadGfxGroup` is the only thing that declares a slot to the renderer.** So
+the slot has no regions, no banks and no per-tile answer, and its tiles read
+whatever the previous room left in that VRAM range. B27 kept every alternative
+resident and chose per tile — but only for slots something had chosen a group
+for at least once.
+
+Traced with `TMC_TILESET_TRACE=2`, the whole bug is two lines:
+
+```
+[frame] 1250 area 0x02 room 0x00 cam 344,720 groups 1,255,4
+[frame] 1258 area 0x02 room 0x00 cam 341,720 groups 1,2,4
+```
+
+Slot 1 sits at 255 from room entry until the camera has moved 3 px past the
+threshold, 618 frames later.
+
+On hardware this is unreachable and the engine is right not to load it: a
+240x160 screen cannot show that scenery. Above native size it is on screen from
+the frame the room loads.
+
+### The fix
+
+Declare the pair anyway. `HyruleTownTileSetManager_DeclareUnselectedSlot` runs
+after the load pass and, for any slot still at `0xff`, makes its group pair
+resident with **`PORT_TILESET_NO_RESIDENT`** — because this room put neither
+group in the GBA's own VRAM, unlike the loaded case where the resident group is
+named so the second oracle house survives.
+
+Nothing else moves. Tiles in the authored gaps between regions still resolve to
+`PublishForBg`'s fallback, which reads `gRoomVars.graphicsGroups[i]`, sees
+`0xff >= PORT_VRAM_BANKS` and yields offset 0 — real VRAM, exactly what they
+got before. The change only ever *adds* an answer where the region tables
+already had one.
+
+Festival town takes the same treatment for slots 0 and 2 and not for slot 1,
+which is the split the load pass above it already makes: its slot-1 region list
+is empty, so there would be nothing to answer with.
+
+### Evidence
+
+The oracle is the one B27 established — walk the same world content to where
+the engine draws it correctly and compare — and here the recording supplies it
+for free, because the pop *is* the engine catching up.
+
+- The world column at screen x 0..8 before the camera moves, against the same
+  world column 28 px right after it has: **29/448 px matching before the fix,
+  448/448 after.** The tiles are not merely different, they are the ones the
+  loaded tileset draws.
+- Only the frames before the pop change at all: 419 px each in
+  `x 0..8, y 120..176`, and 0 px in every frame after it.
+- A 2 500-frame walk around town, 42 sampled frames: **0 differ.**
+- All twelve 320x240 waypoints including festival town: **0 differ.**
+- Gate at 240x160: 11/11, `fetches=265497600 mismatched=0` — the code is behind
+  `VIEWPORT_TILESET_RESIDENCY`, which is 0 there.
+
+### Worth keeping
+
+**A fix that runs off an engine event only covers what the engine does.** B27
+hung the port's per-tile machinery off `LoadGfxGroup`, which is the natural
+hook and was right for every slot the camera selects — and silently absent for
+the one class of slot the camera never selects, which is exactly the class the
+wider viewport added. When a port mechanism exists because the viewport shows
+more than hardware did, check what it does for the parts of the screen the
+engine has no reason to think about.
+
+**Its instrument already existed and named the bug in one run.**
+`TMC_TILESET_TRACE=2` prints `groups` per frame; `255` in that line is the
+whole diagnosis. Reaching for it first would have skipped the frame-diffing.
+
+---
+
+## B31 — every Hyrule Town slot is undeclared from room entry until its first swap *(fixed)*
+
+Reported 2026-08-20 with a recording. Link stands still at the town entrance,
+walks down, and a strip of scenery at the bottom of the viewport is drawn from
+the wrong tileset until the camera crosses a region threshold, at which point it
+pops to its proper tiles. The maintainer added the two facts that broke the case
+open: **it persists while walking rather than flashing, and coming back to the
+same spot later is stable.**
+
+### Root cause: the init reset throws away what OnEnterRoom just declared
+
+`HyruleTownTileSetManager_Main`'s first-frame branch called
+`Port_TilesetResidency_Reset()` to drop the previous room's pairs. But the
+manager entity is created a frame *after* `OnEnterRoom` has already declared the
+new room's three slots, so the reset destroyed those instead:
+
+```
+[dbg] f=1059 RESET had 0 slots      <- OnEnterRoom, then declares gfx 0/1/2
+[dbg] f=1060 RESET had 3 slots      <- Main's init, wipes all three
+```
+
+Nothing re-declares a *loaded* slot: `UpdateRoomGfxGroup` only calls
+`LoadGfxGroup` when the camera changes the group, and `LoadGfxGroup` is the only
+thing that declares. So all three slots stayed gone, and every tile in their
+character ranges fell through `Port_TilesetResidency_OffsetFor` to offset 0 —
+real VRAM, holding whatever group the *centred* 240x160 had selected. That is
+the whole bug, and it explains each observation exactly: it persists because
+nothing restores the slot; it ends at a swap because the swap re-declares; and
+it stays fixed on a return visit because the declaration then survives.
+
+Measured, the slots came back one at a time, hundreds of frames apart:
+
+```
+[dbg] f=1568 LOAD slot 1 group 3 declared=0
+[dbg] f=1814 LOAD slot 2 group 5 declared=0
+[dbg] f=5173 LOAD slot 0 group 1 declared=0      <- the reported pop
+```
+
+### The fix
+
+Reset in that branch only when the slots are not already this room's, which is
+what the reset was for. `Port_TilesetResidency_SlotDeclared` answers that.
+
+### Why B30 hid half of it
+
+B30's `DeclareUnselectedSlot` runs from `UpdateLoadGfxGroups` every frame, so
+the slots it covers — the ones the camera never selects — were re-declared a
+frame after the wipe and looked fine. The slots the camera *does* select had no
+such path, so exactly those stayed undeclared. Fixing the visible half of a
+defect can leave the other half looking like a separate bug, which is how this
+came back as a fresh report.
+
+### Evidence
+
+- The reported corner: **29/448 px** matching the correct tiles before, **448/448**
+  after — the same oracle B30 used, the pop being the engine catching up.
+- Frame-by-frame across the walk, aligned for scroll: the single corner event at
+  5173→5174 is gone and nothing replaces it.
+- Both town recordings, 135 sampled frames: every difference is **outside the
+  centred 240x160** — the bottom-right band in one, the top band in the other —
+  i.e. the periphery now follows the region tables instead of the centred
+  screen's group. That is the fix reaching further than the one corner reported.
+- Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0`; the
+  code is behind `VIEWPORT_TILESET_RESIDENCY`, which is 0 there.
+
+### Worth keeping
+
+**Two wrong diagnoses cost most of this, and the instrument that settled it was
+the one measuring the thing itself.** The first theory was a bank/VRAM flip at
+the swap; the second was an in-flight `LoadResourceAsync`. Both were plausible,
+both fit the one-frame pop, and both were wrong. What settled it was printing,
+per tile, *why* the renderer chose what it chose — "no published slot holds this
+character address" — and then asking who emptied the table.
+
+**A no-op-looking A/B is worth running before believing a fix.** The in-flight
+theory produced a fix that removed the pop *and* changed 384 px of unrelated
+periphery on every frame. A null test — clean rebuild versus the installed
+binary — showed 0 px, which proved the change was mine and not noise, and that
+is what stopped it shipping.
+
+**`TMC_TILESET_TRACE=2` is still the first thing to reach for**, but its `groups`
+line only reports the engine's choice. A slot can be perfectly chosen and still
+not be *declared*; that needs the residency side, not the manager side.
+
+---
+
+## B32 — MinishPaths parallax grass pops in as the camera scrolls *(fixed)*
+
+Reported 2026-08-20 with a recording. On the Minish Village entry path — the
+vertical corridor strewn with oversized acorns — the foreground grass blades on
+either side arrive in discontinuous jumps instead of scrolling in. The room is
+`AREA_MINISH_PATHS` room 0, **240x800**, so it is also one of the narrow rooms
+the viewport centres: `camx` is pinned at -40 and only the vertical axis moves.
+
+### Root cause: a 64 px re-base step against a 256 px screenblock
+
+`VerticalMinishPathBackgroundManager` scrolls its two parallax layers by hand.
+Each is a 32-tile screenblock — 256 px — and `sub_0805754C` keeps a fine offset
+in `yOffset` while re-pointing `subTileMap` a whole 64 px at a time:
+
+```c
+bgOffset = scroll_y - origin_y;
+bgOffset += bgOffset >> 3;                 /* BG3 runs 9/8, BG1 5/4 */
+gScreen.bg3.yOffset   = bgOffset & 0x3f;
+gScreen.bg3.subTileMap = gMapDataTopSpecial + (bgOffset / 0x40) * 0x200;
+```
+
+The window the block has to cover is `yOffset + screen height`, so the fine
+offset may only range over `256 - height`. At 160 rows that is 96 and the
+engine's 64 fits with room to spare. **At 240 rows it is 16**, and 64 does not:
+for most of every cycle the bottom of the screen ran past the end of the block
+and wrapped to its top, and each re-base swapped what that wrapped strip
+contained. That is the pop.
+
+It is the vertical, parallax cousin of B5/B15/B17 — "32 tiles cover 256 px, not
+320" — with the arithmetic one level up: the layer never lost its map, the
+*window into it* was sized for the GBA's screen.
+
+### The fix
+
+Re-base on a step small enough that the whole screen stays inside the block:
+16 px, with the map pointer moving 2 tile rows (0x80) instead of 8 (0x200).
+Position is unchanged either way — `64*(B/64) + (B&63)` and `16*(B/16) +
+(B&15)` are both `B` — only how often the pointer moves differs, and a
+`static_assert` on `MINISH_PATH_REBASE + VIEWPORT_HEIGHT <= 256` keeps the two
+in step if either changes. At 160 rows the constant is still 64 and the code is
+the engine's.
+
+### Evidence, and the measurement that made it possible
+
+Whole-frame diffs are useless here for a reason the earlier bugs did not have:
+this scene has **three layers moving at three rates**, so no single alignment
+exists and every frame pair reports thousands of differing pixels whichever
+shift you pick. The pre-fix mean residual was 913 px per frame pair — all of it
+parallax, none of it the bug.
+
+`TMC_DISABLE_BG1/BG2/BG3` (new, beside the existing OBJ and BG0 switches) leave
+one layer on. Against a single layer the question has an answer, and the answer
+is exact: **a clean scroll is a residual of zero at some shift, on every
+consecutive pair.**
+
+| Layer, alone | Before | After |
+|---|---|---|
+| BG3, 109 consecutive pairs | one 5115 px discontinuity, mean 104.4 | **0 px on every pair, mean 0.0** |
+| BG1, 109 consecutive pairs | one 5408 px discontinuity, mean 49.6 | **0 px on every pair, mean 0.0** |
+
+Both re-base events the manager reports (`cam_y=52` for BG1, `cam_y=57` for
+BG3) line up with the two discontinuities.
+
+Whole-frame, 45 samples across the recording: 37 differ and **every difference
+is a band at the bottom of the screen** (`y 213..240` and narrower) — precisely
+the strip that was wrapping.
+
+Gate at 240x160: 11/11 pixel-identical, `fetches=265497600 mismatched=0`; the
+constant is 64 there and the code is byte-for-byte the engine's.
+
+### Worth keeping
+
+**A scrolling layer has a better oracle than "did the periphery change".**
+Zero residual under a pure shift, on every consecutive frame pair, says the
+layer is one coherent image being scrolled — which is the actual thing being
+claimed. It is stronger than a before/after comparison and it needs no
+reference build.
+
+**Parallax defeats whole-frame comparison, and the fix is a switch not a
+cleverer metric.** Two of the earlier bugs were measured by removing sprites
+and the HUD; this one needed the same treatment applied to the backgrounds.
+
+**The horizontal twin is untouched and cannot be fixed this way.**
+`horizontalMinishPathBackgroundManager.c` has the same shape on x, where the
+requirement is `xOffset + 320 <= 256` — impossible at any re-base step. If a
+horizontal Minish path shows the same pop it needs a map source, not a smaller
+step. Not reproduced, not attempted.
 
 ---
 
