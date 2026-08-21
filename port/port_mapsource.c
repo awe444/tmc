@@ -285,6 +285,12 @@ bool Port_MapSource_UiCentered(void) {
     return sUiCentered;
 }
 
+static int sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
+
+void Port_MapSource_DeclareBg3ScreenAnchor(int anchor) {
+    sBg3ScreenAnchor = anchor;
+}
+
 bool Port_MapSource_AffineCentered(void) {
     return sAffineCentered;
 }
@@ -635,7 +641,50 @@ static void mapsource_bind_ui(void) {
          * centre 240 columns, where clipping it differed by 6197 px. On a UI
          * screen BG3 *is* authored content and still takes the clip. */
         if (bg == 3 && !ui_screen) {
-            continue;
+            /* ...unless this frame's overlay has declared itself anchored to
+             * the screen instead of the world (B21). Then both halves of the
+             * reasoning above invert: there is no world alignment to preserve,
+             * because its xOffset never came from the camera; and the wrap is
+             * not more pattern but the blank left end of a 256-px map. Clip it
+             * to the authored width and pin it to the declared edge — for the
+             * light shaft that is the right one, which is where the artwork
+             * ends and where the band is drawn against. */
+            if (sBg3ScreenAnchor != PORT_BG3_ANCHOR_RIGHT) {
+                continue;
+            }
+            /* The right edge of the *room*, which is not always the right edge
+             * of the viewport. Exactly two rooms in the game run this handler
+             * and they differ on precisely this point: Minish Woods is 1008 px
+             * wide, fills the screen, and the two edges coincide; the barrel
+             * minish house is 240x368, narrower than the viewport, so the room
+             * is centred with 40 px of border either side. Pinning to the
+             * viewport there hangs the band out into that border — measured at
+             * cols 195..319 against a room ending at 279.
+             *
+             * Same span the sprite clip below computes, and for the same
+             * reason: outside it is border, not world. Reduces to 0 at
+             * GBA-native width, where the room span is the whole screen. */
+            {
+                int span_right = MODE1_GBA_WIDTH;
+                /* Mid-scroll the room metrics are not coherent — the sprite
+                 * clip below already refuses to trust them then, for reasons
+                 * established when it was written, and takes the centred span
+                 * instead. Same source, same distrust. */
+                if (gRoomControls.scrollAction >= 2) {
+                    span_right = UI_CENTER_DX + DISPLAY_WIDTH;
+                } else if ((int)gRoomControls.width < MODE1_GBA_WIDTH) {
+                    int cx = (int)gRoomControls.scroll_x -
+                             (int)gRoomControls.origin_x;
+                    span_right = -cx + (int)gRoomControls.width;
+                    if (span_right > MODE1_GBA_WIDTH) {
+                        span_right = MODE1_GBA_WIDTH;
+                    }
+                    if (span_right < DISPLAY_WIDTH) {
+                        span_right = DISPLAY_WIDTH;
+                    }
+                }
+                bg_clip.offset_x = span_right - DISPLAY_WIDTH;
+            }
         }
         /* The affine screen's own layers are confined to the authored 160
          * rows, centred — the vertical twin of the width clip above, and true
@@ -737,7 +786,16 @@ static void mapsource_trace_bg3(void) {
     static u8 lastArea = 0xFF, lastRoom = 0xFF;
     static unsigned frame = 0, onFrames = 0;
     int on;
-    if (en < 0) en = (getenv("TMC_BG3_TRACE") != NULL);
+    if (en < 0) {
+        const char* v = getenv("TMC_BG3_TRACE");
+        /* =2 prints every frame instead of only on transitions. A
+         * transition-only trace answers "is BG3 on here"; it cannot answer
+         * "why is this frame's overlay in that position", which is what a
+         * per-frame `anchor`/`clipped` pair does — the B31 shape, where the
+         * engine's own choice was right the whole time and the question was
+         * what the renderer did with it. */
+        en = (v == NULL) ? 0 : (v[0] == '2' ? 2 : 1);
+    }
     if (!en) return;
     /* Port_MapSource_Update runs once per VBlank, the same cadence as the
      * capture frame counter, so this lines up with --dump frame numbers. */
@@ -746,7 +804,8 @@ static void mapsource_trace_bg3(void) {
     if (on) {
         onFrames++;
     }
-    if (on == lastOn && gRoomControls.area == lastArea && gRoomControls.room == lastRoom) {
+    if (en < 2 && on == lastOn && gRoomControls.area == lastArea &&
+        gRoomControls.room == lastRoom) {
         return;
     }
     if (on || lastOn == 1) {
@@ -757,6 +816,10 @@ static void mapsource_trace_bg3(void) {
                 gRoomControls.area, gRoomControls.room, gScreen.bg3.control,
                 (int)gScreen.bg3.xOffset, (int)gScreen.bg3.yOffset,
                 gRoomControls.width, (sClippedBgMask >> 3) & 1);
+        if (en >= 2) {
+            fprintf(stderr, "          anchor=%d camy=%d\n", sBg3ScreenAnchor,
+                    (int)gRoomControls.scroll_y - (int)gRoomControls.origin_y);
+        }
     }
     lastOn = on;
     lastArea = gRoomControls.area;
@@ -937,6 +1000,10 @@ void Port_MapSource_Update(void) {
     mapsource_trace_reject();
     mapsource_trace_layers();
     mapsource_trace_bg3();
+    /* Cleared after the traces have seen it, and after the clip it drives has
+     * been applied. The next frame starts undeclared, so the overlay has to
+     * say so again — see Port_MapSource_DeclareBg3ScreenAnchor. */
+    sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
 }
 
 /* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the

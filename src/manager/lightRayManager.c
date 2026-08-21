@@ -14,8 +14,10 @@
 #include "game.h"
 #include "player.h"
 #include "physics.h"
+#include "viewport.h"
 #ifdef PC_PORT
 #include <stdio.h>
+#include "port_mapsource.h"
 #endif
 
 extern void DisableVBlankDMA(void);
@@ -42,6 +44,36 @@ typedef struct {
 } PACKED LightRayManagerProp;
 
 #define ZS(this) ((u8*)&this->speed)
+
+/* How far the camera moves between re-bases of the light shaft's layer, and
+ * the vertical twin of B32 in MinishPaths — the same mechanism, the same
+ * arithmetic, a different manager.
+ *
+ * sub_08057450 scrolls BG3 by keeping a fine offset in `yOffset` and
+ * re-pointing `subTileMap` a whole 64 px at a time. The block it points into
+ * is 32 tiles, so the window it has to cover is `yOffset + screen height` and
+ * the fine offset may only range over `256 - height` before the bottom of the
+ * screen wraps to the top of the block.
+ *
+ * At 160 rows that is 96 and the engine's 64 fits. At 240 it is 16, and for
+ * 47 of every 64 camera positions the bottom of the shaft showed the top of
+ * the block instead — up to 47 rows of it, the ray band breaking and a
+ * disconnected fragment appearing beneath the break. Re-basing on a smaller
+ * step keeps the whole screen inside the block.
+ *
+ * The scroll position is unchanged either way: 64*(y/64) + (y&63) and
+ * 16*(y/16) + (y&15) are both y. Only how often the map pointer moves
+ * differs, and the pointer stays inside gBG3Buffer at both steps — y reaches
+ * 192, so the window starts at entry 768 of 2048 and needs 1024. */
+#if (256 - VIEWPORT_HEIGHT) < 64
+#define LIGHT_RAY_REBASE 16
+#else
+#define LIGHT_RAY_REBASE 64
+#endif
+/* Whole tile rows, 32 entries each — gBG3Buffer is u16, not bytes. */
+#define LIGHT_RAY_MAP_STEP ((LIGHT_RAY_REBASE / 8) * 32)
+static_assert(LIGHT_RAY_REBASE + VIEWPORT_HEIGHT <= 256,
+              "the light shaft would wrap its 32-tile screenblock");
 
 void LightRayManager_Main(LightRayManager* this) {
     u8 gfxGroup;
@@ -244,12 +276,31 @@ void sub_080573AC(LightRayManager* this) {
 void sub_08057450(LightRayManager* this) {
     s32 y;
     gScreen.bg3.xOffset = 0x10;
+#if defined(PC_PORT) && UI_CENTER_DX > 0
+    /* B21. That constant is the whole point: this shaft is anchored to the
+     * screen, not to the world, and the band it draws ends at the right edge
+     * of the 240-px screen it was authored for. The port leaves a world view's
+     * BG3 unclipped so the tiled, world-locked overlays can wrap their
+     * screenblock across a wider viewport — which for this layer wraps its
+     * blank left end into the columns past 239 instead. Saying so here lets
+     * the renderer pin the band to the viewport's right edge.
+     *
+     * Re-declared every frame rather than latched at the transition: the
+     * manager can leave this state without passing through OnExitRoom
+     * (Action3 fades out and resets to state 0), and a declaration that
+     * outlives its overlay is B30 and B31 over again.
+     *
+     * Compiled out entirely at GBA-native width, where the band already ends
+     * at the screen's right edge and there is nothing to pin: this file's
+     * generated code is then byte-identical to the engine's. */
+    Port_MapSource_DeclareBg3ScreenAnchor(PORT_BG3_ANCHOR_RIGHT);
+#endif
     y = gRoomControls.scroll_y;
     y -= gRoomControls.origin_y;
     y >>= 2;
 
-    gScreen.bg3.yOffset = y & 0x3f;
-    gScreen.bg3.subTileMap = &gBG3Buffer[(y / 0x40) << 8];
+    gScreen.bg3.yOffset = y & (LIGHT_RAY_REBASE - 1);
+    gScreen.bg3.subTileMap = &gBG3Buffer[(y / LIGHT_RAY_REBASE) * LIGHT_RAY_MAP_STEP];
     if (this->unk_34 != gScreen.bg3.subTileMap) {
         this->unk_34 = gScreen.bg3.subTileMap;
         gScreen.bg3.updated = 1;

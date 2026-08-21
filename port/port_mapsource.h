@@ -60,6 +60,37 @@ bool Port_MapSource_UiCentered(void);
  * two differs — see mapsource_bind_ui. */
 bool Port_MapSource_AffineCentered(void);
 
+/* A BG3 world overlay declaring that it is anchored to the *screen* rather
+ * than to the world, and to which edge of it (B21).
+ *
+ * BG3 in a world view is normally left unclipped, because these overlays are
+ * tiled patterns locked to the world — hole parallax, cloud shadows, weather,
+ * steam, POW all set bg3.xOffset from scroll_x — and letting the screenblock
+ * wrap past 256 px is exactly what covers a wider viewport with more of the
+ * same pattern. See the note in mapsource_bind_ui().
+ *
+ * Minish Woods' light shaft is neither tiled nor world-locked: its xOffset is
+ * a constant, so the band sits against the right edge of the *authored 240-px
+ * screen*, and the 256-px map is blank for the whole span to its left. Wrapped
+ * past 256 the columns beyond the GBA's screen show that blank end, which is
+ * the whole of B21 — the shaft stops 80 px short at 320 wide.
+ *
+ * An overlay that says so is clipped to the authored width instead and pinned
+ * to the declared edge, which puts the band where the artwork means it to be
+ * and leaves no wrap to show. Nothing else about the layer changes.
+ *
+ * Declared per frame by the handler that owns the layer and cleared at the end
+ * of every Port_MapSource_Update, so it cannot outlive the overlay: the frame
+ * the handler stops running is the frame the clip goes away. B30 and B31 were
+ * both a declaration that was made once and then quietly lost or never
+ * remade — a per-frame one has no such state to get wrong. No-op at
+ * GBA-native width. */
+enum {
+    PORT_BG3_ANCHOR_NONE = 0,
+    PORT_BG3_ANCHOR_RIGHT = 1
+};
+void Port_MapSource_DeclareBg3ScreenAnchor(int anchor);
+
 /* Tile columns the text box should shift itself by. Zero on UI screens,
  * where the whole BG0 layer is already shifted (see the note in the .c). */
 int Port_MapSource_MessageTileShift(void);

@@ -1,10 +1,16 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and thirty-two of the thirty-three
-tracked bugs are closed, **B27 included — Hyrule Town, festival town and
-Minish Village, playtested and confirmed 2026-08-11.** **Two things are still open and both are judgements rather
-than work: frame time, and B21's light shaft.**
+the items the plan did not anticipate, and **all thirty-four tracked bugs are
+closed**, B27 included — Hyrule Town, festival town and Minish Village,
+playtested and confirmed 2026-08-11. **One thing is still open and it is a
+judgement rather than work: frame time.**
+
+**B21 closed 2026-08-20**, having been recorded as unfixable since 2026-08-07.
+Every blocked route had been an attempt to make the layer reach the extra
+80 px; it never had to. See below. **B34** was found the same day in the same
+layer — the vertical twin of B32 — and is the only bug in the tracker found by
+instrument rather than by a playtest report.
 
 **B33 (2026-08-20) is B27's authored-gap decision meeting the periphery.** A
 tile in a gap between region rectangles takes the group the engine loaded, which
@@ -118,7 +124,7 @@ undefined. For B18 it was stronger and worth copying — build the shipping
 screen itself. Byte-identical across all 14 waypoints is a direct statement
 about the code that changed, not an inference from coverage.
 
-## Open item 1: frame time
+## The one open item: frame time
 
 Canonical route, 12 700 frames, headless dummy, uncapped, release, n=3 — the
 same method as the Spike 0/1 baselines.
@@ -143,20 +149,27 @@ Two facts, both for the maintainer to weigh:
 
 No go/no-go is recorded. That is the maintainer's call and it rests on this.
 
-## Open item 2: B21, the Minish Woods light shaft
+## Closed item: B21, the Minish Woods light shaft
 
-Fully diagnosed and every route to a fix is blocked — see the tracker for the
-account and lesson 19. The short version: the shaft is a 256 px BG3 layer
-whose artwork already ends at its own right edge, so a 320 px screen shows
-80 px of nothing beyond it. No offset helps because the layer wraps, and the
-maintainer has rejected the repeated second shaft that wrapping would give.
-A 512-wide BG3 fits exactly and needs no new artwork, but there is no free
-adjacent screenblock pair — 28/29/30/31 are BG1/BG2/BG3/BG0 — and prototyping
-it overwrote BG0 and garbled the HUD.
+**Fixed 2026-08-20.** The 2026-08-07 diagnosis established a set of facts that
+were all true — the map is 256 px, the shaft ends at map px 255, no offset can
+place ray content past 255 without repeating it — and drew the wrong conclusion
+from them, because it never asked what the columns past 239 were *currently*
+showing. `BG3 contributes 0 px beyond 239` was read as "there is nothing out
+there to draw"; it also fits "the thing out there is transparent", and that is
+what it was. The layer wraps at 256 and the wrap was bringing its own blank
+left end into view.
 
-So the choice is: accept the shaft ending 80 px short, or reallocate a BG
-layer's screenbase and re-check every gfx group's tile destinations against
-the new layout. Nothing else was found. No decision is recorded.
+The port already clips 240-authored layers and places them. BG3 in a world view
+was deliberately exempt, for overlays that are tiled and world-locked — hole,
+cloud, weather, steam, POW — where the wrap is what covers the wider screen.
+The light shaft shares neither property. It now declares itself
+(`Port_MapSource_DeclareBg3ScreenAnchor`) and takes the clip, pinned to the
+right edge of the **room**: Minish Woods fills the screen, but the barrel
+minish house is 240×368 and centred, so the viewport's edge is 40 px past the
+room's. No VRAM, no new artwork, no repeated shaft.
+
+Full account and lessons 31–32 in the tracker.
 
 ## Known remaining, none of them blocking
 
@@ -172,7 +185,8 @@ the new layout. Nothing else was found. No decision is recorded.
 | **Tile mutation in degraded rooms** | B17's fix makes the mutators maintain that map; the maintenance itself was verified by reading the code, not by driving a mutation. Cutting grass or lifting a pot inside a Minish house is the check nobody has run. |
 | **Festival town** | **Never playtested for B27.** Its tables convert correctly and the mechanism engages — verified by debug warp — but nobody has walked its region boundaries at 320×240 and no recording of it exists. The 2026-08-11 playtest covered Hyrule Town and Minish Village, which is where all ten reports came from. |
 | **Minish Village at 240×160** | **Never looked at.** Two of its palette groups are needed at once in 308 camera positions at the *shipping* size, so a little of what B27 fixed above may also be visible there. Not reported, not reproduced; the 240×160 play build is where to check. |
-| **B21 — Minish Woods light shaft ends 80 px short** | **Open, fully diagnosed, every route blocked.** Not a clip or a clamp: the shaft is a 256 px BG3 layer whose artwork already ends at its own right edge, so at 320 the screen simply got wider. No offset helps — the layer wraps at 256, so a shaft at the right edge implies one at the left, and repeated shafts were rejected by the maintainer 2026-08-07. A 512-wide BG3 would fit exactly (512-320=192, no wrap) and needs no new artwork, but there is no free adjacent screenblock pair: 28/29/30/31 are BG1/BG2/BG3/BG0 and everything below is character data. Prototyped and reverted — it overwrote BG0 and garbled the HUD. Fixing it means reallocating a layer's screenbase. Full account and lesson 19 in the tracker. |
+| ~~**B21 — Minish Woods light shaft ends 80 px short**~~ | **Fixed 2026-08-20.** Not a reach problem — a wrap problem. BG3 in a world view is exempt from the centring clip so the *tiled* overlays can wrap across the wider screen; this layer's map is blank across two thirds of its columns, so the wrap showed that blank end past x=239. Now declares itself screen-anchored and takes the clip, pinned to the room's right edge (the barrel minish house is 240×368 and centred, so room edge ≠ viewport edge). Lessons 31–32. |
+| **B34 — light shaft's lower rows show the top of its own block** | **Fixed 2026-08-20.** The vertical twin of B32 in a different manager, found while measuring B21 and never reported. A 64-px re-base leaves `yOffset` up to 63 and a 240-row screen needs `yOffset + 240` of a 256-row block; re-based on 16 px. Lesson 33 — the consecutive-pair shift test that settled B32 scores zero on a uniformly wrapped layer. |
 | **`sub_0807D280` reads before its map for short rooms** | **Latent, not reproduced.** B19 fixed the *unsigned wrap* in `case 2`. `case 1` and the `default` branch feed a negative `ydiff` — `-40` in the steady state of any room shorter than the viewport — to `(ydiff >> 4) * 0x100`. Signed, so no wrap and no crash; it reads a kilobyte or two before `gMapDataBottomSpecial` into the screenblock. Above native size the world is drawn from the map source instead, which is likely why nothing has been seen. Wants its own reproduction first. |
 | **`gUnk_0811C0F8` / `gUnk_0811C108` read past their end** | **Latent, not reproduced.** Both are four-entry `u16` tables sitting contiguously in ROM with B16's `gUnk_0811C110`, and both are indexed by `direction >> 2`, which reaches 63. On hardware the index wraps into an identical adjacent copy — `0x0811C108[4..7]` is byte-identical to `0x0811C110[0..3]` — so every direction lands on a real value. Ported, each array is its own object. B16 extended only `gUnk_0811C110`. Reachable only on the *swim* branch, so it needs a scene where the player is swimming through a room transition; `TMC_OOB_TRACE=1` reports it and stayed silent across the dungeon-softlock recording. Lesson 13 says the ROM bytes are the specification, so the fix is B16's: extend both with the real bytes, PC_PORT only. |
 | **Dungeon-entrance softlock (Deepwood Shrine, room 10 → 6)** | **Open, Android-only, intermittent, and not seen since.** The maintainer's recording traverses the transition and does not hang on desktop; the per-frame camera assertion is clean over it. A device run with `TMC_STUCK_TRACE=1` produced **no `[stuck]` line** and did not reproduce it — but did hit B19 further into the dungeon. Whether the two were ever the same event is unknown. |
