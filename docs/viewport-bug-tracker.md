@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All thirty-eight bugs are closed:
-thirty-seven fixed with a root cause and evidence, and B4 closed as **no longer
+complete — see `docs/milestone2-status.md`.** All thirty-nine bugs are closed:
+thirty-eight fixed with a root cause and evidence, and B4 closed as **no longer
 observed** rather than diagnosed. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
 playtest report during this work and is tracked here because that is where
@@ -90,6 +90,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B36 | Mt Crenel summit renders black apart from sprites | **Fixed** 2026-08-20 — **not a viewport bug: reproduces at 240x160.** `gPalette_549` is 26 contiguous palettes on hardware and the weather manager cross-fades against `gPalette_549 + 0xD0`; the port allocated the block but never filled it, so both sides of the mix read zeros and the summit's 13 terrain palettes went black. `port_rom.c` now loads it |
 | B37 | Mt Crenel rain sheet fills only the centred 240 columns | **Fixed** 2026-08-20 — the weather manager takes BG1 from the room's top map layer and fills it with a tiled rain sheet; with the map layer off the map source is refused and the fallback clip confined it. A tiled pattern wants the screenblock wrap, exactly as BG3's overlays do. The layer now declares itself |
 | B38 | Vapour wisps and steam render opaque white | **Fixed** 2026-08-20 — **not a viewport bug.** VirtuaPPU never read OAM attr0 bits 10-11, so OBJ mode 1 (semi-transparent) was ignored. On hardware such a sprite is a blend first target regardless of BLDCNT, which is why Mt Crenel's `bldcnt=0x2F40` has an *empty* first-target field and still blends |
+| B39 | Rain layer is garbage after returning from the pause menu | **Fixed** 2026-08-20 — **pre-existing, not caused by B37**: 13,567 garbage px in the centred 240 before that fix, 13,540 after, which only widened it into the borders. The port's post-menu `gBGxBuffer`→VRAM copy wrote the room's top tilemap into BG1's screenblock, over the reload the re-run handler had just done. It now skips a BG no map layer is bound to — B25's exclusion, one step further |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3104,6 +3105,52 @@ GBA documents blending — and one of the two ways to become a first target is a
 bit in the sprite, not in the register. A scene that sets `tgt1` to zero and
 still expects blending looks like a scene that has disabled blending, and the
 port agreed with that reading for two milestones.
+
+## B39 — rain layer is garbage after returning from the pause menu *(fixed)*
+
+Reported 2026-08-20, immediately after B37 made the rain full-width. **B37 did
+not cause it.** Measured on the build the maintainer had been playing before
+that fix: 13,567 garbage pixels inside the centred 240 columns, against 13,540
+after — identical defect, and B37 only extended the same wrap into the border
+bands (0 px there before, 2667 + 1953 after). It had been there for as long as
+the pause menu had.
+
+**This is B25 a second time, in the same function.** `RestoreGameTask`'s
+`#ifdef PC_PORT` tail pushes `gBGxBuffer` into VRAM after a menu, because the
+GBA mechanism that does it does not fire in the port. B25 already carved out
+one exclusion — a room in an affine display mode draws itself, so none of its
+layers come from those buffers — and its comment states the general shape
+outright: *"The room handler is re-run on the way out and reloads them
+correctly — these copies then overwrite them."*
+
+That is exactly what happens here, for a reason the affine test cannot see.
+Mt Crenel's weather manager takes BG1 away from the room's top map layer
+(`gMapTop.bgSettings = 0`) and fills it with a rain sheet loaded straight to
+VRAM by gfx groups `0x2B`-`0x2E`. `gScreen.bg1.subTileMap` still points at the
+room's top tilemap, so the copy wrote *that* into the rain's screenblock — over
+the reload the re-run weather handler had already done correctly — and the rain
+came back as a grid of wrong tiles drawn with the rain tileset.
+
+**Fix.** Copy only into a BG some map layer is actually bound to. Which BG a
+map layer displays through is per room, which `mapsource_bg_index` already
+knows; the same question asked here is `gMapBottom.bgSettings == &gScreen.bg1
+|| gMapTop.bgSettings == &gScreen.bg1`, and the same for BG2. 18,160 garbage
+pixels to 0.
+
+**The gate does not cover this path and the dense diff does.** The canonical
+route opens the pause menu, dumps it, closes it and opens the figurine menu —
+so its eleven waypoints contain two *menus* and no frame of the gameplay that
+follows one. The 177-frame dense diff does: `d166` is route frame 12020,
+Hyrule Town, 116 frames after the pause menu closed. Identical with and
+without the change, on all 177.
+
+**Lesson (39).** *When a fix carves out an exclusion, ask what the general
+rule behind it is before writing the specific test.* B25 excluded affine rooms
+because their layers do not come from `gBGxBuffer`, and wrote the test as "is
+the display mode affine". The rule was always "is this buffer what belongs in
+that screenblock", and a second way to fail it — a layer the engine has
+temporarily handed to something else — was sitting one room away. The comment
+B25 left described the general rule correctly; only the code was specific.
 
 ## D3 addendum: three scenes override their border colour
 
