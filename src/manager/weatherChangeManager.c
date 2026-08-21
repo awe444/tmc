@@ -10,6 +10,10 @@
 #include "common.h"
 #include "main.h"
 #include "room.h"
+#include "viewport.h"
+#ifdef PC_PORT
+#include "port_mapsource.h"
+#endif
 #include "screen.h"
 #include "sound.h"
 #include "game.h"
@@ -52,6 +56,17 @@ void WeatherChangeManager_Main(WeatherChangeManager* this) {
     sub_08059608(this);
     sub_08059690(this);
     sub_080596E0(this);
+#if defined(PC_PORT) && UI_CENTER_DX > 0
+    /* While the weather owns BG1 it is a rain sheet, not the room's top map
+     * layer: levels 0-3 load it from gfx groups 0x2B-0x2E and level 4 clears
+     * it, and only level 5 hands the layer back (see the switch in
+     * sub_080596E0). A repeating pattern wants its screenblock to wrap across
+     * a wider viewport; the fallback clip confined it to the centred 240 and
+     * left bare border either side. */
+    if (this->unk_22 < 5) {
+        Port_MapSource_DeclareTiledOverlay(1);
+    }
+#endif
 }
 
 void WeatherChangeManager_OnEnterRoom(WeatherChangeManager* this) {

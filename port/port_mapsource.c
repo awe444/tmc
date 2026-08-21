@@ -289,6 +289,22 @@ static int sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
 static u8 sBg3AnchorArea = 0xFF;
 static u8 sBg3AnchorRoom = 0xFF;
 
+static u32 sTiledOverlayMask = 0;
+static u8 sTiledOverlayArea = 0xFF;
+static u8 sTiledOverlayRoom = 0xFF;
+
+void Port_MapSource_DeclareTiledOverlay(int bg_index) {
+    if (bg_index < 0 || bg_index >= 4) {
+        return;
+    }
+    if (gRoomControls.area != sTiledOverlayArea || gRoomControls.room != sTiledOverlayRoom) {
+        sTiledOverlayMask = 0;
+        sTiledOverlayArea = gRoomControls.area;
+        sTiledOverlayRoom = gRoomControls.room;
+    }
+    sTiledOverlayMask |= 1u << bg_index;
+}
+
 void Port_MapSource_DeclareBg3ScreenAnchor(int anchor) {
     sBg3ScreenAnchor = anchor;
     sBg3AnchorArea = gRoomControls.area;
@@ -321,6 +337,16 @@ static void mapsource_bg3_anchor_expire(void) {
         gRoomControls.area != sBg3AnchorArea ||
         gRoomControls.room != sBg3AnchorRoom) {
         sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
+    }
+}
+
+/* The room is the whole of a tiled-overlay declaration's lifetime: within one
+ * room the layer either carries the overlay or has its map source back, and
+ * the clip only applies in the first case. */
+static void mapsource_tiled_overlay_expire(void) {
+    if (sTiledOverlayMask != 0 &&
+        (gRoomControls.area != sTiledOverlayArea || gRoomControls.room != sTiledOverlayRoom)) {
+        sTiledOverlayMask = 0;
     }
 }
 
@@ -736,6 +762,12 @@ static void mapsource_bind_ui(void) {
             bg_clip.offset_y = UI_CENTER_DY;
             bg_clip.content_height = DISPLAY_HEIGHT;
         }
+        /* A layer that has said it is carrying a tiled pattern wants the wrap,
+         * for the same reason BG3 above does — see
+         * Port_MapSource_DeclareTiledOverlay. */
+        if (!ui_screen && ((sTiledOverlayMask >> bg) & 1u) != 0u) {
+            continue;
+        }
         if (!virtuappu_mode1_has_map_source(bg)) {
             virtuappu_mode1_set_bg_clip(bg, &bg_clip);
             sClippedBgMask |= 1 << bg;
@@ -928,7 +960,7 @@ static void mapsource_trace_blend(void) {
     static u32 last = 0xFFFFFFFFu;
     u16 bldcnt, bldalpha, bldy;
     u32 key;
-    int i, nonblack, workingNonblack;
+    int i, nonblack, workingNonblack, semiObjs;
     if (en < 0) en = (getenv("TMC_BLEND_TRACE") != NULL);
     if (!en) return;
     bldcnt = *(volatile u16*)&gIoMem[0x50];
@@ -948,18 +980,34 @@ static void mapsource_trace_blend(void) {
     for (i = 1; i < 256; i++) {
         if (gPaletteBuffer[i] != 0) workingNonblack++;
     }
+    /* How many enabled sprites are in OBJ mode 1 (semi-transparent). A scene
+     * that blends its sprites through the OBJ mode rather than through
+     * BLDCNT's first-target bits reports 0 for tgt1 and non-zero here, which
+     * is the pair that explains an opaque sprite the game meant to see
+     * through. It is also the honest coverage measure for that path: a route
+     * whose count is 0 throughout does not exercise it at all. */
+    semiObjs = 0;
+    for (i = 0; i < 128; i++) {
+        u16 a0 = gOamMem[i * 4];
+        if ((a0 & 0x0300u) == 0x0200u) {
+            continue; /* hidden (not affine, double-size bit set) */
+        }
+        if (((a0 >> 10) & 3u) == 1u) {
+            semiObjs++;
+        }
+    }
     key = ((u32)bldcnt << 16) ^ ((u32)bldalpha << 8) ^ (u32)bldy ^
-          ((u32)nonblack << 24) ^ ((u32)workingNonblack << 12);
+          ((u32)nonblack << 24) ^ ((u32)workingNonblack << 12) ^ ((u32)semiObjs << 4);
     if (key == last) return;
     last = key;
     fprintf(stderr,
             "[blend] area=0x%02X room=0x%02X bldcnt=0x%04X (tgt1=0x%02X effect=%d "
             "tgt2=0x%02X) bldalpha=0x%04X eva=%d evb=%d bldy=0x%04X evy=%d "
-            "bgpltt_nonblack=%d/255 palbuffer_nonblack=%d/255\n",
+            "bgpltt_nonblack=%d/255 palbuffer_nonblack=%d/255 semi_objs=%d\n",
             gRoomControls.area, gRoomControls.room, bldcnt,
             bldcnt & 0x3F, (bldcnt >> 6) & 3, (bldcnt >> 8) & 0x3F,
             bldalpha, bldalpha & 0x1F, (bldalpha >> 8) & 0x1F,
-            bldy, bldy & 0x1F, nonblack, workingNonblack);
+            bldy, bldy & 0x1F, nonblack, workingNonblack, semiObjs);
 }
 
 /* TMC_TILE_PROBE=col,row — what the renderer will do with one room tile.
@@ -1053,6 +1101,7 @@ void Port_MapSource_Update(void) {
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
     /* Before mapsource_bind_ui() reads it, and before the traces print it. */
     mapsource_bg3_anchor_expire();
+    mapsource_tiled_overlay_expire();
 #if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
     /* Once per frame, and before the layer loop below: mapsource_reason() and
      * mapsource_bind_ui() must both see the same answer this frame. */

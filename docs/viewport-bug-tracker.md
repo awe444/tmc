@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All thirty-six bugs are closed:
-thirty-five fixed with a root cause and evidence, and B4 closed as **no longer
+complete — see `docs/milestone2-status.md`.** All thirty-eight bugs are closed:
+thirty-seven fixed with a root cause and evidence, and B4 closed as **no longer
 observed** rather than diagnosed. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
 playtest report during this work and is tracked here because that is where
@@ -88,6 +88,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B34 | Light shaft's lower rows show the top of its own block | **Fixed** 2026-08-20 — the vertical twin of B32 in a different manager: a 64-px re-base leaves `yOffset` up to 63, and a 240-row screen needs the block to cover `yOffset + 240` of its 256. Re-based on 16 px. Found while measuring B21, never reported |
 | B35 | Light rays jump left when they fade, or when a text box opens | **Fixed** 2026-08-20 — B21's anchor was declared per frame and cleared per frame, so it died whenever the *handler* stopped ticking rather than when the *overlay* ended. A fade-out dispatches to a null handler on its first frame; a text box suspends the managers. Anchor now lives until BG3 goes off or the room changes |
 | B36 | Mt Crenel summit renders black apart from sprites | **Fixed** 2026-08-20 — **not a viewport bug: reproduces at 240x160.** `gPalette_549` is 26 contiguous palettes on hardware and the weather manager cross-fades against `gPalette_549 + 0xD0`; the port allocated the block but never filled it, so both sides of the mix read zeros and the summit's 13 terrain palettes went black. `port_rom.c` now loads it |
+| B37 | Mt Crenel rain sheet fills only the centred 240 columns | **Fixed** 2026-08-20 — the weather manager takes BG1 from the room's top map layer and fills it with a tiled rain sheet; with the map layer off the map source is refused and the fallback clip confined it. A tiled pattern wants the screenblock wrap, exactly as BG3's overlays do. The layer now declares itself |
+| B38 | Vapour wisps and steam render opaque white | **Fixed** 2026-08-20 — **not a viewport bug.** VirtuaPPU never read OAM attr0 bits 10-11, so OBJ mode 1 (semi-transparent) was ignored. On hardware such a sprite is a blend first target regardless of BLDCNT, which is why Mt Crenel's `bldcnt=0x2F40` has an *empty* first-target field and still blends |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3022,6 +3024,86 @@ drawing nothing, a layer drawing black, or a layer darkened afterwards.
 `TMC_MASK_BG<n>` kills the first in one run because it bypasses palette and
 blend both; `TMC_BLEND_TRACE` kills the third by reading the registers instead
 of inferring them. Neither needed a second build or a reference frame.
+
+## B37 — Mt Crenel rain sheet fills only the centred 240 columns *(fixed)*
+
+Reported 2026-08-20 with a recording, alongside B38, once B36 made the summit
+visible at all.
+
+**The inverse of B21, on a different layer.** `mapsource_bind_ui()` applies one
+rule to a layer with no map source — it is reading a 32-tile screenblock, which
+covers 256 px and wraps, so clip it to the authored width and centre it. That
+is right for a room map caught mid-transition, where repeating the content
+would be wrong, and it is exactly wrong for a repeating pattern, where the wrap
+is what covers a wider viewport. BG3 is exempted wholesale for that reason.
+
+Mt Crenel's weather manager takes BG1 away from the room's top map layer and
+fills it with a rain sheet from gfx groups `0x2B`-`0x2E` (`unk_22` 0-3; 4
+clears it, and only 5 hands the layer back). With the map layer off the
+port refuses BG1 a map source — `TMC_REJECT_TRACE` names the class
+`top=layer off`, and `TMC_LAYER_TRACE` shows `mapsrc_mask` dropping from `0x6`
+to `0x4` while `clip_mask` rises from `0x1` to `0x3`. The clip then confined the
+rain to `cols 40..279`, measured with `TMC_MASK_BG1`.
+
+**Fix.** The layer says what it is. `Port_MapSource_DeclareTiledOverlay(1)`
+from the weather manager while it owns BG1, and the clip skips a declared
+layer so the screenblock wraps. `cols 0..319` after, with the density
+unchanged (2656 px over 240 columns becomes 3547 over 320; 2656 x 320/240 is
+3541).
+
+Its lifetime is the room, not the declaring tick — B35's lesson, applied
+without having to relearn it. Handing the layer back needs no undeclaration:
+BG1 regains a map source then, and the clip only ever applies without one.
+
+**Lesson (37).** *When a rule has one exemption, the exemption is the rule's
+real shape and the layer index is an accident of where it was first needed.*
+BG3 is exempted from the fallback clip because the overlays that live there are
+tiled and world-locked. Nothing about that reasoning is about BG3 — it is about
+being a tiled overlay — and the moment a different layer carried one, the rule
+caught the wrong thing. B21 was the same sentence read the other way round: a
+layer inside the exemption that did not belong there.
+
+## B38 — vapour wisps and steam render opaque white *(fixed)*
+
+Reported 2026-08-20 with the same recording. **Not a viewport bug** — the OBJ
+mode was never implemented at any size.
+
+The wisps hanging in the summit's gap are sprites (423 near-white pixels with
+OBJ on, 0 with `TMC_DISABLE_OBJ=1`) and are meant to be translucent.
+
+**VirtuaPPU never read OAM attr0 bits 10-11.** The only `>> 10` in the whole
+renderer are a tilemap flip bit, attr2's priority field and the blue channel of
+the colour conversion. OBJ mode 1 — semi-transparent — did not exist, so the
+sprites composited opaque.
+
+On hardware a mode-1 sprite is a blend **first target whether or not BLDCNT
+says so**, and it forces alpha blending whichever effect BLDCNT selects. That
+is not a refinement; it is the only way this scene blends at all, because
+`steam.c` sets `spriteRendering.alphaBlend = 1` and leaves BLDCNT at
+`0xbd << 6` = `0x2F40`, whose first-target field is **empty** — `tgt1=0x00`,
+`effect=1`, `tgt2=0x2F`. Reading only BLDCNT, nothing was ever a first target
+and nothing ever blended. `TMC_BLEND_TRACE` prints that pair, and an empty
+`tgt1` beside a non-zero `semi_objs` is the signature.
+
+**Fix.** `render_obj_line` records which pixels came from a mode-1 sprite,
+and `composite_line` alpha-blends those against the layer below regardless of
+BLDCNT's first-target bits and effect field. Where BLDCNT *did* already name
+OBJ as an alpha first target the two paths compute the identical blend, so
+that case cannot move.
+
+**Coverage, because an 11-frame gate does not have any for a global renderer
+change.** The canonical route does contain semi-transparent sprites — the
+`semi_objs` census reports six of them in places — and a **177-frame** dense
+diff of the whole route at 240x160, with and without the change, is identical
+on every frame. That is the claim worth making; 11/11 on the waypoints alone
+would not have been.
+
+**Lesson (38).** *A register is not the only thing that selects a behaviour.*
+Every blend in this renderer was decided by reading BLDCNT, which is where the
+GBA documents blending — and one of the two ways to become a first target is a
+bit in the sprite, not in the register. A scene that sets `tgt1` to zero and
+still expects blending looks like a scene that has disabled blending, and the
+port agreed with that reading for two milestones.
 
 ## D3 addendum: three scenes override their border colour
 

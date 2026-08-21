@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all thirty-six tracked bugs are closed.
+complete — every spike landed and all thirty-eight tracked bugs are closed.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +27,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-six
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-eight
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -122,6 +122,26 @@ three region tables over the same room at once and only the address says which
 one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
+
+**The fallback clip's exemption is about *tiled overlays*, not about BG3
+(B37).** A layer with no map source is clipped to 240 and centred, which is
+right for a room map caught mid-transition and wrong for a repeating pattern,
+where the wrap is what covers the viewport. BG3 is exempted wholesale because
+that is where such overlays usually live — but Mt Crenel's weather manager
+takes **BG1** from the room's top map layer and fills it with a rain sheet, and
+the clip caught it (`cols 40..279` of 320). A layer says what it is with
+`Port_MapSource_DeclareTiledOverlay`; lifetime is the room, and handing the
+layer back needs no undeclaration because it regains a map source and the clip
+only applies without one.
+
+**An OBJ in mode 1 is a blend first target whether or not BLDCNT says so
+(B38).** VirtuaPPU never read OAM attr0 bits 10-11 at all, so semi-transparent
+sprites composited opaque — the vapour wisps and the steam on Mt Crenel.
+`steam.c` sets `spriteRendering.alphaBlend = 1` and leaves BLDCNT at
+`0xbd << 6` = `0x2F40`, whose **first-target field is empty**: read the register
+alone and nothing blends. `TMC_BLEND_TRACE`'s `tgt1=0x00` beside a non-zero
+`semi_objs` is that signature. **A global renderer change needs more than the
+11-waypoint gate** — the dense 177-frame route diff is what covered it.
 
 **A world-view BG3 overlay is exempted from the centring clip, and the
 exemption is a claim about a class (B21).** The rule leaves BG3 unclipped
