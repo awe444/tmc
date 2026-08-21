@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all thirty-eight tracked bugs are closed.
+complete — every spike landed and all thirty-nine tracked bugs are closed.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +27,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-eight
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-nine
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -234,6 +234,19 @@ not correctness.** Two of the six were still visibly wrong at 0.00%, because
 the palette was wrong on both sides of the flip. **The oracle is to walk the
 same world content into the centred 240x160, where the GBA draws it right, and
 compare against that**; it needs no assumption about which group is loaded.
+
+**`RestoreGameTask`'s post-menu buffer push must skip any BG no map layer is
+bound to (B39), not just an affine room's (B25).** The port copies
+`gBGxBuffer` into VRAM after a menu because the GBA mechanism does not fire —
+and B25's own comment already states the general rule: *the room handler is
+re-run on the way out and reloads them correctly, these copies then overwrite
+them*. The affine test is one instance of it. Mt Crenel's weather manager
+hands BG1 to a rain sheet (`gMapTop.bgSettings = 0`, tiles straight to VRAM),
+`gScreen.bg1.subTileMap` still points at the room's top tilemap, and the copy
+wrote that over the rain. Ask `gMapBottom/gMapTop.bgSettings == &gScreen.bgN`.
+**And note the canonical route's eleven waypoints contain two menus and no
+frame of the gameplay after one** — this path is covered by the dense route
+diff, not by the gate.
 
 **A room in a GBA affine display mode (1 or 2) draws itself: its enter handler
 loads *whole layers* from a gfx group, maps included, and none of them come from

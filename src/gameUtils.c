@@ -398,10 +398,28 @@ void RestoreGameTask(bool32 loadGfx) {
     {
         u32 gbaMode = gScreen.lcd.displayControl & 7;
         if (gbaMode != 1 && gbaMode != 2) {
-            gScreen.bg1.updated = 1;
-            gScreen.bg2.updated = 1;
-            sub_08016CA8(&gScreen.bg1);
-            sub_08016CA8((BgSettings*)&gScreen.bg2);
+            /* And only a layer a map layer is actually bound to. The same
+             * reasoning as the affine exclusion above, one step further: a
+             * copy is only right where gBGxBuffer is what belongs in that
+             * screenblock, and which BG a map layer displays through is per
+             * room (see mapsource_bg_index in port_mapsource.c).
+             *
+             * Mt Crenel's weather manager takes BG1 away from the top map
+             * layer -- it sets gMapTop.bgSettings = 0 and fills BG1 with a
+             * rain sheet loaded straight to VRAM by gfx groups 0x2B-0x2E.
+             * gScreen.bg1.subTileMap still points at the room's top tilemap,
+             * so this copy wrote that map into the rain's screenblock over the
+             * reload the re-run handler had just done, and the rain came back
+             * from the pause menu as a grid of wrong tiles. */
+            if (gMapBottom.bgSettings == &gScreen.bg1 || gMapTop.bgSettings == &gScreen.bg1) {
+                gScreen.bg1.updated = 1;
+                sub_08016CA8(&gScreen.bg1);
+            }
+            if (gMapBottom.bgSettings == (BgSettings*)&gScreen.bg2 ||
+                gMapTop.bgSettings == (BgSettings*)&gScreen.bg2) {
+                gScreen.bg2.updated = 1;
+                sub_08016CA8((BgSettings*)&gScreen.bg2);
+            }
         }
     }
 #endif
