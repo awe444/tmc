@@ -93,6 +93,31 @@ enum {
 };
 void Port_MapSource_DeclareBg3ScreenAnchor(int anchor);
 
+/* A world-view layer carrying a tiled, screen-space overlay instead of the
+ * room's authored map.
+ *
+ * The uniform rule for a layer with no map source is "it is reading a 32-tile
+ * screenblock, which covers 256 px and wraps, so clip it to the authored width
+ * and centre it" — right for a room map caught mid-transition, where repeating
+ * the content would be wrong. It is exactly wrong for a repeating pattern,
+ * where the wrap is what covers a wider viewport with more of the same. BG3
+ * is exempted wholesale for that reason; this says the same thing about a
+ * layer the engine has temporarily repurposed.
+ *
+ * Mt Crenel's weather manager takes BG1 away from the room's top map layer and
+ * fills it with a rain sheet from gfx groups 0x2B-0x2E. With the map layer off
+ * the map source is refused, the fallback clip caught it, and the rain covered
+ * the centred 240 columns with bare border either side.
+ *
+ * Lasts until the room changes rather than until the declaring handler stops
+ * ticking — B35's lesson. Handing the layer back needs no undeclaration: it
+ * regains a map source, and the clip only ever applies without one. */
+void Port_MapSource_DeclareTiledOverlay(int bg_index);
+
+/* TMC_BLEND_TRACE=2 diagnostic: report a palette group as it loads. */
+void Port_TracePaletteGroup(unsigned int group);
+void Port_TracePaletteDrop(const char* where);
+
 /* Tile columns the text box should shift itself by. Zero on UI screens,
  * where the whole BG0 layer is already shifted (see the note in the .c). */
 int Port_MapSource_MessageTileShift(void);

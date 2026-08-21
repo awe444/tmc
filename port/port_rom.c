@@ -1033,6 +1033,33 @@ void Port_LoadRom(const char* path) {
     /* gGlobalGfxAndPalettes — huge palette/gfx blob (still points into gRomData) */
     gGlobalGfxAndPalettes = &gRomData[R->gfxAndPalettes];
 
+    /* gPalette_549 — 26 contiguous palettes, not one.
+     *
+     * Mt Crenel's weather manager cross-fades the summit's terrain between a
+     * clear palette set and a stormy one, and spells the second as
+     * `gPalette_549 + 0xD0` — 13 palettes past the first, which is only an
+     * address because the GBA linker laid gPalette_549..gPalette_574 out
+     * sequentially in this blob. port_linked_stubs.c allocates the whole
+     * 416-halfword block for that reason and its comment says this file fills
+     * it; it never did. Nothing else in the port writes that symbol, so both
+     * sides of the mix read zeros, and `MixColors` at factor 0 is 100% of the
+     * second one — the summit's thirteen terrain palettes went black and the
+     * room rendered as sprites over nothing.
+     *
+     * Palette N lives at N*32 in this blob, which is the same arithmetic
+     * LoadPaletteGroup's hardware path uses, so this needs no new offset and
+     * is correct for both regions. */
+    {
+        extern u16 gPalette_549[0x1A0];
+        const u32 kPaletteBlockOffset = 549u * 32u;
+        if (R->gfxAndPalettes + kPaletteBlockOffset + sizeof(gPalette_549) <= gRomSize) {
+            memcpy(gPalette_549, gGlobalGfxAndPalettes + kPaletteBlockOffset,
+                   sizeof(gPalette_549));
+            fprintf(stderr, "gPalette_549 loaded (%zu bytes, palettes 549-574).\n",
+                    sizeof(gPalette_549));
+        }
+    }
+
     /* gFrameObjLists — from compile-time const data (no ROM read needed) */
     memcpy(gFrameObjLists, kFrameObjListsData, R->frameObjListsSize);
     fprintf(stderr, "gFrameObjLists loaded (%u bytes from compile-time table).\n", R->frameObjListsSize);

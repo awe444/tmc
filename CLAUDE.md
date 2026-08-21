@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all thirty-five tracked bugs are closed.
+complete — every spike landed and all thirty-eight tracked bugs are closed.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +27,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-five
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-eight
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -122,6 +122,26 @@ three region tables over the same room at once and only the address says which
 one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
+
+**The fallback clip's exemption is about *tiled overlays*, not about BG3
+(B37).** A layer with no map source is clipped to 240 and centred, which is
+right for a room map caught mid-transition and wrong for a repeating pattern,
+where the wrap is what covers the viewport. BG3 is exempted wholesale because
+that is where such overlays usually live — but Mt Crenel's weather manager
+takes **BG1** from the room's top map layer and fills it with a rain sheet, and
+the clip caught it (`cols 40..279` of 320). A layer says what it is with
+`Port_MapSource_DeclareTiledOverlay`; lifetime is the room, and handing the
+layer back needs no undeclaration because it regains a map source and the clip
+only applies without one.
+
+**An OBJ in mode 1 is a blend first target whether or not BLDCNT says so
+(B38).** VirtuaPPU never read OAM attr0 bits 10-11 at all, so semi-transparent
+sprites composited opaque — the vapour wisps and the steam on Mt Crenel.
+`steam.c` sets `spriteRendering.alphaBlend = 1` and leaves BLDCNT at
+`0xbd << 6` = `0x2F40`, whose **first-target field is empty**: read the register
+alone and nothing blends. `TMC_BLEND_TRACE`'s `tgt1=0x00` beside a non-zero
+`semi_objs` is that signature. **A global renderer change needs more than the
+11-waypoint gate** — the dense 177-frame route diff is what covered it.
 
 **A world-view BG3 overlay is exempted from the centring clip, and the
 exemption is a claim about a class (B21).** The rule leaves BG3 unclipped
@@ -239,6 +259,25 @@ the fragments; **a change there reaches nobody who is past first run** unless
 `kExtractorFormatVersion` is bumped, because the up-to-date check only
 fingerprints the ROM. Scan `data/map/entity_headers.s` for symbols whose body
 mixes `.incbin` with `.4byte` to enumerate the rest — there are five.
+
+**A decompiled symbol may be a window onto a bigger contiguous block, and
+the port only allocates what the symbol declares (B36).** Mt Crenel's weather
+manager cross-fades the summit against `gPalette_549 + 0xD0` — 13 palettes
+past it — which is an address only because the GBA linker laid
+gPalette_549..gPalette_574 out sequentially. `port_linked_stubs.c` allocates
+the full 26-palette block and its comment says `port_rom.c` fills it from
+`gGlobalGfxAndPalettes`; **it never did**, so both sides of the mix read zeros
+and the summit rendered as sprites over black — at 240x160 too. **A comment
+claiming another file does something is a claim, not a fact**: grep for the
+write. Palette N is at `N*32` in that blob, the same arithmetic
+`LoadPaletteGroup`'s hardware path uses, so no new offset is needed.
+
+**Three explanations for "black except the sprites", and the frame separates
+none of them**: the layer draws nothing, it draws black, or it is darkened
+afterwards. `TMC_MASK_BG<n>` kills the first in one run (it bypasses palette
+*and* blend), `TMC_BLEND_TRACE` kills the third by reading BLDCNT rather than
+inferring it, and per-row palette counts localise what is left. **And when the
+writer is still unaccounted for, a watchpoint costs one run** — B36's took one.
 
 **A grep over source cannot see an address that only exists as data.** Spike 6
 relocated `gBG0Buffer` out of `gEwram[0x34CB0]`, searched the tree for code

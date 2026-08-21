@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include "port_asset_loader.h"
 #include "port_rom.h"
+#include "port_mapsource.h"
 #endif
 #include "area.h"
 #include "asm.h"
@@ -335,6 +336,7 @@ static void StoreKeyInput(Input* input, u32 keyInput) {
 void LoadPaletteGroup(u32 group) {
 #ifdef PC_PORT
     if (Port_LoadPaletteGroupFromAssets(group)) {
+        Port_TracePaletteGroup(group);
         return;
     }
     Common_AbortMissingAssetGroup("palette", group);
@@ -364,6 +366,9 @@ void LoadPalettes(const u8* src, s32 destPaletteNum, s32 numPalettes) {
     gUsedPalettes |= usedPalettesMask;
     dest = &gPaletteBuffer[destPaletteNum * 16];
     DmaCopy32(3, src, dest, size);
+#ifdef PC_PORT
+    Port_TracePaletteDrop("LoadPalettes");
+#endif
 }
 
 void SetColor(u32 colorIndex, u32 color) {
