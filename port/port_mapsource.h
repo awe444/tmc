@@ -79,12 +79,14 @@ bool Port_MapSource_AffineCentered(void);
  * to the declared edge, which puts the band where the artwork means it to be
  * and leaves no wrap to show. Nothing else about the layer changes.
  *
- * Declared per frame by the handler that owns the layer and cleared at the end
- * of every Port_MapSource_Update, so it cannot outlive the overlay: the frame
- * the handler stops running is the frame the clip goes away. B30 and B31 were
- * both a declaration that was made once and then quietly lost or never
- * remade — a per-frame one has no such state to get wrong. No-op at
- * GBA-native width. */
+ * A declaration lasts as long as the *overlay* does — until BG3 goes off or
+ * the room changes — not as long as the declaring handler keeps being called.
+ * Those are different, and the difference is visible: a light-ray fade-out
+ * dispatches to a null handler on its first frame while eighty frames of fade
+ * remain, and a text box suspends the managers entirely. Tying the clip to the
+ * tick made the band jump on both. Silence therefore means "unchanged"; a
+ * state that wants the unclipped behaviour back declares
+ * PORT_BG3_ANCHOR_NONE. No-op at GBA-native width. */
 enum {
     PORT_BG3_ANCHOR_NONE = 0,
     PORT_BG3_ANCHOR_RIGHT = 1

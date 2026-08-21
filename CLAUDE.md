@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all thirty-four tracked bugs are closed.
+complete — every spike landed and all thirty-five tracked bugs are closed.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +27,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-four
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-five
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -132,8 +132,14 @@ light shaft is neither: `bg3.xOffset` is the constant `0x10` and its map is
 blank across two thirds of its columns, so the wrap brought that blank end into
 the columns past 239. It was never short — it was showing the wrong 80 px of
 itself. An overlay now declares itself with
-`Port_MapSource_DeclareBg3ScreenAnchor`, per frame, and gets the clip pinned to
-an edge. **Pin it to the room's right edge, not the viewport's**: the two rooms
+`Port_MapSource_DeclareBg3ScreenAnchor` and gets the clip pinned to an edge.
+**That declaration lasts until BG3 goes off or the room changes, not until the
+declaring handler stops running (B35)** — the two come apart: a light-ray
+fade-out sets `unk_21` to the *trigger* type, so `gUnk_08107C48` dispatches to
+`nullsub_494` from the first frame of an eighty-frame fade, and a text box
+suspends the managers outright. Declaring per frame and clearing per frame made
+the band jump on both. Silence therefore means "unchanged", so a state wanting
+the unclipped rule back says `PORT_BG3_ANCHOR_NONE` rather than going quiet. **Pin it to the room's right edge, not the viewport's**: the two rooms
 that run this handler are `Area_MinishWoods` room 0 (1008 px wide, fills the
 screen) and `Area_MinishHouseInteriors` room 9, the barrel minish house, which
 is **240x368** and therefore centred with 40 px of border — pinning to the
@@ -165,6 +171,12 @@ all. **And a scene with parallax cannot be judged by whole-frame diffs** —
 three layers at three rates means no alignment exists; `TMC_DISABLE_BG1/2/3`
 leave one layer on, and then "did it scroll cleanly" has an exact answer: zero
 residual under a pure shift on every consecutive pair.
+
+**A per-frame declaration and a latched one fail in opposite directions
+(B30, B31 vs B35).** "Re-declare every frame" is not automatically the safe
+choice — it keys the lifetime to whatever makes the call, which may stop long
+before the thing being described ends. Ask what *event* ends it and watch for
+that instead.
 
 **Declaring a slot and *keeping* it declared are different problems (B31).**
 The manager's init reset ran a frame after `OnEnterRoom` had already declared

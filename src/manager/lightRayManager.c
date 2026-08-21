@@ -259,6 +259,14 @@ void nullsub_494() {
 
 void sub_080573AC(LightRayManager* this) {
     s32 sin, frameCount;
+#if defined(PC_PORT) && UI_CENTER_DX > 0
+    /* The other light state, and the opposite kind of layer: this one takes
+     * its xOffset from the camera below, so it is world-locked and wants the
+     * unclipped BG3 rule. Said explicitly because an anchor persists until
+     * something replaces it — going quiet would leave a previous state-4
+     * declaration in force over this overlay. */
+    Port_MapSource_DeclareBg3ScreenAnchor(PORT_BG3_ANCHOR_NONE);
+#endif
     gRoomControls.bg3OffsetX.WORD -= 0x2000;
     gRoomControls.bg3OffsetY.WORD -= 0x1000;
     gScreen.bg3.xOffset = ((gRoomControls.scroll_x - gRoomControls.origin_x) >> 1) + gRoomControls.bg3OffsetX.HALF.HI;
@@ -285,10 +293,13 @@ void sub_08057450(LightRayManager* this) {
      * blank left end into the columns past 239 instead. Saying so here lets
      * the renderer pin the band to the viewport's right edge.
      *
-     * Re-declared every frame rather than latched at the transition: the
-     * manager can leave this state without passing through OnExitRoom
-     * (Action3 fades out and resets to state 0), and a declaration that
-     * outlives its overlay is B30 and B31 over again.
+     * The port holds this until BG3 goes off or the room changes, which is
+     * deliberate and not an oversight: this handler stops being dispatched
+     * long before the overlay ends. LightRayManager_Action1 sets `unk_21` to
+     * the *trigger* type when a fade-out starts, so the table dispatches to
+     * nullsub_494 from the first frame of a fade that runs eighty more, and a
+     * text box suspends the managers outright. Both were reported as the band
+     * jumping left.
      *
      * Compiled out entirely at GBA-native width, where the band already ends
      * at the screen's right edge and there is nothing to pin: this file's

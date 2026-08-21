@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All thirty-four bugs are closed:
-thirty-three fixed with a root cause and evidence, and B4 closed as **no longer
+complete — see `docs/milestone2-status.md`.** All thirty-five bugs are closed:
+thirty-four fixed with a root cause and evidence, and B4 closed as **no longer
 observed** rather than diagnosed. **B21 closed 2026-08-20**, after nearly two
 weeks recorded as unfixable: the blocked routes were all attempts to make the
 layer *reach* further, and the fix was to stop it wrapping and pin it to the
@@ -83,6 +83,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
 | B33 | Minish Village's blue house changes tileset when the camera crosses a threshold | **Fixed** 2026-08-20 — a tile in an authored *gap* takes the group the engine loaded, which is right inside the GBA's screen and arbitrary outside it. Peripheral gap tiles now take the group of the region they adjoin; a guard rect keeps the inside byte-identical |
 | B34 | Light shaft's lower rows show the top of its own block | **Fixed** 2026-08-20 — the vertical twin of B32 in a different manager: a 64-px re-base leaves `yOffset` up to 63, and a 240-row screen needs the block to cover `yOffset + 240` of its 256. Re-based on 16 px. Found while measuring B21, never reported |
+| B35 | Light rays jump left when they fade, or when a text box opens | **Fixed** 2026-08-20 — B21's anchor was declared per frame and cleared per frame, so it died whenever the *handler* stopped ticking rather than when the *overlay* ended. A fade-out dispatches to a null handler on its first frame; a text box suspends the managers. Anchor now lives until BG3 goes off or the room changes |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -2866,6 +2867,78 @@ uniformly wrapped layer scrolls perfectly cleanly. The question that separates
 them is "can the block cover the screen", which is arithmetic on `yOffset`, not
 a comparison of pictures — and it is the same arithmetic in both bugs, which is
 the clue that the sweep should have been by mechanism rather than by report.
+
+## B35 — light rays jump left as they fade, and when a text box opens *(fixed)*
+
+Reported 2026-08-20 with two recordings, against the build carrying B21's fix,
+by the maintainer: *"when Link walks sufficiently east into the Minish woods
+and the light rays fade, upon the commencing of their fade out the light rays
+jump to the left"*, and *"inside the Minish village barrel house, when Link
+talks to the Picori NPC, when the textbox appears the light rays also jump
+left"*. Both are the same defect in B21's fix, from two different triggers.
+
+**B21's anchor was declared per frame and cleared per frame.** That was a
+deliberate choice, made to avoid B30 and B31 — a declaration that outlives what
+it describes — and it over-corrected into the opposite failure. The
+declaration's lifetime became *the handler's tick* rather than *the overlay's
+existence*, and those come apart in ordinary play:
+
+- **Fade-out.** `LightRayManager_Action1` sets `unk_21` to the *trigger* type,
+  not to the state being left, so entering a type-3 rect sets `unk_21 = 3` and
+  `gUnk_08107C48[3]` is `nullsub_494`. The state-4 handler stops being
+  dispatched on the **first** frame of a fade that runs eighty more. The band
+  loses its clip and jumps 80 px left while still fully visible — which is
+  exactly "upon the commencing of their fade out".
+- **Text box.** The managers are suspended outright, for as long as the
+  conversation lasts. In the barrel minish house that was 254 frames with the
+  band 40 px out of place.
+
+**Both reproduced from the recordings, by replay, against the binary the
+maintainer actually played.** With `TMC_MASK_BG3=1`, sampling the band's
+columns every 8 frames across the fade:
+
+```
+frame  played build   fixed
+f08     195..319      195..319
+f09     115..239      195..319     <- the jump, mid-fade
+f13     115..239      195..319
+```
+
+and every 22 frames across the conversation in the barrel house:
+
+```
+g03     155..279      155..279
+g04     115..239      155..279     <- the jump, on the text box
+g14     115..239      155..279
+```
+
+`TMC_BG3_TRACE=2` names it without the pictures: 720 frames `clipped=1
+anchor=1` followed by 44 frames `xOfs=16 clipped=0 anchor=0` — `bg3.xOffset`
+still the state-4 constant, so it is still that overlay, with the anchor gone.
+
+**Fix.** The anchor now expires on the two conditions that actually end the
+overlay, both observable in the port: **BG3 goes off** (which
+`LightRayManager_OnExitRoom` does) or **the room changes**. Nothing depends on
+a handler remembering to tick. Because silence now means "unchanged" rather
+than "off", the other light state — `sub_080573AC`, the world-locked parallax
+rays, which want the unclipped rule — declares `PORT_BG3_ANCHOR_NONE`
+explicitly instead of going quiet.
+
+After: both recordings replay through the installed play binary with **zero**
+frames where BG3 is on at `xOffset=16` without an anchor, and the single
+expiring frame in recording 2 is the BG3-off transition itself, where nothing
+is drawn.
+
+**Lesson (34).** *A per-frame declaration and a latched one fail in opposite
+directions, and "declare it every frame" is not automatically the safe one.*
+B30 and B31 were both a declaration that outlived what it described, and the
+lesson drawn from them — re-declare rather than latch — was applied here
+without asking what "every frame" was actually keyed to. It was keyed to a
+dispatch table entry that the engine changes one frame into an eighty-frame
+fade. The right question is not "how often is this refreshed" but "what event
+ends the thing being described", and then to watch for *that* — here, two
+conditions the port can see for itself, neither of which is a function call
+someone has to remember to make.
 
 ## D3 addendum: three scenes override their border colour
 

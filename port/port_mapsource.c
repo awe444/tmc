@@ -286,9 +286,42 @@ bool Port_MapSource_UiCentered(void) {
 }
 
 static int sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
+static u8 sBg3AnchorArea = 0xFF;
+static u8 sBg3AnchorRoom = 0xFF;
 
 void Port_MapSource_DeclareBg3ScreenAnchor(int anchor) {
     sBg3ScreenAnchor = anchor;
+    sBg3AnchorArea = gRoomControls.area;
+    sBg3AnchorRoom = gRoomControls.room;
+}
+
+/* The declaration's lifetime is the *overlay's*, not the declaring handler's.
+ *
+ * Clearing it every frame and requiring the handler to say so again was the
+ * first attempt, and it was wrong in both directions the maintainer's
+ * recordings found. A light-ray fade-out sets `unk_21` to the trigger type on
+ * its very first frame, so `gUnk_08107C48` dispatches to `nullsub_494` and the
+ * state-4 handler stops running while eighty frames of visible fade remain —
+ * the band jumped 80 px left as it began to fade. And a text box suspends the
+ * managers outright, which did the same thing for the 254 frames of a
+ * conversation in the barrel minish house.
+ *
+ * The overlay ends when BG3 goes off (`LightRayManager_OnExitRoom` clears
+ * `DISPCNT_BG3_ON`) or when the room changes. Those are the two conditions,
+ * both observable here, and neither depends on anyone remembering to tick.
+ * B30 and B31 are still the hazard on the other side — a declaration that
+ * outlives what it describes — which is why a light state that wants the old
+ * unclipped behaviour declares `PORT_BG3_ANCHOR_NONE` rather than going quiet
+ * (`sub_080573AC`). Silence means "unchanged", not "off". */
+static void mapsource_bg3_anchor_expire(void) {
+    if (sBg3ScreenAnchor == PORT_BG3_ANCHOR_NONE) {
+        return;
+    }
+    if ((gScreen.lcd.displayControl & 0x0800) == 0 ||
+        gRoomControls.area != sBg3AnchorArea ||
+        gRoomControls.room != sBg3AnchorRoom) {
+        sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
+    }
 }
 
 bool Port_MapSource_AffineCentered(void) {
@@ -915,6 +948,8 @@ void Port_MapSource_Update(void) {
      * frames, so a stale binding on a BG this frame's layers no longer use
      * would keep sampling after the engine moved on. */
     { void Port_MapSource_CamTrace(void); Port_MapSource_CamTrace(); }
+    /* Before mapsource_bind_ui() reads it, and before the traces print it. */
+    mapsource_bg3_anchor_expire();
 #if UI_CENTER_DX > 0 || UI_CENTER_DY > 0
     /* Once per frame, and before the layer loop below: mapsource_reason() and
      * mapsource_bind_ui() must both see the same answer this frame. */
@@ -1000,10 +1035,6 @@ void Port_MapSource_Update(void) {
     mapsource_trace_reject();
     mapsource_trace_layers();
     mapsource_trace_bg3();
-    /* Cleared after the traces have seen it, and after the clip it drives has
-     * been applied. The next frame starts undeclared, so the overlay has to
-     * say so again — see Port_MapSource_DeclareBg3ScreenAnchor. */
-    sBg3ScreenAnchor = PORT_BG3_ANCHOR_NONE;
 }
 
 /* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the
