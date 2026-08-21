@@ -54,6 +54,7 @@ Run-time (all off unless set):
 | `TMC_REJECT_TRACE=1` | why each world layer was refused a map source, printed on change, with task/substate/subtask/room/flags |
 | `TMC_LAYER_TRACE=1` | which BG indices have a map source (`mapsrc_mask`) and which the centring clip caught (`clip_mask`), with DISPCNT and all four BGxCNT. Printed on change. This is how B2's layer was identified |
 | `TMC_BG3_TRACE=1` | every BG3 on/off transition, with frame, room, BGxCNT, offsets and whether the centring clip caught it. BG3 is off in ordinary rooms and carries the gameplay overlays (hole, cloud, light, weather, steam, POW) — this is how B10 was found |
+| `TMC_BG3_TRACE=2` | the same line **every frame**, plus `anchor=` (what the overlay declared about itself, see `Port_MapSource_DeclareBg3ScreenAnchor`) and `camy=`. A transition-only trace answers "is BG3 on here"; it cannot answer "why is this frame's overlay in that position", which is the B31 shape. This is what identified which light-ray state each room runs, and what caught the barrel minish house running the same handler as Minish Woods (B21) |
 | `TMC_MAPSRC_DIAG=1` | periodic per-layer agreement sample between the special map and the screenblock |
 | `TMC_MAPSRC_LAYERS=0\|1\|2` | bind only the bottom layer, only the top, or both. Bisection aid — this is how the layer→BG mapping was pinned down |
 | `TMC_WINTRACE=1` | widest window edge committed during the run; proves the >255 window path is live |
@@ -390,10 +391,21 @@ for p in sorted(glob.glob("/tmp/out/*.ppm")):
 PY
 ```
 
-On the `lightray` waypoint with `TMC_MASK_BG3=1` this prints `cols=115..239` at
-**both** 240x160 and 320x240 — the same extent B21 established by building
-twice with BG3 forced off, in one run instead of two builds, and the 80 empty
-columns are visible in the dump rather than inferred from it.
+On the `lightray` waypoint with `TMC_MASK_BG3=1` this printed `cols=115..239`
+at **both** 240x160 and 320x240 before B21 was fixed — the same extent B21 had
+established by building twice with BG3 forced off, in one run instead of two
+builds, and with the 80 empty columns visible in the dump rather than inferred
+from it. It now reads `195..319` in Minish Woods and `155..279` in the barrel
+minish house, each flush with its own room's right edge.
+
+**The mask ignores `BLDALPHA`, so it shows a layer the game has faded to
+nothing.** That is deliberate — excluding the highlight from the blend is what
+keeps it a flat, countable colour — but it means a magenta band is *not* by
+itself evidence that anything is on screen. Three frames of B21's camera sweep
+reported a full band while the shaft was at `eva=0` and contributing zero
+visible pixels. To ask "is this layer actually visible", take the other layers
+away instead (`TMC_DISABLE_BG0/1/2` + `TMC_DISABLE_OBJ`) and count non-backdrop
+pixels with the mask *off*; the two questions need different runs.
 
 ## Regression gate
 

@@ -7,11 +7,12 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and thirty-two of the thirty-three tracked bugs
-are closed. B21 is the one still open, and what is left is two decisions rather
-than work: frame time is +41% over the canvas baseline with peak frames past the
-16.67 ms deadline, and B21's light shaft cannot reach the right edge without
-reallocating a BG layer's screenbase — no go/no-go is recorded for either.
+complete — every spike landed and all thirty-five tracked bugs are closed.
+What is left is one decision rather than work: frame time is +41% over the
+canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
+recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
+the question changed from *how does the layer reach further* to *what are those
+columns showing now* — see its Lessons 31 and 32.
 
 **The tracker keeps growing from playtest reports, not from sweeps.** B28-B33
 all arrived as recordings after the milestone was called complete, and four of
@@ -26,11 +27,14 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-three
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-five
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
    be visible — and each later one was mistaken for a fresh bug at first.
+   **Read B32 and B34 together too**: same arithmetic, two managers, and the
+   second was found by instrument rather than report because nobody swept the
+   first by mechanism.
 3. `tools/capture/README.md` — the capture/replay tooling and diagnostics.
    The switches matter more than the prose: `TMC_TILESET_TRACE`,
    `TMC_TILE_PROBE` and the per-layer `TMC_DISABLE_*` are what turned the last
@@ -119,6 +123,28 @@ one governs. Minish Village needs the palette half too, and its shadow palettes
 are rebuilt inside `FadeVBlank` so they carry the same per-bank fade the live
 one does.
 
+**A world-view BG3 overlay is exempted from the centring clip, and the
+exemption is a claim about a class (B21).** The rule leaves BG3 unclipped
+because the overlays it was written for — hole, cloud, weather, steam, POW —
+are *tiled* and *world-locked*, so wrapping the screenblock past 256 px is what
+covers a wider viewport and adding `UI_CENTER_DX` would misalign them. The
+light shaft is neither: `bg3.xOffset` is the constant `0x10` and its map is
+blank across two thirds of its columns, so the wrap brought that blank end into
+the columns past 239. It was never short — it was showing the wrong 80 px of
+itself. An overlay now declares itself with
+`Port_MapSource_DeclareBg3ScreenAnchor` and gets the clip pinned to an edge.
+**That declaration lasts until BG3 goes off or the room changes, not until the
+declaring handler stops running (B35)** — the two come apart: a light-ray
+fade-out sets `unk_21` to the *trigger* type, so `gUnk_08107C48` dispatches to
+`nullsub_494` from the first frame of an eighty-frame fade, and a text box
+suspends the managers outright. Declaring per frame and clearing per frame made
+the band jump on both. Silence therefore means "unchanged", so a state wanting
+the unclipped rule back says `PORT_BG3_ANCHOR_NONE` rather than going quiet. **Pin it to the room's right edge, not the viewport's**: the two rooms
+that run this handler are `Area_MinishWoods` room 0 (1008 px wide, fills the
+screen) and `Area_MinishHouseInteriors` room 9, the barrel minish house, which
+is **240x368** and therefore centred with 40 px of border — pinning to the
+viewport hangs the band out into it.
+
 **A tile in an authored *gap* has no hardware answer once it is in the
 periphery (B33).** B27 gave gap tiles the group the engine loaded — correct
 inside the GBA's screen, arbitrary outside it, where the tile then changes
@@ -130,15 +156,27 @@ is wrong**: simulated over 8,439 camera positions it overrules hardware on
 carrying the old fallback, makes that zero by construction rather than by
 argument — cheaper than proving a rule safe.
 
-**A hand-scrolled layer's window is sized for the GBA's screen too (B32).**
-MinishPaths' parallax layers keep a fine `yOffset` and re-point `subTileMap`
-every 64 px; the block they index is 32 tiles, so the screen must fit in
-`256 - yOffset` and at 240 rows it does not. Re-base on a smaller step. The
+**A hand-scrolled layer's window is sized for the GBA's screen too (B32,
+B34).** MinishPaths' parallax layers keep a fine `yOffset` and re-point
+`subTileMap` every 64 px; the block they index is 32 tiles, so the screen must
+fit in `256 - yOffset` and at 240 rows it does not. Re-base on a smaller step.
+**`lightRayManager.c` had the identical shape and went another eleven days**
+because B32 was fixed where it was reported instead of swept by mechanism —
+`grep` for `& 0x3f` beside a `/ 0x40` on a `subTileMap` and the pair is the
+whole population. Note the consecutive-pair shift test that settled B32 scores
+**zero on a uniformly wrapped layer**: it sees the re-point, not the wrap. Ask
+whether `yOffset + VIEWPORT_HEIGHT <= 256` instead. The
 horizontal twin needs `xOffset + 320 <= 256` and cannot be fixed this way at
 all. **And a scene with parallax cannot be judged by whole-frame diffs** —
 three layers at three rates means no alignment exists; `TMC_DISABLE_BG1/2/3`
 leave one layer on, and then "did it scroll cleanly" has an exact answer: zero
 residual under a pure shift on every consecutive pair.
+
+**A per-frame declaration and a latched one fail in opposite directions
+(B30, B31 vs B35).** "Re-declare every frame" is not automatically the safe
+choice — it keys the lifetime to whatever makes the call, which may stop long
+before the thing being described ends. Ask what *event* ends it and watch for
+that instead.
 
 **Declaring a slot and *keeping* it declared are different problems (B31).**
 The manager's init reset ran a frame after `OnEnterRoom` had already declared

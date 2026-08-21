@@ -2,16 +2,18 @@
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
 playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
-from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B16 and B17 were
+from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B34 is the only one found by instrument rather than by report. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Thirty-two of the thirty-three
-bugs are closed: thirty-one fixed with a root cause and evidence, and B4
-closed as **no longer observed** rather than diagnosed. **B21 is open** — diagnosed in
-full, but every route to a fix is blocked, so it is a decision rather than
-work.
+complete — see `docs/milestone2-status.md`.** All thirty-five bugs are closed:
+thirty-four fixed with a root cause and evidence, and B4 closed as **no longer
+observed** rather than diagnosed. **B21 closed 2026-08-20**, after nearly two
+weeks recorded as unfixable: the blocked routes were all attempts to make the
+layer *reach* further, and the fix was to stop it wrapping and pin it to the
+edge it belongs to. B34 was found the same day, in the same layer, by the
+instrument built to look at it.
 
 **Seven of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
@@ -71,7 +73,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B18 | Pause map detail view shows only the top of the map | **Fixed** 2026-08-06 — the per-scanline BG3 curtain's band was still in 240x160 rows; the only per-scanline table on a UI screen |
 | B19 | Segfault entering a room narrower than the viewport | **Fixed** 2026-08-06 — a `u32` local made a pointer offset unsigned, so a negative camera offset wrapped to +4.29e9. Reported from Android with a recording; reproduced on desktop first try |
 | B20 | Gameplay flashes at 240x160, offset, across a pause transition | **Fixed** 2026-08-06 — the centring clip changed several frames before the picture did; it now changes only on a black frame |
-| B21 | Minish Woods light shaft ends 80 px short of the right edge | **Open** — diagnosed 2026-08-07. Not a clip: the artwork is a 256 px layer whose shaft already ends at its own right edge. Every fix is blocked — repeats rejected, and a 512-wide BG has no free screenblock pair |
+| B21 | Minish Woods light shaft ends 80 px short of the right edge | **Fixed** 2026-08-20 — the shaft is screen-anchored, not world-anchored, and the port left a world view's BG3 unclipped so the *tiled* overlays could wrap across the wider viewport. This one wrapped its blank left end into the columns past 239. Now clipped to the authored width and pinned to the room's right edge |
 | B22 | Rolling barrel interior: doors out of reach, room spills past 160 rows | **Fixed** 2026-08-08 — the player pin measured the barrel's midline from the camera, not the room; 40 px of error at 320x240. Rim sprites in the border left open as a costed decision |
 | B23 | Barrel's drawn hole/doors rotationally apart from the exits that fire | **Fixed** 2026-08-08 — the port's `#ifdef PC_PORT` angle-gate bypass (predates the expansion, identical at 240x160) removed on the maintainer's decision. Hardware gate restored and verified landable |
 | B27 | Town scenery in the outer 40 px drawn from a non-resident tileset | **Open, fully diagnosed, plan written.** The residual B26 cannot reach: one tileset is resident and the viewport now shows more world than any single tileset covers. Not a selection problem — B26's rule is provably optimal. Fix is to keep both resident in enlarged emulated VRAM and choose per tile; **`docs/town-tileset-residency.md`** is a step-by-step plan with every measurement it needs |
@@ -80,6 +82,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B24 | Riding a lily pad through a room scroll strands the player outside the room | **Fixed** 2026-08-08 — the vehicle's carry state (`LilypadLarge_Action3`) exits on `reload_flags == 0`, which the faded path leaves true for the 32 frames it defers the apply, so the pad exited before the room changed and never carried anyone. Found from a second recording |
 | B28 | Lon Lon Ranch's locked door lets the player walk in; the door beside it draws as an open black doorway | **Fixed** 2026-08-17 — **not a viewport bug; identical at 240x160.** Asset extraction truncated every room-property blob at the first ROM pointer embedded in it, so the house-door list was half a record long and the engine read the rest off the end of the buffer. Four properties across three areas were short; all are whole now |
 | B33 | Minish Village's blue house changes tileset when the camera crosses a threshold | **Fixed** 2026-08-20 — a tile in an authored *gap* takes the group the engine loaded, which is right inside the GBA's screen and arbitrary outside it. Peripheral gap tiles now take the group of the region they adjoin; a guard rect keeps the inside byte-identical |
+| B34 | Light shaft's lower rows show the top of its own block | **Fixed** 2026-08-20 — the vertical twin of B32 in a different manager: a 64-px re-base leaves `yOffset` up to 63, and a 240-row screen needs the block to cover `yOffset + 240` of its 256. Re-based on 16 px. Found while measuring B21, never reported |
+| B35 | Light rays jump left when they fade, or when a text box opens | **Fixed** 2026-08-20 — B21's anchor was declared per frame and cleared per frame, so it died whenever the *handler* stopped ticking rather than when the *overlay* ended. A fade-out dispatches to a null handler on its first frame; a text box suspends the managers. Anchor now lives until BG3 goes off or the room changes |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -1185,7 +1189,7 @@ returned true. Only the trace separated them. Where a fix has an internal
 condition that is supposed to fire, log whether it fires, not just whether the
 output improved.
 
-## B21 — Minish Woods light shaft ends 80 px short of the right edge *(open)*
+## B21 — Minish Woods light shaft ends 80 px short of the right edge *(fixed)*
 
 Entering Minish Woods from the west, the shaft of light reaches the right edge
 of the screen at 240x160 and stops 80 px short of it at 320x240. **Reported
@@ -1263,11 +1267,77 @@ character data — gfx groups load tiles right up to `0x0600F000`. Prototyped
 anyway to be sure: BG3 at size 512 from base 30 writes 4 KB over blocks 30 *and*
 31, which is BG0's tilemap, and the HUD and text box render as garbage. Reverted.
 
-**Status: open, approaches exhausted short of reallocating a BG layer's
-screenbase** — which means re-checking every gfx group's tile destinations
-against the new layout, a change far larger than this defect justifies. The
-standing options are to accept the shaft ending 80 px short, or to spend that
-work. No decision is recorded.
+**Fixed 2026-08-20, and none of the blocked routes was the fix.** Every one of
+them — the 512-wide BG, the repeats, the offsets — was an attempt to make the
+layer *reach* the extra 80 px. It never had to. The port already clips
+240-authored layers to their authored width and places them; BG3 was the one
+layer deliberately exempted from that rule in a world view, and the exemption
+was written for a different kind of overlay.
+
+`mapsource_bind_ui()` skips BG3 outside a UI screen because these overlays are
+tiled patterns locked to the world — hole parallax, cloud shadows, weather,
+steam, POW all set `bg3.xOffset` from `scroll_x` — so letting the screenblock
+wrap past 256 px is exactly what covers a wider viewport with more of the same
+pattern, and adding `UI_CENTER_DX` on top would misalign them from the world
+they belong to. Both halves of that are true, and neither holds for the light
+shaft: its `xOffset` is the constant `0x10`, so there is no world alignment to
+preserve, and its map is blank for two thirds of its columns, so what the wrap
+brings into view past 239 is that blank end rather than more pattern. **The
+layer was never short. It was showing the wrong 80 px of itself.**
+
+An overlay now says which it is. `sub_08057450` declares
+`PORT_BG3_ANCHOR_RIGHT` through `Port_MapSource_DeclareBg3ScreenAnchor`, and
+a layer that has declared it gets the clip the rest of the 240-authored
+surfaces get, pinned to the right edge instead of centred.
+
+**Anchored to the right edge of the *room*, not of the viewport, and that
+distinction is the whole of the second bug this fix nearly shipped.** Exactly
+two rooms in the game run this handler — `Area_MinishWoods` room 0 and
+`Area_MinishHouseInteriors` room 9, the barrel minish house — and they differ
+on precisely this point. Minish Woods is 1008 px wide, fills the screen, and
+the room's right edge is the viewport's. The barrel house is **240x368**:
+narrower than the viewport, so the room is centred with 40 px of border either
+side and its right edge is screen 279. Pinned to the viewport the band measured
+`cols=195..319` there — hanging 40 px out into the border. Pinned to the room
+span it measures `155..279`. The span is the same one the sprite clip below it
+computes, and for the same reason: outside it is border, not world.
+
+**Measured.** With `TMC_MASK_BG3=1`:
+
+| | before | after | room's right edge |
+|---|---|---|---|
+| Minish Woods 320x240 | `cols=115..239` | `cols=195..319` | 319 |
+| Minish Woods 320x160 | `cols=115..239` | `cols=195..319` | 319 |
+| barrel minish house 320x240 | `cols=115..239` | `cols=155..279` | 279 |
+| barrel minish house 320x160 | `cols=115..239` | `cols=178..279` | 279 |
+
+and with the HUD and sprites taken out, the whole band is a **pure 80-px
+translation** — 7552 mask pixels before and after, zero residual under the
+shift, on every frame. Steady across a 49-frame walk and a 14-position camera
+sweep. The 342-pixel discrepancy the first comparison reported was entirely
+HUD and sprite occlusion changing as the band moved under fixed-screen content,
+which is what the isolation switches exist to remove.
+
+At GBA-native width the declaration is compiled out — `#if defined(PC_PORT) &&
+UI_CENTER_DX > 0` — and `lightRayManager.c`'s generated code is byte-identical
+to the engine's, checked with `objdump`. Gate: 11/11 waypoints, 0 of
+265,497,600 fetches.
+
+**Lesson (31).** *A layer that ends too early may not be short — it may be
+wrapping, and showing you the blank part of itself.* The 2026-08-07 diagnosis
+was right about every fact it established (the map is 256 px, the shaft ends at
+map px 255, no offset can place ray content past 255 without repeating it) and
+wrong in the conclusion it drew, because it never asked what the columns past
+239 were *currently* showing. `BG3 contributes 0 px beyond 239` was read as
+"there is nothing out there to draw" when it also fits "the thing out there is
+transparent". Those need different fixes and only one of them was possible.
+
+**Lesson (32).** *An exemption is a claim about a class, and a class acquires
+members you did not check.* The "leave a world view's BG3 unclipped" rule was
+measured and correct for the five tiled overlays it was written for, and it
+silently governed a sixth that shares none of their properties. When a rule is
+justified by what its members have in common, the guard has to test that
+property rather than the layer index.
 
 **Lesson (19).** *"Supported end to end" is a claim about a pipeline, and a
 pipeline has more stages than the ones you thought to check.* The size-bit route
@@ -2739,6 +2809,136 @@ says is false. Publishing the old behaviour as a higher-priority rectangle makes
 the proof unnecessary and costs one entry in a list that is already scanned.
 
 ---
+
+## B34 — light shaft's lower rows show the top of its own block *(fixed)*
+
+Found 2026-08-20 while measuring B21, in the same layer, with the instrument
+built for B21. **Not reported by anyone** — which is worth noting, because it
+had been live in both light-ray rooms since the height expansion.
+
+**The vertical twin of B32, in a different manager.** `sub_08057450` scrolls
+BG3 by keeping a fine offset in `yOffset` and re-pointing `subTileMap` a whole
+64 px at a time. The block it points into is 32 tiles, so the window it must
+cover is `yOffset + screen height`, and the fine offset may only range over
+`256 - height` before the bottom of the screen wraps to the top of the block.
+
+At 160 rows that is 96 and the engine's 64 fits with room to spare. At 240 it
+is 16, and `yOffset` runs to 63: for **47 of every 64 camera positions** the
+bottom of the screen showed the top of the block instead — up to 47 rows of it.
+The symptom is the ray band breaking partway down with a disconnected fragment
+beneath the break, and the fragment changing whenever the map pointer moves.
+
+**Measured.** BG3 alone, masked, camera stepped 4 px at a time so the layer
+scrolls exactly 1 px per step. A correct layer is a pure 1-row shift between
+consecutive frames:
+
+```
+before  yOff 61->62: 0    62->63: 0    63->0: 47 rows (192..238)    0->1: 0
+after   yOff 61->62: 0    62->63: 0    63->0:  0                    0->1: 0
+```
+
+The 47 is exactly the predicted `240 - (256 - 63)`, and it lands at the
+re-point, which is where a wrap becomes *visible* rather than merely wrong.
+
+**A pure-shift test cannot see the wrap itself, only the re-point.** Wrapping
+is consistent under a shift — screen row `r` at `yOffset+1` and row `r+1` at
+`yOffset` read the same block row either way — so eight consecutive pairs
+inside one block scored 0 while the layer was wrong on all of them. What the
+test catches is the moment the block's contents change under the wrapped strip.
+Where a room's camera range never crosses a re-point the test is blind
+altogether: the barrel minish house scored 0 before *and* after, and the defect
+there had to be established from the offsets instead — `yOffset` reached 29–31,
+needing 269–271 rows of a 256-row block. After: 0–15.
+
+**Fix.** B32's, transplanted: re-base on a 16-px step. The scroll position is
+unchanged either way — `64*(y/64) + (y&63)` and `16*(y/16) + (y&15)` are both
+`y` — so only how often the map pointer moves differs, and a `static_assert`
+now states the invariant the constant exists to hold. At 160 rows the macro
+selects 64 and the generated code is byte-identical to the engine's.
+
+Both rooms were affected: Minish Woods up to 47 rows, the barrel minish house
+up to 15.
+
+**Lesson (33).** *When a measurement technique is chosen for one bug, check it
+can see the next one.* The consecutive-pair shift test settled B32 and was
+reached for again here, where it returned 0 for a layer that was wrong in 47
+of every 64 positions. It answers "is this layer scrolling cleanly", and a
+uniformly wrapped layer scrolls perfectly cleanly. The question that separates
+them is "can the block cover the screen", which is arithmetic on `yOffset`, not
+a comparison of pictures — and it is the same arithmetic in both bugs, which is
+the clue that the sweep should have been by mechanism rather than by report.
+
+## B35 — light rays jump left as they fade, and when a text box opens *(fixed)*
+
+Reported 2026-08-20 with two recordings, against the build carrying B21's fix,
+by the maintainer: *"when Link walks sufficiently east into the Minish woods
+and the light rays fade, upon the commencing of their fade out the light rays
+jump to the left"*, and *"inside the Minish village barrel house, when Link
+talks to the Picori NPC, when the textbox appears the light rays also jump
+left"*. Both are the same defect in B21's fix, from two different triggers.
+
+**B21's anchor was declared per frame and cleared per frame.** That was a
+deliberate choice, made to avoid B30 and B31 — a declaration that outlives what
+it describes — and it over-corrected into the opposite failure. The
+declaration's lifetime became *the handler's tick* rather than *the overlay's
+existence*, and those come apart in ordinary play:
+
+- **Fade-out.** `LightRayManager_Action1` sets `unk_21` to the *trigger* type,
+  not to the state being left, so entering a type-3 rect sets `unk_21 = 3` and
+  `gUnk_08107C48[3]` is `nullsub_494`. The state-4 handler stops being
+  dispatched on the **first** frame of a fade that runs eighty more. The band
+  loses its clip and jumps 80 px left while still fully visible — which is
+  exactly "upon the commencing of their fade out".
+- **Text box.** The managers are suspended outright, for as long as the
+  conversation lasts. In the barrel minish house that was 254 frames with the
+  band 40 px out of place.
+
+**Both reproduced from the recordings, by replay, against the binary the
+maintainer actually played.** With `TMC_MASK_BG3=1`, sampling the band's
+columns every 8 frames across the fade:
+
+```
+frame  played build   fixed
+f08     195..319      195..319
+f09     115..239      195..319     <- the jump, mid-fade
+f13     115..239      195..319
+```
+
+and every 22 frames across the conversation in the barrel house:
+
+```
+g03     155..279      155..279
+g04     115..239      155..279     <- the jump, on the text box
+g14     115..239      155..279
+```
+
+`TMC_BG3_TRACE=2` names it without the pictures: 720 frames `clipped=1
+anchor=1` followed by 44 frames `xOfs=16 clipped=0 anchor=0` — `bg3.xOffset`
+still the state-4 constant, so it is still that overlay, with the anchor gone.
+
+**Fix.** The anchor now expires on the two conditions that actually end the
+overlay, both observable in the port: **BG3 goes off** (which
+`LightRayManager_OnExitRoom` does) or **the room changes**. Nothing depends on
+a handler remembering to tick. Because silence now means "unchanged" rather
+than "off", the other light state — `sub_080573AC`, the world-locked parallax
+rays, which want the unclipped rule — declares `PORT_BG3_ANCHOR_NONE`
+explicitly instead of going quiet.
+
+After: both recordings replay through the installed play binary with **zero**
+frames where BG3 is on at `xOffset=16` without an anchor, and the single
+expiring frame in recording 2 is the BG3-off transition itself, where nothing
+is drawn.
+
+**Lesson (34).** *A per-frame declaration and a latched one fail in opposite
+directions, and "declare it every frame" is not automatically the safe one.*
+B30 and B31 were both a declaration that outlived what it described, and the
+lesson drawn from them — re-declare rather than latch — was applied here
+without asking what "every frame" was actually keyed to. It was keyed to a
+dispatch table entry that the engine changes one frame into an eighty-frame
+fade. The right question is not "how often is this refreshed" but "what event
+ends the thing being described", and then to watch for *that* — here, two
+conditions the port can see for itself, neither of which is a function call
+someone has to remember to make.
 
 ## D3 addendum: three scenes override their border colour
 
