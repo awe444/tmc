@@ -1248,10 +1248,53 @@ GfxLoadDecision EvaluateGfxControl(u8 unknown) {
 
 } // namespace
 
+/* gPalette_549 is declared in port_linked_stubs.c as a 26-palette block
+ * because Mt Crenel's weather manager reads `gPalette_549 + 0xD0` -- thirteen
+ * palettes past the start -- as the second half of a cross-fade. On the GBA
+ * that is simply the next symbol in a contiguous ROM blob; here each palette
+ * is its own extracted object, so the read only works if the block is filled.
+ *
+ * The block was allocated but never populated: the comment beside it says
+ * port_rom.c does so and no such code exists. gPalette_549[] therefore stayed
+ * zero, both halves of the cross-fade mixed zeros, and every tileset row the
+ * manager owns -- BG palette rows 2..14 -- went black on entering Mt Crenel's
+ * summit. Sprites kept their own palette, which is why the room read as
+ * "black except the sprites". Live at 240x160 too; not a viewport bug.
+ *
+ * Filled from the pak rather than from a ROM offset so it follows whichever
+ * ROM the player supplied, and once, on the first palette load of the run. */
+extern "C" u16 gPalette_549[];
+
+static void EnsureContiguousPaletteBlocks() {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+
+    constexpr int kFirst = 549;
+    constexpr int kCount = 26;   /* gPalette_549 .. gPalette_574 */
+    constexpr size_t kPaletteBytes = 32;
+
+    for (int i = 0; i < kCount; i++) {
+        const std::string file = "palettes/gPalette_" + std::to_string(kFirst + i) + ".pal";
+        const std::vector<u8>* data = LoadBinaryFileCached(file);
+        if (data == nullptr || data->size() < kPaletteBytes) {
+            AssetLogOnce("contig-palette-missing:" + file,
+                         "contiguous palette block: %s missing or short", file.c_str());
+            return;
+        }
+        std::memcpy(reinterpret_cast<u8*>(gPalette_549) + i * kPaletteBytes,
+                    data->data(), kPaletteBytes);
+    }
+    AssetLogOnce("contig-palette-549", "gPalette_549 block filled (%d palettes)", kCount);
+}
+
 extern "C" bool32 Port_LoadPaletteGroupFromAssets(u32 group) {
     if (!EnsureAssetGroupCache()) {
         return FALSE;
     }
+    EnsureContiguousPaletteBlocks();
 
     const auto it = gAssetGroupCache.paletteGroups.find(group);
     if (it == gAssetGroupCache.paletteGroups.end()) {
@@ -1273,6 +1316,21 @@ extern "C" bool32 Port_LoadPaletteGroupFromAssets(u32 group) {
             AssetLogOnce("palette-file:" + std::to_string(group) + ":" + std::to_string(entry.destPaletteNum + copiedPalettes) +
                              ":" + ref.file,
                          "palette group %u slot %u <- %s", group, entry.destPaletteNum + copiedPalettes, ref.file.c_str());
+            if (const char* v = std::getenv("TMC_BLEND_TRACE")) {
+                if (v[0] == '2' || v[0] == '3') {
+                    const u8* p8 = fileData->data() + ref.byteOffset;
+                    u32 nz = 0;
+                    for (u32 k = 0; k + 1 < ref.size; k += 2) {
+                        if (p8[k] | p8[k + 1]) nz++;
+                    }
+                    std::fprintf(stderr,
+                                 "[pltt-src] group=0x%02X dest=%u n=%u file=%s off=%u size=%u "
+                                 "srcnonblack=%u/%u first=%02X%02X %02X%02X\n",
+                                 group, entry.destPaletteNum + copiedPalettes, ref.numPalettes,
+                                 ref.file.c_str(), ref.byteOffset, ref.size, nz, ref.size / 2,
+                                 p8[1], p8[0], p8[3], p8[2]);
+                }
+            }
             LoadPalettes(fileData->data() + ref.byteOffset,
                          static_cast<s32>(entry.destPaletteNum + copiedPalettes),
                          static_cast<s32>(ref.numPalettes));

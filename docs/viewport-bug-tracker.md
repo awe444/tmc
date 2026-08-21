@@ -7,9 +7,12 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All thirty-five bugs are closed:
-thirty-four fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B21 closed 2026-08-20**, after nearly two
+complete — see `docs/milestone2-status.md`.** All thirty-six bugs are closed:
+thirty-five fixed with a root cause and evidence, and B4 closed as **no longer
+observed** rather than diagnosed. **B36 is not a viewport bug at all** — it
+reproduces at 240x160 and was live in the shipping build; it arrived as a
+playtest report during this work and is tracked here because that is where
+the reports come. **B21 closed 2026-08-20**, after nearly two
 weeks recorded as unfixable: the blocked routes were all attempts to make the
 layer *reach* further, and the fix was to stop it wrapping and pin it to the
 edge it belongs to. B34 was found the same day, in the same layer, by the
@@ -84,6 +87,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B33 | Minish Village's blue house changes tileset when the camera crosses a threshold | **Fixed** 2026-08-20 — a tile in an authored *gap* takes the group the engine loaded, which is right inside the GBA's screen and arbitrary outside it. Peripheral gap tiles now take the group of the region they adjoin; a guard rect keeps the inside byte-identical |
 | B34 | Light shaft's lower rows show the top of its own block | **Fixed** 2026-08-20 — the vertical twin of B32 in a different manager: a 64-px re-base leaves `yOffset` up to 63, and a 240-row screen needs the block to cover `yOffset + 240` of its 256. Re-based on 16 px. Found while measuring B21, never reported |
 | B35 | Light rays jump left when they fade, or when a text box opens | **Fixed** 2026-08-20 — B21's anchor was declared per frame and cleared per frame, so it died whenever the *handler* stopped ticking rather than when the *overlay* ended. A fade-out dispatches to a null handler on its first frame; a text box suspends the managers. Anchor now lives until BG3 goes off or the room changes |
+| B36 | Mt Crenel summit renders black apart from sprites | **Fixed** 2026-08-20 — **not a viewport bug: reproduces at 240x160.** `gPalette_549` is 26 contiguous palettes on hardware and the weather manager cross-fades against `gPalette_549 + 0xD0`; the port allocated the block but never filled it, so both sides of the mix read zeros and the summit's 13 terrain palettes went black. `port_rom.c` now loads it |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -2939,6 +2943,85 @@ fade. The right question is not "how often is this refreshed" but "what event
 ends the thing being described", and then to watch for *that* — here, two
 conditions the port can see for itself, neither of which is a function call
 someone has to remember to make.
+
+## B36 — Mt Crenel summit renders black apart from sprites *(fixed)*
+
+Reported 2026-08-20 with a recording. **Not a viewport bug — it reproduces at
+240x160**, which is the first thing that was established and the thing that
+sets everything else about it apart from the rest of this tracker.
+
+`Area_MtCrenel` room 0, `ROOM_MT_CRENEL_TOP`. The world layers render as pure
+black; Link, the enemies and the HUD are fine.
+
+**The two documented first moves were both wrong here, and cheaply.**
+`TMC_REJECT_TRACE=1` reported `bottom=bound top=bound` — this is not the
+B5/B15/B17 screenblock fallback that "sprites over black" usually means. And
+replaying the recording at 240x160 does not answer the size question, because
+frame-exact input diverges: Link takes different damage and dies, and the
+comparison ends on a GAME OVER screen. A debug warp into the room at both
+sizes answered it instead, with two known-good rooms warped to as a control
+(Minish Woods 1.4% black, Hyrule Field 20.1%, Mt Crenel 97% and 95%).
+
+**`TMC_MASK_BG2` separated "draws nothing" from "draws black" in one run.**
+Masked, BG2 covers 63,698 pixels — the geometry, the map source and the
+character data were all correct the whole time. Because the mask bypasses the
+palette *and* the blend, that left two candidates, and a new
+`TMC_BLEND_TRACE` settled them: `bldcnt=0x2F40` has `tgt1=0x00`, so no layer
+is a first target and the blend does nothing, while `bgpltt_nonblack` collapses
+from 255/255 to 44/255. The palette, not the blend.
+
+Splitting the live palette from the engine's working copy showed the working
+copy going black *first*, so it was not a fade either. Per-row: **rows 2..14
+black, rows 0, 1 and 15 intact.** The palette group that owns exactly those
+rows is 0x1E, and tracing the bytes the loader actually reads showed it
+loading 15-16 non-black colours per row, correctly. So the rows were filled and
+then emptied, by something that was not `LoadPalettes`.
+
+**A watchpoint named it in one run.** `weatherChangeManager.c`:
+
+```
+MixPalettes(srcPalette1=<gPalette_549+4>, srcPalette2=<gPalette_549+420>,
+            destPalette=<gPaletteBuffer+68>, factor=31)
+sub_08059894(gPalette_549, gPalette_549 + 0xD0, ...)
+```
+
+Mt Crenel's summit cross-fades its terrain between a clear palette set and a
+stormy one, and spells the second `gPalette_549 + 0xD0` — 13 palettes past the
+first. **That is only an address because the GBA linker laid
+gPalette_549..gPalette_574 out sequentially in the `gfxAndPalettes` blob**, and
+it is B16's lesson in a new place: in decompiled code an out-of-range access is
+defined on hardware and undefined here.
+
+`port_linked_stubs.c` already knew this. It allocates `u16 gPalette_549[0x1A0]`
+— the whole 26-palette block — with a comment explaining exactly this read, and
+ending "port_rom.c populates it from gGlobalGfxAndPalettes after ROM load."
+**It never did.** No code in the port ever wrote that symbol, so *both* sides of
+the mix were zeros, and `MixColors` at factor 0 is 100% of the second one.
+
+**Fix.** `port_rom.c` fills the block beside the other ROM-resolved symbols.
+Palette N lives at `N*32` in that blob — the same arithmetic
+`LoadPaletteGroup`'s hardware path uses — so it needs no new offset and is
+right for both regions: `0x5A2E80 + 549*32` is `0x005A7320`, exactly the ROM
+offset `port_asset_index.c` records for `gPalette_549.gbapal`.
+
+Measured on the maintainer's recording: **97.3% black → 1.1%** at 320x240, and
+**94.9% → 2.2%** at 240x160.
+
+**Lesson (35).** *A comment that says another file does something is a claim,
+not a fact.* The stub's comment described this defect, its cause, its symptom
+and its fix, and had done since issue #34 — and the fix it described was never
+written. The read walked off the end for as long as the comment claimed it did
+not. When a note says "X populates this", grep for the write before believing
+it; here `grep gPalette_549 port/` returns the allocation, the comment, an
+asset-index row, and nothing that assigns it.
+
+**Lesson (36).** *When two of the three explanations for a symptom are
+indistinguishable in a frame, reach for the instrument that removes one of
+them rather than for another picture.* "Black except sprites" is a layer
+drawing nothing, a layer drawing black, or a layer darkened afterwards.
+`TMC_MASK_BG<n>` kills the first in one run because it bypasses palette and
+blend both; `TMC_BLEND_TRACE` kills the third by reading the registers instead
+of inferring them. Neither needed a second build or a reference frame.
 
 ## D3 addendum: three scenes override their border colour
 

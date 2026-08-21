@@ -859,6 +859,109 @@ static void mapsource_trace_bg3(void) {
     lastRoom = gRoomControls.room;
 }
 
+/* TMC_BLEND_TRACE=2 also reports every palette group as it loads, with how
+ * much colour it left in the engine's working buffer. A group that loads and
+ * leaves the buffer black is a different bug from a buffer that was fine and
+ * got overwritten afterwards, and the frame they happen on is the same one. */
+/* Catch the moment the working palette loses its colour, whoever did it.
+ * Called from the palette sink and once per frame, so a drop caused by a
+ * direct write rather than by LoadPalettes still shows up -- attributed to
+ * "frame" instead of a group. */
+void Port_TracePaletteDrop(const char* where) {
+    static int en = -1;
+    static int last = -1;
+    int i, nonblack = 0;
+    if (en < 0) {
+        const char* v = getenv("TMC_BLEND_TRACE");
+        en = (v != NULL && (v[0] == '2' || v[0] == '3'));
+    }
+    if (!en) return;
+    for (i = 1; i < 256; i++) {
+        if (gPaletteBuffer[i] != 0) nonblack++;
+    }
+    if (last >= 0 && nonblack < last - 32) {
+        int row, col, rowCount;
+        fprintf(stderr, "[pltt-drop] %s: %d -> %d non-black  area=0x%02X room=0x%02X "
+                        "task=%d substate=%d\n",
+                where, last, nonblack, gRoomControls.area, gRoomControls.room,
+                gMain.task, gMain.substate);
+        /* Per 16-colour row: which survived says what the writer's extent was. */
+        fprintf(stderr, "            rows:");
+        for (row = 0; row < 16; row++) {
+            rowCount = 0;
+            for (col = 0; col < 16; col++) {
+                if (gPaletteBuffer[row * 16 + col] != 0) rowCount++;
+            }
+            fprintf(stderr, " %X:%02d", row, rowCount);
+        }
+        fprintf(stderr, "\n");
+    }
+    last = nonblack;
+}
+
+void Port_TracePaletteGroup(u32 group) {
+    static int en = -1;
+    int i, nonblack = 0;
+    if (en < 0) {
+        const char* v = getenv("TMC_BLEND_TRACE");
+        en = (v != NULL && v[0] == '2');
+    }
+    if (!en) return;
+    for (i = 1; i < 256; i++) {
+        if (gPaletteBuffer[i] != 0) nonblack++;
+    }
+    fprintf(stderr, "[pltt] group=0x%02X area=0x%02X room=0x%02X -> palbuffer_nonblack=%d/255\n",
+            group, gRoomControls.area, gRoomControls.room, nonblack);
+}
+
+/* TMC_BLEND_TRACE=1 — the colour-special-effects registers and a palette
+ * sample, printed whenever any of them changes.
+ *
+ * "The room is black except the sprites" has at least three causes that look
+ * identical in a frame: the layer draws nothing, the layer draws tiles whose
+ * palette entries are black, or the layer draws correctly and BLDCNT darkens
+ * it to black afterwards. TMC_MASK_BG<n> separates the first from the other
+ * two — it bypasses both the palette and the blend — and this separates those
+ * two from each other. B20 needed the same distinction and had to infer it. */
+static void mapsource_trace_blend(void) {
+    static int en = -1;
+    static u32 last = 0xFFFFFFFFu;
+    u16 bldcnt, bldalpha, bldy;
+    u32 key;
+    int i, nonblack, workingNonblack;
+    if (en < 0) en = (getenv("TMC_BLEND_TRACE") != NULL);
+    if (!en) return;
+    bldcnt = *(volatile u16*)&gIoMem[0x50];
+    bldalpha = *(volatile u16*)&gIoMem[0x52];
+    bldy = *(volatile u16*)&gIoMem[0x54];
+    /* How much of the BG palette is not black, as a one-number summary of
+     * "is the palette loaded at all". */
+    nonblack = 0;
+    for (i = 1; i < 256; i++) {
+        if (gBgPltt[i] != 0) nonblack++;
+    }
+    /* And the engine's working copy. The two answer different questions: the
+     * working copy says whether the room's palette was ever loaded, the live
+     * one says what the fade left behind. A colourful working copy over a
+     * black live one is a fade that never lifted. */
+    workingNonblack = 0;
+    for (i = 1; i < 256; i++) {
+        if (gPaletteBuffer[i] != 0) workingNonblack++;
+    }
+    key = ((u32)bldcnt << 16) ^ ((u32)bldalpha << 8) ^ (u32)bldy ^
+          ((u32)nonblack << 24) ^ ((u32)workingNonblack << 12);
+    if (key == last) return;
+    last = key;
+    fprintf(stderr,
+            "[blend] area=0x%02X room=0x%02X bldcnt=0x%04X (tgt1=0x%02X effect=%d "
+            "tgt2=0x%02X) bldalpha=0x%04X eva=%d evb=%d bldy=0x%04X evy=%d "
+            "bgpltt_nonblack=%d/255 palbuffer_nonblack=%d/255\n",
+            gRoomControls.area, gRoomControls.room, bldcnt,
+            bldcnt & 0x3F, (bldcnt >> 6) & 3, (bldcnt >> 8) & 0x3F,
+            bldalpha, bldalpha & 0x1F, (bldalpha >> 8) & 0x1F,
+            bldy, bldy & 0x1F, nonblack, workingNonblack);
+}
+
 /* TMC_TILE_PROBE=col,row — what the renderer will do with one room tile.
  *
  * Prints, for both world layers, the tilemap entry at that room tile, the
@@ -1035,6 +1138,8 @@ void Port_MapSource_Update(void) {
     mapsource_trace_reject();
     mapsource_trace_layers();
     mapsource_trace_bg3();
+    mapsource_trace_blend();
+    Port_TracePaletteDrop("frame");
 }
 
 /* Spike 5: per-room camera-range report (TMC_CAMTRACE=1). Confirms the

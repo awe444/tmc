@@ -93,6 +93,10 @@ enum {
 };
 void Port_MapSource_DeclareBg3ScreenAnchor(int anchor);
 
+/* TMC_BLEND_TRACE=2 diagnostic: report a palette group as it loads. */
+void Port_TracePaletteGroup(unsigned int group);
+void Port_TracePaletteDrop(const char* where);
+
 /* Tile columns the text box should shift itself by. Zero on UI screens,
  * where the whole BG0 layer is already shifted (see the note in the .c). */
 int Port_MapSource_MessageTileShift(void);
