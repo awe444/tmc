@@ -7,8 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty-two of the forty-six tracked bugs
-are closed; B41, B42, B45 and B46 are open.**
+complete — every spike landed and forty-two of the forty-seven tracked bugs
+are closed; B41, B42, B45, B46 and B47 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -79,6 +79,20 @@ consecutive reports hit this. B43 was reclassified from "unknown" to "not a
 viewport bug" the moment the maintainer recorded the same cutscene on the
 240x160 build. That is a minute of their time and unreachable by any amount of
 inference.
+
+**There is a hardware oracle on this machine now — use it before arguing.**
+mGBA 0.10.2 runs headless under `SDL_VIDEODRIVER=dummy`, and its `-d` CLI
+debugger takes commands on stdin, so the real game can be replayed and read by
+script: `tools/mgba/README.md`. The game reads `REG_KEYINPUT` once per frame at
+`0x0801D6C4`, so `watch/r 0x04000130` is a per-frame breakpoint and `w/r r0`
+injects input — our capture scripts already hold GBA key masks, so one replays
+directly. OAM, DISPCNT/BGxCNT and OBJ VRAM are all at fixed addresses, so no
+game symbols are needed. Align the two runs on an *event* (B45 used "the frame
+the mask's twelve OAM entries appear"), not on a frame number, and watch for
+animation phase: the same scene frame with the walk cycle one frame apart
+changes the player's whole sprite decomposition. **A save must be converted
+first — see B47.** Three passes of inference on B45 reached a confident wrong
+answer; one replay settled it.
 
 **A recording also ends where the bug did, and the fixed build runs past that
 point.** The B43 recording's input stops at frame 4033 because the screen had

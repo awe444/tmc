@@ -942,6 +942,8 @@ static void DrawEntitySprites(Entity* entity, s32 x, s32 y, u32 flags, u16 extra
 }
 
 
+static int sSinkOamArm = 0;
+
 /* TMC_SINK_TRACE=1 — the swamp/stairs "player goes behind the ground" pair.
  *
  * OBJECT_70 sets the player's spriteOrientation.flipY to 3, which is OAM
@@ -1025,6 +1027,7 @@ static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefor
                 if (objVram[i]) nz++;
         fprintf(stderr, "[sink]   OBJ VRAM tile133 nonzero=%d/32%s\n", nz,
                 nz == 0 ? "  <- blank: its twelve pieces draw nothing" : "");
+        sSinkOamArm++;   /* nth frame of the sink, for the hardware OAM diff */
         {
             static int dumped = 0;
             if (!dumped) { dumped = 1; SinkDumpSpriteFrames((u16)entity->spriteIndex); }
@@ -1311,6 +1314,31 @@ static void ProcessDeferredList(void) {
  * priority, renders each entity's sprites into gOAMControls.oam[].
  */
 
+/* The finished OAM, in the same decode mGBA's debugger dump gets, so the two
+ * can be diffed entry for entry. Printed on the 1st, 21st and 61st frame of a
+ * sink so the comparison is against a matched point in the scene rather than a
+ * matched frame number (the two emulators' clocks differ by a constant). */
+static void SinkDumpOam(void) {
+    int i;
+    fprintf(stderr, "[sink-oam] frame %u (sink frame %d)\n",
+            Port_Capture_Frame(), sSinkOamArm);
+    for (i = 0; i < 128; i++) {
+        const u8* p = (const u8*)&gOAMControls.oam[0] + i * 8;
+        u16 a0, a1, a2;
+        memcpy(&a0, p, 2); memcpy(&a1, p + 2, 2); memcpy(&a2, p + 4, 2);
+        if ((a0 & 0x0300) == 0x0200)
+            continue;
+        if (i >= (int)gOAMControls.updated)
+            break;
+        fprintf(stderr, "[sink-oam] %3d y=%3u x=%3u shape=%u size=%u prio=%u "
+                        "tile=%4u pal=%2u mode=%u\n",
+                i, (unsigned)(a0 & 0xFF), (unsigned)(a1 & 0x1FF),
+                (unsigned)(a0 >> 14), (unsigned)(a1 >> 14),
+                (unsigned)((a2 >> 10) & 3), (unsigned)(a2 & 0x3FF),
+                (unsigned)(a2 >> 12), (unsigned)((a0 >> 10) & 3));
+    }
+}
+
 void ram_DrawEntities(void) {
     if (gOAMControls.updated >= 0x80)
         return;
@@ -1338,4 +1366,12 @@ void ram_DrawEntities(void) {
          * re-renders the same entities at their last positions. See
          * comment in ram_UpdateEntities. */
     }
+    if (sSinkOamArm == 1 || sSinkOamArm == 21 || sSinkOamArm == 61) {
+        static int lastDumped = -1;
+        if (lastDumped != sSinkOamArm) {
+            lastDumped = sSinkOamArm;
+            SinkDumpOam();
+        }
+    }
+
 }

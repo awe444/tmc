@@ -7,9 +7,10 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-two of the forty-six bugs are
-closed: forty fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41, B42, B45 and B46 are open.** B41 and B42
+complete — see `docs/milestone2-status.md`.** Forty-two of the forty-seven bugs
+are closed: forty fixed with a root cause and evidence, and B4 closed as **no
+longer observed** rather than diagnosed. **B41, B42, B45, B46 and B47 are
+open.** B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
 diagnosed to one blank OBJ VRAM tile, and is not a viewport bug either. **B46**
@@ -105,6 +106,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
 | B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it — but that tile is a **red herring**: the mask it draws sits at OAM priority 2, the same as the ground, so filling it would not reveal him, and painted solid its coverage of Link is flat across the sink rather than growing. The disappearance is `flipY = 3` against an opaque priority-2 ground and nothing else. Open: whether hardware shows him at all, which needs a reference this repo cannot produce |
 | B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
+| B47 | The port's `tmc.sav` will not load in mGBA or on hardware | **Open, diagnosed.** `port_save.c` skips the EEPROM serial protocol and stores each 8-byte block in the game's in-memory order; hardware stores the wire order, which is the reverse. Confirmed against a save the real game initialised under mGBA. The game reads its signature back scrambled and offers a new file — symmetric, so emulator saves do not load in the port either. `tools/mgba/savconv.py` converts either way; fixing `port_save.c` needs a migration for existing saves |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3551,7 +3553,7 @@ the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
 
-## B45 — Link vanishes entirely on entering Castor Wilds mud *(open, diagnosed)*
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — faithful to hardware; the ripple palette is the real defect)*
 
 Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
 Walking west into the swamp should clip the bottom of Link's sprite gradually
@@ -3752,6 +3754,70 @@ ROM.
   (1, 1, 4, 1, 1, 2, 2, 1, 4, 1, 4, **12**, 6, 1, 1, 2 pieces), so frame 11 is
   not data read past the end of a table.
 
+**Fourth pass: answered against real hardware.** mGBA 0.10.2 was installed on
+request, and it turns out to run headless (`SDL_VIDEODRIVER=dummy`) with a
+stdin-driven CLI debugger — so the reference implementation can be replayed and
+interrogated by script. `tools/mgba/README.md` has the harness. The maintainer's
+own recording was replayed into it and the two OAM dumps compared at a matched
+frame.
+
+**Aligning the two.** Frame numbers do not correspond (the port skips the BIOS),
+so the alignment is on an event: the frame OBJECT_70's twelve mask entries first
+appear. mGBA 1034, port 913 — a constant 121, which is the `--offset 120` the
+sweep found independently. At that frame the HUD entries, the mask entries and
+the mud-ripple entries are at **identical positions** in both, so the scene is
+aligned, not merely the clock.
+
+**Hardware does what the port does.** At every sampled frame of the sink:
+
+| | hardware (mGBA) | port |
+|---|---|---|
+| `DISPCNT` | `1740` | `1740` |
+| `BG2CNT` | `1C42` (priority 2) | `1C42` |
+| player OAM priority | **3** | **3** |
+| mask entries | 12 × tile 133, prio 2, at x 109/117/125/133, y 56/64/72 | identical |
+| OBJ VRAM tile 133 | **blank, 0/32 bytes** | **blank** |
+
+So the ROM really does put the player at OAM priority 3 behind an opaque
+priority-2 ground, and the mask really does draw a blank tile. **The
+disappearance is what the game does, not what the port does to it** — and the
+first two passes' theory, that a graphic was missing from tile 133, is now dead
+twice over: the ROM has no loader for that tile, and hardware leaves it blank.
+
+**What the port gets wrong is the ripple, not the player.** At the same matched
+frame, four sprites sit at identical positions with identical tiles in both:
+
+```
+(80,116) tile 78   (80,126) tile 78   (85,119) tile 80   (85,123) tile 80
+hardware: palette 9        port: palette 12
+```
+
+Same tiles, same places, same frame, **different palette**. That is
+phase-independent and it is a real defect: the mud disturbance that marks where
+the player went under is drawn in the wrong colours. It is also the only thing
+the player *should* still see during the sink, which is very likely what the
+report is actually about — "he disappears and nothing marks the spot" rather
+than "he should be clipped".
+
+**One difference that is not a defect.** The player's sprite decomposes
+differently in the two dumps — hardware 16x32 + 8x16 from tiles 352/360, the
+port 16x16 + 8x16 + 16x8 + 8x8 from 352/356/358/360, offset 5 px in x. That is
+animation *phase*: the mask follows the entity and the mask positions are
+identical, so the entity is in the same place and only the walk frame differs.
+Worth re-checking phase-matched before reading anything into it.
+
+**Also observed, harmless:** the port applies `flipY = 3` one frame later than
+hardware, so the player is visible for a single extra frame at the start of the
+sink.
+
+**Where this leaves B45.** The reported symptom — the player vanishing on
+entering the mud — is faithful. What is missing is the ripple's colour, which
+is a different and much smaller bug. Before closing, the maintainer's
+expectation is worth one look on their own hardware or on mGBA: if the real
+game shows him clipped rather than gone, then something outside OAM, BGCNT and
+the mask differs and this comparison would have to be extended to the map data.
+Everything reachable through those three now says it does not.
+
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
 commented "Object70's head-overlay sprite isn't wired up on PC yet ... fully
@@ -3814,6 +3880,51 @@ a before/after look by someone at the controls. The sibling port
 bytes `x.HALF.HI ^ y.HALF.HI` for the grass frame where the port reads the
 fractional ones, so the frame jitters with sub-pixel motion instead of being
 stable per tile. That third point has not been verified here.
+
+## B47 — the port's `tmc.sav` will not load in mGBA or on hardware *(open, diagnosed)*
+
+Found 2026-08-22 when the maintainer tried to open one of their recording saves
+in mGBA and got an empty file select. Not a viewport bug; it has been true of
+every save this port has ever written.
+
+**The port stores each 8-byte EEPROM block in the opposite byte order to real
+hardware.** Side by side, the same save:
+
+```
+port :  41 47 42 5A 45 4C 44 41   "AGBZELDA"   ":THE MIN"   "ISH CAP:"
+mGBA :  41 44 4C 45 5A 42 47 41   "ADLEZBGA"   "NIM EHT:"   ":PAC HSI"
+```
+
+Every 8-byte group is reversed, and it holds at every offset checked. The mGBA
+side is not a guess: deleting the save and letting the real game initialise a
+fresh one produces that layout, so it is what hardware and every emulator write.
+
+**Why it happens.** EEPROM is a serial device — the game shifts 64 bits out
+MSB-first, and what lands in a `.sav` is that wire order. `port_save.c` skips
+the serial protocol entirely and implements the four BIOS entry points over a
+flat `sEeprom[8192]`, copying the game's 8 bytes straight in. The game's
+in-memory order is the reverse of the wire order, so the file comes out
+mirrored per block.
+
+**How it presents.** The game reads block 0, gets its signature back scrambled,
+decides the cartridge holds no valid file, and offers a new one — exactly the
+"booted to an empty save file" the maintainer saw. It is symmetric: a save from
+mGBA or a real cartridge will not load in the port either.
+
+**Confirmed by the fix working.** `tools/mgba/savconv.py` reverses each block;
+with the converted save, mGBA's EEPROM reads return `AGBZELDA`, the file select
+shows the file, and replaying the maintainer's recording reaches Castor Wilds
+gameplay (`BG2CNT = 0x1C42`) — which is how B45's hardware comparison became
+possible at all.
+
+**Not fixed in the port yet, on purpose.** Changing `port_save.c` to store the
+wire order makes every existing `tmc.sav` unreadable, including the maintainer's
+own and the seven `.script.sav` files the recordings depend on. It needs a
+migration: detect the old layout on load (block 0 reading `AGBZELDA` rather than
+`ADLEZBGA` is an unambiguous tell), convert in place, and keep writing the new
+one. Worth doing — save interchange with mGBA is what made this class of bug
+answerable — but it is a separate change with its own risk, and the converter
+covers the immediate need.
 
 ## D3 addendum: three scenes override their border colour
 
