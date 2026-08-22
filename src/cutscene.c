@@ -4,6 +4,10 @@
  * @brief Cutscenes
  */
 #include "cutscene.h"
+#ifdef PC_PORT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 #include "backgroundAnimations.h"
 #include "beanstalkSubtask.h"
@@ -876,5 +880,33 @@ void (*const gUnk_080FD138[])(void) = {
 };
 
 void CutsceneMain_Update(void) {
+#ifdef PC_PORT
+    /* TMC_CUTSCENE_TRACE=1 — which cutscene step machine is running and how it
+     * is advancing, printed on change. gUnk_080FD138 is indexed by
+     * gMenu.field_0x3 and each entry has its own overlayType sub-machine, so a
+     * cutscene that stops progressing shows here as a triple that stops
+     * moving. Added for B43, where the outer step never leaves 1 (the Vaati
+     * takeover) and the subtask exits leaving gFadeControl mid-fade-out. */
+    {
+        static int en = -1;
+        static int lastStep = -1, lastOverlay = -1, lastMenu = -1;
+        if (en < 0) en = (getenv("TMC_CUTSCENE_TRACE") != NULL);
+        if (en) {
+        if (gMenu.field_0x3 != lastStep || gMenu.overlayType != lastOverlay ||
+            gMenu.menuType != lastMenu) {
+            lastStep = gMenu.field_0x3;
+            lastOverlay = gMenu.overlayType;
+            lastMenu = gMenu.menuType;
+            fprintf(stderr,
+                    "[cut] step=%d overlay=%d menu=%d roomflag0=%d "
+                    "fade{act=%d type=0x%X prog=%d} uiFadeType=0x%X uiFadeTime=%d\n",
+                    (int)gMenu.field_0x3, (int)gMenu.overlayType, (int)gMenu.menuType,
+                    (int)CheckRoomFlag(0), (int)gFadeControl.active,
+                    (unsigned)gFadeControl.type, (int)gFadeControl.progress,
+                    (unsigned)gUI.fadeType, (int)gUI.fadeInTime);
+        }
+        }
+    }
+#endif
     gUnk_080FD138[gMenu.field_0x3]();
 }

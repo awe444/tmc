@@ -7,9 +7,9 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty of the forty-two bugs are
+complete — see `docs/milestone2-status.md`.** Forty of the forty-three bugs are
 closed: thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41 and B42 are open**, both reported
+observed** rather than diagnosed. **B41, B42 and B43 are open**, both reported
 2026-08-20 without recordings and both in story-gated cutscenes the scripted
 tester cannot reach. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -96,6 +96,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B40 | Cave of Flames minecart never emerges: softlock | **Fixed** 2026-08-20 — B24's defect in the file B24's own fix predicted. `Minecart_Action5` ends its carry state on `reload_flags == 0`, which reads true for all 32 frames of a deferred faded transition, so the cart hands the camera back before the room changes and the ride never completes. Guarded with `ScrollTransitionIsPending()`, as the lily pad already was |
 | B41 | White flash after a boss's element award covers only part of the screen | **Open, awaiting a recording.** `SetFillColor`'s flat fill is *ruled out* — measured at 100% of 320x240 with `TMC_FILL_PROBE=1`. Suspect is `WHITE_TRIANGLE_EFFECT` (spawned by `bossDoor.c:215`), whose per-scanline window rasteriser clips with explicit `MAX_X_COORD = 240; MAX_Y_COORD = 160` |
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
+| B43 | Western-wood / Hyrule Castle cutscene ends on a permanent black screen | **Open, diagnosed, not fixed.** **Pre-existing** — the pre-session baseline reproduces identically. The Vaati takeover subtask exits via `Subtask_FadeOut`'s `SetFade(gUI.fadeType, gUI.fadeInTime)` with `gUI.fadeType = FADE_IN_OUT\|FADE_INSTANT` and time `0x100` — an instant fade *to black* — immediately after the cutscene's own `SetFade(FADE_INSTANT, 0x100)` fade-in. Gameplay resumes behind it |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3317,6 +3318,60 @@ That the two reports touch the same machinery is suggestive and is not
 evidence; a table is room furniture and would not normally be on BG3.
 
 **What it needs:** a recording and the save, per the usual workflow.
+
+## B43 — western-wood cutscene ends on a permanent black screen *(open, diagnosed)*
+
+Reported 2026-08-20 with a recording. Walking south into the western wood
+starts a Hyrule Castle cutscene; the screen goes black and stays black.
+
+**Pre-existing, not from the recent work.** Built the pre-session baseline
+(`32c9562a`) and replayed: identical, 0.0% non-black on the last five dumps.
+That was checked first because five fixes had just landed.
+
+**Reproduced and localised.** The screen is black while *gameplay is running*:
+`substate = GAMEMAIN_UPDATE`, area 0x03 room 0x08, for the last **1540 frames**
+of the recording. The live BG palette is `0/255` non-black while the engine's
+working copy is `250/255` — `TMC_BLEND_TRACE`'s "fade that never lifted"
+signature (B36). `gFadeControl` is `type=0x5 progress=0 active=0`:
+`FADE_IN_OUT | FADE_INSTANT` at progress 0 is, by `sub_080501C0`, an intensity
+of 256 — fully black — and the fade is *complete*, so nothing will move it.
+
+The cutscene is the **Vaati takeover**, `gUnk_080FD138` outer step 1
+(`sub_08053B58`). `TMC_CUTSCENE_TRACE` shows it advancing overlay 0 -> 1 -> 2
+and settling at 2, which is `sub_08053BBC` — the step that already carries a
+PC_PORT watchdog for a *different* softlock on this same cutscene (#93, the
+orchestrator entity disappearing mid-script; its comment says the cause is
+"still under investigation").
+
+**The anomaly is the exit fade.** Throughout, `gUI.fadeType = 0x5` and
+`gUI.fadeInTime = 256`. `sub_08053BBC`'s exit does `SetFade(FADE_INSTANT,
+0x100)` — no `FADE_IN_OUT`, so it ends *visible* — and then `Subtask_FadeOut`
+runs `SetFade(gUI.fadeType, gUI.fadeInTime)` = `SetFade(0x5, 256)`, an instant
+fade **out**, undoing it. Every-frame tracing shows exactly that: the fade-out
+completing, one frame where speed becomes 256, then 1540 frames of gameplay
+behind black.
+
+Where `0x5 / 0x100` comes from is the open question. The two sites that set it
+are `sub_08053B3C` and `sub_08053BE8` — the entries for outer steps *3* and
+*2*, not 1 — while the entry that matches this cutscene, `roomInit.c:5047`,
+passes `FADE_INSTANT` with time 4. That points at a stale `gUI.fadeType`, but
+it is not proven.
+
+**No A/B against 240x160 is available, and that is a property of the bug rather
+than an oversight.** The recording desynchronises under *any* configuration
+change: at 240x160 it never reaches the cutscene at all (no `substate=7`), and
+forcing `VIEWPORT_SCROLL_FADE 0` at 320x240 diverges the same way. Input replay
+is frame-exact against the build it was recorded on; three of the last four
+reports have hit this.
+
+**Not fixed here on purpose.** The file already carries one workaround for a
+related softlock whose root cause is unresolved, and the obvious change —
+overriding the exit fade — would be a second workaround stacked on the first
+without knowing which of them owns the defect.
+
+**What it needs:** whether it reproduces at 240x160 (a question the maintainer
+can answer in a minute and the replay cannot), and ideally a recording of the
+same cutscene there.
 
 ## D3 addendum: three scenes override their border colour
 
