@@ -302,6 +302,29 @@ void ram_UpdateEntities(u32 mode) {
         endList = 9;
     }
 
+    /* TMC_SINK_TRACE: does anything ever put data in OBJ VRAM tile 133?
+     * Sampled every frame and printed on change, because the answer decides
+     * whether OBJECT_70's twelve pieces are a missing load or blank by
+     * design (B45). */
+    {
+        static int en = -1;
+        static int lastAny = -1;
+        if (en < 0) en = (getenv("TMC_SINK_TRACE") != NULL);
+        if (en && mode == 0) {
+            const u8* base = (const u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+            int any = 0, k;
+            if (base)
+                for (k = 0; k < 32; k++)
+                    if (base[k]) { any = 1; break; }
+            if (any != lastAny) {
+                lastAny = any;
+                fprintf(stderr, "[sink] f=%u a=%02X:%02X OBJ VRAM tile133 -> %s\n",
+                        Port_Capture_Frame(), gRoomControls.area, gRoomControls.room,
+                        any ? "HAS DATA" : "blank");
+            }
+        }
+    }
+
     if (sEntwOn < 0)
         sEntwOn = (getenv("TMC_ENT_WATCH") != NULL);
     if (sEntwOn && mode == 0)
@@ -931,17 +954,44 @@ static void DrawEntitySprites(Entity* entity, s32 x, s32 y, u32 flags, u16 extra
  * `oam+=` is the OAM entries the entity actually emitted: an entity that
  * emits entries and still shows nothing is drawing blank tiles, which is a
  * different fault from one that emits none. */
+/* Twelve 8x8 pieces all pointing at one tile is a strange way to draw
+ * anything — one 32x32 sprite would do — so dump sprite 167's neighbouring
+ * frames once and see whether frame 11 looks like the others or like data
+ * read past the end of the sprite's frame table. */
+static void SinkDumpSpriteFrames(u16 sprIdx) {
+    int f;
+    for (f = 0; f < 16; f++) {
+        const u8* d = LookupFrameData(sprIdx, (u8)f);
+        if (!d) {
+            fprintf(stderr, "[sink]   spr%u frame %2d: (no data)\n", sprIdx, f);
+            continue;
+        }
+        {
+            u8 n = d[0];
+            int i;
+            fprintf(stderr, "[sink]   spr%u frame %2d: %u piece(s)", sprIdx, f, n);
+            for (i = 0; i < n && i < 14; i++) {
+                const u8* p = d + 1 + i * 5;
+                fprintf(stderr, " [%+d,%+d sh=%02X t=%u]", (int)(s8)p[0], (int)(s8)p[1],
+                        p[2], (unsigned)(p[3] | (p[4] << 8)));
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+}
+
 static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefore) {
     fprintf(stderr,
             "[sink] f=%u a=%02X:%02X world=(%d,%d) ent=%p kind=%u id=%u type=%u "
             "scr=(%d,%d) spr=%d frame=%u draw=%u orient=0x%02X attr2prio=%u "
-            "vramOff=%u oam+=%d\n",
+            "vramOff=%u sprOffY=%d surfTimer=%u oam+=%d\n",
             Port_Capture_Frame(), gRoomControls.area, gRoomControls.room,
             (int)entity->x.HALF.HI, (int)entity->y.HALF.HI,
             (void*)entity, entity->kind, entity->id, entity->type,
             (int)x, (int)y, (int)entity->spriteIndex, entity->frameIndex,
             entity->spriteSettings.draw, *(u8*)&entity->spriteOrientation,
             (unsigned)((extra >> 10) & 3), (unsigned)entity->spriteVramOffset,
+            (int)(s8)entity->spriteOffsetY, (unsigned)gPlayerState.surfaceTimer,
             (int)gOAMControls.updated - (int)oamBefore);
 
     if (entity->kind == OBJECT && entity->id == OBJECT_70) {
@@ -952,6 +1002,48 @@ static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefor
                 if (objVram[i]) nz++;
         fprintf(stderr, "[sink]   OBJ VRAM tile133 nonzero=%d/32%s\n", nz,
                 nz == 0 ? "  <- blank: its twelve pieces draw nothing" : "");
+        {
+            static int dumped = 0;
+            if (!dumped) { dumped = 1; SinkDumpSpriteFrames((u16)entity->spriteIndex); }
+        }
+        /* TMC_SINK_FILL133=1 — paint tile 133 solid so the mask's geometry
+         * relative to the player is visible. Diagnostic only: it answers
+         * "which part of him would this cover", which the blank tile hides. */
+        {
+            static int fillEn = -1;
+            if (fillEn < 0) fillEn = (getenv("TMC_SINK_FILL133") != NULL);
+            if (fillEn) {
+                u8* w = (u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+                if (w) {
+                    int i;
+                    for (i = 0; i < 32; i++)
+                        w[i] = 0x11; /* every pixel palette index 1 */
+                }
+            }
+        }
+        {
+            /* Tile 133 sits inside the shared special-FX sheet (every
+             * gObjectDefinition_F entry is gfx_type 2 at a fixed tile in
+             * 59..242). If the whole sheet were blank this would be a much
+             * bigger bug than one object; print the map once. */
+            static int once = 0;
+            if (!once) {
+                const u8* base = (const u8*)gba_TryMemPtr(0x06010000);
+                once = 1;
+                if (base) {
+                    int t;
+                    fprintf(stderr, "[sink]   OBJ VRAM tiles 0..255, '.'=blank '#'=data:\n[sink]   ");
+                    for (t = 0; t < 256; t++) {
+                        int any = 0, k;
+                        for (k = 0; k < 32; k++)
+                            if (base[t * 32 + k]) { any = 1; break; }
+                        fputc(any ? '#' : '.', stderr);
+                        if ((t & 63) == 63) fprintf(stderr, "\n[sink]   ");
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
     }
 }
 

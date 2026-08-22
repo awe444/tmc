@@ -7,8 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty-two of the forty-five tracked bugs
-are closed; B41, B42 and B45 are open.**
+complete — every spike landed and forty-two of the forty-six tracked bugs
+are closed; B41, B42, B45 and B46 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once

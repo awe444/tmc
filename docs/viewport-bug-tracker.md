@@ -7,12 +7,14 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-two of the forty-five bugs are
+complete — see `docs/milestone2-status.md`.** Forty-two of the forty-six bugs are
 closed: forty fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41, B42 and B45 are open.** B41 and B42
+observed** rather than diagnosed. **B41, B42, B45 and B46 are open.** B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
-diagnosed to one blank OBJ VRAM tile, and is not a viewport bug either. **B43 closed 2026-08-22**, once the maintainer's 240x160
+diagnosed to one blank OBJ VRAM tile, and is not a viewport bug either. **B46**
+was found by inspection while ruling a mechanism out of B45 — the second bug in
+the tracker found by instrument rather than by report, after B34. **B43 closed 2026-08-22**, once the maintainer's 240x160
 recording made it reproducible on the shipping build: it was one port-only line
 in `CreateVaatiApparateManager`, and it owned #93 as well. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -102,6 +104,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
 | B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it. Open: who fills that tile on hardware |
+| B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3609,25 +3612,137 @@ is the same file as 23. Nothing small and nothing aimed at it. Link's own tiles
 are elsewhere (`vramOff=352`), so this is not the player's animation streaming
 either.
 
-**What is still open:** who fills tile 133 on hardware. The candidates not yet
-separated are a `LoadSwapGFX` slot allocation the port resolves to a different
-offset, and an extractor gap in the gfx-group table itself — the latter is the
-B28 family (`Extracted assets are not the ROM`) and worth checking first,
-since the answer is static data.
+**Second pass, 2026-08-22: the "missing overlay load" theory is dead.** Both
+the first write-up here and the sibling port's comment assumed a graphic was
+supposed to be loaded at tile 133 and the port was failing to load it. It is
+not:
 
-**The sibling port hit this too and worked around it.** `999sian/tmc`'s
-`object70.c` forces `flipY = 2` under `PC_PORT`, with the comment "Object70's
-head-overlay sprite isn't wired up on PC yet ... fully invisible on the stairs
-/ during the swamp sink". Their `port_draw.c` then adds a per-scanline OBJ
-clip to fake the waterline. That is two workarounds for the missing tile and
-neither is taken here; it does confirm the same diagnosis reached
-independently, and it names a **second scene with the same cause: stairs**,
-which has not been checked here.
+- **The ROM has no gfx-group entry targeting that tile.** Searching
+  `baserom.gba` for the little-endian dest word `0x060110A0` gives **zero**
+  hits, and for tile 137 (`0x06011120`) likewise — while the neighbouring
+  small patches the same table does carry are right there:
+  `0x06011800` (tile 192) twice and `0x06011C80` (tile 228) once, at ROM
+  0xFFD50–0xFFD68. So the extracted `gfx_groups.json` is faithful, and nothing
+  fills tile 133 on hardware either.
+- **The object definition is byte-identical to the ROM.** OBJECT_70's row
+  packs to `01 00 85 08 00 00 A7 00`, which occurs exactly once, at ROM
+  `0x126B18`, between the two `MULTI_FORM` pointers for 0x6F and 0x71. So
+  `gfx = 133, gfx_type = 2, spriteIndex = 167` is what the game says.
+- Watched every frame of the run: tile 133 holds data only between the
+  intro's group-15 load (f479) and the room's group-23 load (f614). From
+  entering Castor Wilds it is blank to the end.
+
+**What OBJECT_70 actually draws is a mask.** Sprite 167 frame 11 —
+`frameIndex = type + 0xb`, so type 0 — is **twelve 8x8 pieces in a 4x3 grid,
+every one at tile offset 0**, spanning `x -16..+15, y -24..0`. One repeated
+tile over a 32x24 rectangle. Frame 12, the type-1 (stairs) case, is the same
+shape at 16x24. Painting tile 133 solid (`TMC_SINK_FILL133=1`, with
+`TMC_DISABLE_BG2=1` so the player is visible) shows where it lands: **over
+Link's upper body, from the top of his head to about his chest**, with his
+legs and the green splash below it.
+
+**And the sink is not a translation.** `gPlayerState.spriteOffsetY` is reset
+every frame by `interrupts.c:379`, so `SurfaceAction_Swamp`'s
+`+= 4 + (surfaceTimer >> 5)` never accumulates: traced across the whole sink it
+runs **4 to 11 px** while `surfaceTimer` climbs 0 to 0xF0. Link is pushed a few
+pixels down, not slid off the screen. Whatever clips him is the mask, not his
+position.
+
+**So the question is sharper than it was.** The mask is at OAM priority 2 and
+Link at 3, which is the only arrangement in which the mask can cover him — but
+priority 2 is also BG2's, and BG2 is the opaque full-coverage ground, so it
+covers *all* of him first. For any of this to be visible, **the priority-2
+layer has to be transparent where he stands** and it is not: `TMC_MASK_BG2=1`
+leaves 24 non-magenta pixels in a 64x64 box around him, and those are sprites
+in front, not holes. Two candidates remain, both narrow:
+
+1. the layer *content* is wrong — the bottom map or its tileset should have a
+   transparent pit at the mud, which is authored data and cheap to read; or
+2. the priority *assignment* is wrong — the room puts the ground at BG2
+   priority 2 (`bg2ctl=0x1C42`) and the swamp needs it elsewhere.
+
+Nothing else is left: the OAM priority derivation is verified against the ARM,
+the compositing order matches the hardware rule (OBJ wins ties, checked in
+`mode1_composite_line`), and the object and gfx data are verified against the
+ROM.
+
+**Ruled out this pass**, each by measurement:
+
+- *A missing gfx load for tile 133* — the ROM has no such entry (above).
+- *A corrupt extracted sheet* — group 23's file is blank at tile 133 and the
+  ROM's group table agrees; 4143 of its 8192 bytes are non-zero, which is an
+  ordinary sprite sheet with ordinary holes. The only blank tiles in OBJ VRAM
+  0..255 during the sink are 133, 137, 251 and 252.
+- *The wading overlay* — `ProcessEntityForDraw`'s `ram_0x80b2b58` overlay fires
+  only for act tiles 0x0F and 0x2F, and the swamp's is **0x13**
+  (`ACT_TILE_19` in `tiles.h`). It is not part of this. It is, however,
+  broken on its own account — see B46.
+- *A wrong frame index* — sprite 167's frames 0..15 all decode sanely
+  (1, 1, 4, 1, 1, 2, 2, 1, 4, 1, 4, **12**, 6, 1, 1, 2 pieces), so frame 11 is
+  not data read past the end of a table.
+
+**The sibling port reached the same wrong theory and shipped two workarounds
+for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
+commented "Object70's head-overlay sprite isn't wired up on PC yet ... fully
+invisible on the stairs / during the swamp sink", and their `port_draw.c` adds
+a per-scanline OBJ clip to fake the waterline. There is no head overlay to wire
+up — the ROM never loads that tile — so the first is a guess and the second
+reproduces the symptom rather than the mechanism. What their comment *is* good
+for is naming a **second scene with the same cause: stairs**, which is the
+type-1 case (`frameIndex` 12, a 16x24 mask) and has not been checked here.
 
 **Not fixed on purpose.** Both available fixes are guesses until the tile's
 real source is known: forcing priority 2 makes Link visible but unclipped and
 in front of scenery he should be behind, and inventing a scanline clip
 reproduces the symptom rather than the mechanism.
+
+## B46 — the wading overlay never draws in shallow water *(open, found by inspection)*
+
+Found while ruling the overlay out of B45, not from a report. Recorded because
+CLAUDE.md's rule is to guard the sibling while the reasoning is loaded.
+
+`ProcessEntityForDraw` renders a "shoes" overlay over an entity's feet when it
+stands on act tile **0x0F** (shallow water) or **0x2F** (tall grass), from the
+pointer table at ROM `0xB2B58`. That is what makes Link look like he is wading
+rather than standing on top of the water. **The port's index arithmetic can
+never reach the water entries, so it never draws.**
+
+The ARM (`asm/src/intr.s`) uses `(spriteSettings & 0x30)` as a **byte** offset
+and adds `frame * 2`, then indexes the pointer table with that byte offset
+divided by four:
+
+```
+ldrb r1, [r4, #0x18] ; and r1, r1, #0x30      @ byte offset, {0,16,32,48}
+...
+add  r2, r1, r2, lsl #1                        @ + frame*2
+ldr  sl, [r3, r2]                              @ table[byteOffset], i.e. index byteOffset>>2
+```
+
+The port instead computes `row = (ss & 0x30) >> 2` — `{0,4,8,12}` — and
+`idx = row + (frame << 1)`, which is `row + frame*2` where the ARM's is
+`row + frame/2`. Two consequences:
+
+- **Shallow water never draws at all.** Its frame is
+  `((gOAMControls.field_0x1 & 0x18) + 0x80) >> 2` = **32..38**, so the port's
+  `idx` is 64..76 and the guard is `idx < 16u`. It fails every time.
+- **Tall grass draws the wrong entry.** Its frame is `(x ^ y) & 6` =
+  `{0,2,4,6}`; the ARM wants table indices `row + {0,1,2,3}`, the port asks for
+  `row + {0,4,8,12}`.
+
+**And the table is bigger than the port's copy.** `sShoesOverlayPtrs` is
+declared `[16]` and `LoadShoesOverlayTableFromRom` reads sixteen words. Reading
+the ROM at `0xB2B58` shows **36** consecutive IWRAM pointers (0x03006848 …
+0x030068C5) before the data stops being pointers — the water entries the ARM
+indexes at 16..31 are inside that range and outside the port's copy. So even
+with the arithmetic fixed, the table has to grow.
+
+Not fixed here: it is a rendering change with no recording behind it yet, and
+the scene it affects — Link standing in shallow water or tall grass — is worth
+a before/after look by someone at the controls. The sibling port
+(`999sian/tmc`) fixed both halves, including reading the *integer* position
+bytes `x.HALF.HI ^ y.HALF.HI` for the grass frame where the port reads the
+fractional ones, so the frame jitters with sub-pixel motion instead of being
+stable per tile. That third point has not been verified here.
 
 ## D3 addendum: three scenes override their border colour
 
