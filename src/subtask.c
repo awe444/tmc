@@ -1,4 +1,8 @@
 #include "subtask.h"
+#ifdef PC_PORT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 #include "viewport.h"
 #include "common.h"
 #include "fileselect.h"
@@ -179,6 +183,15 @@ void sub_080A71C4(u32 param_1, u32 param_2, u32 fadeType, u32 param_4) {
     MenuFadeIn(param_1, param_2);
     gUI.fadeType = fadeType;
     gUI.fadeInTime = param_4;
+#ifdef PC_PORT
+    {
+        static int en = -1;
+        if (en < 0) en = (getenv("TMC_CUTSCENE_TRACE") != NULL);
+        if (en)
+            fprintf(stderr, "[cut] sub_080A71C4 state=%u field5=%u fadeType=0x%X time=%u\n",
+                    param_1, param_2, fadeType, param_4);
+    }
+#endif
 }
 
 void Subtask_Exit(void) {
@@ -265,6 +278,15 @@ void Subtask_FadeOut(void) {
         RestoreGameTask(gUI.loadGfxOnRestore);
         sub_0801D000(gUI.unk_d != 0);
         sub_080A74F4();
+#ifdef PC_PORT
+        {
+            static int en = -1;
+            if (en < 0) en = (getenv("TMC_CUTSCENE_TRACE") != NULL);
+            if (en)
+                fprintf(stderr, "[cut] Subtask_FadeOut uses fadeType=0x%X time=%u\n",
+                        (unsigned)gUI.fadeType, (unsigned)gUI.fadeInTime);
+        }
+#endif
         if (gUI.fadeType != 0xffff) {
             SetFade(gUI.fadeType, gUI.fadeInTime);
         } else {

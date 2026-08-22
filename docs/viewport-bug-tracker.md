@@ -96,7 +96,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B40 | Cave of Flames minecart never emerges: softlock | **Fixed** 2026-08-20 — B24's defect in the file B24's own fix predicted. `Minecart_Action5` ends its carry state on `reload_flags == 0`, which reads true for all 32 frames of a deferred faded transition, so the cart hands the camera back before the room changes and the ride never completes. Guarded with `ScrollTransitionIsPending()`, as the lily pad already was |
 | B41 | White flash after a boss's element award covers only part of the screen | **Open, awaiting a recording.** `SetFillColor`'s flat fill is *ruled out* — measured at 100% of 320x240 with `TMC_FILL_PROBE=1`. Suspect is `WHITE_TRIANGLE_EFFECT` (spawned by `bossDoor.c:215`), whose per-scanline window rasteriser clips with explicit `MAX_X_COORD = 240; MAX_Y_COORD = 160` |
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
-| B43 | Western-wood / Hyrule Castle cutscene ends on a permanent black screen | **Open, diagnosed, not fixed.** **Pre-existing** — the pre-session baseline reproduces identically. The Vaati takeover subtask exits via `Subtask_FadeOut`'s `SetFade(gUI.fadeType, gUI.fadeInTime)` with `gUI.fadeType = FADE_IN_OUT\|FADE_INSTANT` and time `0x100` — an instant fade *to black* — immediately after the cutscene's own `SetFade(FADE_INSTANT, 0x100)` fade-in. Gameplay resumes behind it |
+| B43 | Vaati takeover cutscene ends on a permanent black screen | **Open, diagnosed, not fixed. NOT a viewport bug** — the maintainer reproduced it on the 240x160 play build and sent a recording made there; it replays black at the shipping size with an identical signature. Pre-session baseline reproduces too. The Vaati takeover subtask exits via `Subtask_FadeOut`'s `SetFade(gUI.fadeType, gUI.fadeInTime)` with `gUI.fadeType = FADE_IN_OUT\|FADE_INSTANT` and time `0x100` — an instant fade *to black* — immediately after the cutscene's own `SetFade(FADE_INSTANT, 0x100)` fade-in. Gameplay resumes behind it |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3357,21 +3357,50 @@ are `sub_08053B3C` and `sub_08053BE8` — the entries for outer steps *3* and
 passes `FADE_INSTANT` with time 4. That points at a stale `gUI.fadeType`, but
 it is not proven.
 
-**No A/B against 240x160 is available, and that is a property of the bug rather
-than an oversight.** The recording desynchronises under *any* configuration
-change: at 240x160 it never reaches the cutscene at all (no `substate=7`), and
-forcing `VIEWPORT_SCROLL_FADE 0` at 320x240 diverges the same way. Input replay
-is frame-exact against the build it was recorded on; three of the last four
-reports have hit this.
+**It is not a viewport bug.** The first write-up could not tell, because the
+320x240 recording desynchronises under any configuration change — at 240x160 it
+never reaches the cutscene, and forcing `VIEWPORT_SCROLL_FADE 0` at 320x240
+diverges the same way. **The maintainer settled it by recording the cutscene on
+the 240x160 build itself** (`vaati_takeover_240x160.script`), which replays
+black there with the identical signature: same cutscene, same overlay 0-1-2,
+same `uiFadeType=0x5 uiFadeTime=256`, same completed fade-out with gameplay
+running behind it. That recording is now the repro to work from — it is
+deterministic on the shipping build, which the gate protects.
+
+**The lesson for the A/B question**: when frame-exact replay cannot be
+transplanted across a configuration, a recording made *on the other
+configuration* is the substitute, and it is a thing only the maintainer can
+produce. Asking for it is cheaper than any amount of inference.
+
+**Refined, on the 240x160 repro.** The whole run contains exactly **one**
+`sub_080A71C4` call: `state=5 field5=2 fadeType=0x5 time=256`, i.e.
+`sub_08053BE8`, the entry for outer step **2**. `CutsceneMain_Update` then
+dispatches `gMenu.field_0x3` = **1** — the Vaati takeover — and
+`Subtask_FadeOut` consumes the `0x5/256` that entry left. So the fade type
+belongs to a different cutscene than the one that ran. `roomInit.c:5047`, the
+entry that pairs `field5=1` with `FADE_INSTANT`/4, never runs.
+
+**One hypothesis tested and rejected.** `gUI.field_0x3` (offset 0x003) and
+`gMenu.field_0x3` (offset 0x03) look like one hardware byte named through two
+struct views — `gMenu` lives in `_gMenuSharedStorage`, which
+`port_linked_stubs.c` allocates *separately* and documents as EWRAM
+0x02000080 shared with `gChooseFileState`/`gIntroState`. If the port had split
+an alias, `GameMain_Subtask`'s `gUI.field_0x3 = gUI.field_0x5` would no longer
+reach the dispatcher. Adding `gMenu.field_0x3 = gUI.field_0x5` beside it
+changed nothing: still step 1, still black. So either they are genuinely
+separate on hardware, or the hand-off is not where the value arrives.
+Recorded because it is the obvious next idea and it does not work.
 
 **Not fixed here on purpose.** The file already carries one workaround for a
 related softlock whose root cause is unresolved, and the obvious change —
 overriding the exit fade — would be a second workaround stacked on the first
 without knowing which of them owns the defect.
 
-**What it needs:** whether it reproduces at 240x160 (a question the maintainer
-can answer in a minute and the replay cannot), and ideally a recording of the
-same cutscene there.
+**What it needs next:** why `gMenu.field_0x3` is 1 while the only subtask
+entry in the run asked for 2 — i.e. who sets the cutscene index, and whether
+the `0x5/256` fade type is stale by the same mechanism or a separate one.
+`TMC_CUTSCENE_TRACE=1` on `vaati_takeover_240x160.script` is the one-command
+starting point.
 
 ## D3 addendum: three scenes override their border colour
 

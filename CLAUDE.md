@@ -8,8 +8,9 @@ unexplained literals as load-bearing until proven otherwise.
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
 complete — every spike landed and forty of the forty-three tracked bugs
-are closed; B41, B42 and B43 are open. B43 is diagnosed but unfixed and is
-**pre-existing, not viewport-caused as far as anyone has shown**.
+are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
+confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
+build, which is the repro to use.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -71,6 +72,15 @@ flags or run a cutscene, so B41 and B42 stalled at "named suspect, unverified".
 What inference *is* good for there is narrowing: a synthetic fixture
 (`TMC_FILL_PROBE`, `TMC_OAMY_PROBE`) can rule a mechanism out without the
 scene, and ruling one out is worth asking for.
+
+**And when a recording cannot be transplanted across a configuration, ask for
+one made *on* that configuration.** Frame-exact input replay desynchronises
+under any change — viewport, or a compile-time switch like
+`VIEWPORT_SCROLL_FADE` — so it cannot serve as a cross-size A/B; three
+consecutive reports hit this. B43 was reclassified from "unknown" to "not a
+viewport bug" the moment the maintainer recorded the same cutscene on the
+240x160 build. That is a minute of their time and unreachable by any amount of
+inference.
 
 **Three bugs — B5, B15, B17 — were one defect reported three times:** a world
 layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
