@@ -11,9 +11,13 @@ complete — every spike landed and forty-one of the forty-four tracked bugs
 are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
 confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
 build, which is the repro to use. **B43 and issue #93 are one root cause**: the
-takeover cutscene's orchestrator hits its script's final
-`DoPostScriptAction 0x0006` and self-deletes without ever running the
-`SetRoomFlag 0x0000` immediately before it, so the cutscene cannot end. The
+takeover cutscene's orchestrator stops being updated two frames in, at
+`SetSyncFlag 0x10` (line 17 of its script), *without being deleted* —
+`ObjectUpdate` reaches `calls=2` and stops while another orchestrator in the
+same room reaches 545. Vaati answers with sync flag 0x20 and three NPCs then
+spin forever on flags the orchestrator never broadcasts, so the cutscene
+cannot end. **Tag any script trace by entity**: several orchestrators run in
+one recording and conflating them produced a wrong diagnosis twice. The
 `sub_08053BBC` watchdog papers over the resulting hang and converts it into a
 permanent black screen; `TMC_NO_CUTSCENE_WATCHDOG=1` shows both halves.
 What is left is one decision rather than work: frame time is +41% over the

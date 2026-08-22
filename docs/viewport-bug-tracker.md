@@ -3494,12 +3494,59 @@ which is B43. **One root cause, two presentations**, now shown rather than
 suspected: fixing the orchestrator's premature self-delete should retire both,
 and the watchdog with them.
 
-**What it needs next:** why the script's instruction pointer arrives at the
-final `DoPostScriptAction` without running the `SetRoomFlag` before it. That is
-a walk over script data the port reads from ROM through packed pointers, which
-is the B28 family — a mis-sized command would desynchronise the pointer and
-land it inside the wrong bytes. Tracing `ExecuteScript`'s opcode and IP for
-this entity is the next instrument.
+**Correction to the previous entry: there is no pointer desync, and the
+orchestrator that self-deleted was not this one.** Tagging the instruction
+trace with the entity pointer — which the first version did not do — separates
+three orchestrator runs, and the earlier conclusion conflated two of them:
+
+```
+ent=A area=0x03 room=0x08  462 cmds, last=Call              (Hyrule Field)
+ent=B area=0x80 room=0x02   78 cmds, last=SetSyncFlag       (the takeover)
+ent=A area=0x80 room=0x02   56 cmds, last=DoPostScriptAction (A finishing)
+```
+
+The `DoPostScriptAction` self-delete belongs to **A**, the Hyrule Field
+orchestrator, which survives into the castle room and ends its own script
+normally. **B, the takeover orchestrator, never self-deletes and its pointer
+never desynchronises.** Its walk maps onto
+`script_CutsceneOrchestratorTakeoverCutscene` line for line:
+
+```
+  +0 BeginBlock   +2 SetScrollSpeed   +6 SetEntityPositionRelative
+ +12 CameraTargetEntity  +14 EndBlock  +16 SetFadeTime  +20 SetFade4
+ +22 WaitForFadeFinish x64   +24 Wait  +28 SetScrollSpeed
+ +32 SetEntityPositionRelative  +38 CameraTargetEntity  +40 Wait
+ +44 PlayBgm      +48 SetSyncFlag 0x10
+```
+
+and stops there — line 17 of the script. Line 18,
+`WaitForSyncFlagAndClear 0x00000020`, never executes once, while
+`WaitForFadeFinish` above it logged 64 times, so this is not a wait that fails
+to satisfy.
+
+**B stops being updated after exactly two frames.** Counting `ObjectUpdate`
+calls per orchestrator: **B reaches `calls=2`** and never advances, while A
+reaches 545 in the same window. Across the whole run `DeleteEntity` is called
+on A and never on B. So B leaves the update iteration **without being deleted** —
+which is what #93 described, though not where it said: it happens two frames
+in, at `SetSyncFlag`, not after any `Call sub_0807FBC4` priority bump.
+
+Ruled out for B while it is stalled: it is never `EntityDisabled`
+(`disabled=0` throughout, `updPrio=1` against `entPrio` 0 or 1); `ENT_SCRIPTED`
+stays set and `action` stays 1, so `CutsceneOrchestrator` would run its script
+if called; the script pointer is never NULL and never an unresolved GBA
+address (`[SCRIPT]` warnings: zero).
+
+**And the cutscene is otherwise working.** `[sync]` shows `cur=0x00000020`
+held: Vaati *did* answer B's `SetSyncFlag 0x10` with 0x20, and three NPCs
+(ids 36, 39, 40) then spin forever waiting on 0x004, 0x010 and 0x400 — the
+flags B would have broadcast had it kept running. The deadlock is entirely
+downstream of B going quiet.
+
+**What it needs next:** what unlinks B from `gEntityLists` two frames after it
+is created, given nothing deletes it. A watchpoint on that entity's `next`
+pointer is the instrument — the same one that answered the cutscene-index
+question in a single run.
 
 ## B44 — closing the window skips every SDL teardown step *(fixed)*
 

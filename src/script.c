@@ -731,6 +731,22 @@ void ExecuteScript(Entity* entity, ScriptExecutionContext* context) {
             }
 #endif
             lastInstruction = context->scriptInstructionPointer;
+#ifdef PC_PORT
+            /* TMC_SCRIPT_TRACE=1 — the orchestrator's instruction walk, one
+             * line per command: pointer, raw word, decoded index and size.
+             * B43: the pointer reaches the script's last command without
+             * executing the one before it, so the walk is what to look at. */
+            {
+                static int en = -1;
+                if (en < 0) en = (getenv("TMC_SCRIPT_TRACE") != NULL);
+                if (en && entity->kind == OBJECT && entity->id == CUTSCENE_ORCHESTRATOR)
+                    fprintf(stderr, "[script] ent=%p area=0x%02X room=0x%02X ip=%p "
+                                    "word=0x%04X idx=%3u size=%u\n",
+                            (void*)entity, gRoomControls.area, gRoomControls.room,
+                            (void*)context->scriptInstructionPointer, (unsigned)cmd,
+                            activeScriptInfo->commandIndex, activeScriptInfo->commandSize);
+            }
+#endif
             activeScriptInfo->flags &= ~1;
             gScriptCommands[activeScriptInfo->commandIndex](entity, context);
 #ifdef PC_PORT

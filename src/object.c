@@ -1,5 +1,10 @@
 #include "object.h"
 #include "entity.h"
+#include "room.h"
+#ifdef PC_PORT
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 
 void (*const gObjectFunctions[])(Entity*) = {
     [GROUND_ITEM] = ItemOnGround,
@@ -199,6 +204,41 @@ void (*const gObjectFunctions[])(Entity*) = {
 };
 
 void ObjectUpdate(Entity* this) {
+#ifdef PC_PORT
+    /* TMC_SCRIPT_TRACE=1 — why an orchestrator stops being updated. B43/#93:
+     * EntityDisabled blocks an entity whose updatePriority is below the
+     * global one, and a *second* orchestrator holding priority is enough. */
+    {
+        static int en = -1;
+        static const void* ents[4];
+        static int lastState[4] = { -1, -1, -1, -1 };
+        if (en < 0) en = (getenv("TMC_SCRIPT_TRACE") != NULL);
+        if (en && this->kind == OBJECT && this->id == CUTSCENE_ORCHESTRATOR) {
+            int dis = EntityDisabled(this) ? 1 : 0;
+            int scripted = (this->flags & ENT_SCRIPTED) ? 1 : 0;
+            int key = dis | (this->updatePriority << 1) | (gPriorityHandler.ent_priority << 5)
+                      | (gPriorityHandler.event_priority << 9) | (this->action << 13)
+                      | (scripted << 17);
+            static unsigned calls[4];
+            int si = 0;
+            while (si < 4 && ents[si] != NULL && ents[si] != (const void*)this) si++;
+            if (si >= 4) si = 3;
+            ents[si] = (const void*)this;
+            calls[si]++;
+            if (key != lastState[si] || (calls[si] % 600) == 0) {
+                lastState[si] = key;
+                fprintf(stderr, "[prio] ent=%p calls=%u area=0x%02X room=0x%02X disabled=%d "
+                                "scripted=%d action=%u flags=0x%X "
+                                "updPrio=%u entPrio=%u evtPrio=%u requester=%p\n",
+                        (void*)this, calls[si], gRoomControls.area, gRoomControls.room, dis,
+                        scripted, this->action, (unsigned)this->flags,
+                        this->updatePriority, gPriorityHandler.ent_priority,
+                        gPriorityHandler.event_priority, (void*)gPriorityHandler.requester);
+                (void)0;
+            }
+        }
+    }
+#endif
     if ((this->flags & ENT_DID_INIT) == 0 && this->action == 0)
         ObjectInit(this);
     if (this->iframes != 0)
