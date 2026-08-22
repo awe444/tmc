@@ -1,6 +1,7 @@
 #include "object.h"
 #include "entity.h"
 #include "room.h"
+#include "message.h"
 #ifdef PC_PORT
 #include <stdio.h>
 #include <stdlib.h>
@@ -228,10 +229,11 @@ void ObjectUpdate(Entity* this) {
             if (key != lastState[si] || (calls[si] % 600) == 0) {
                 lastState[si] = key;
                 fprintf(stderr, "[prio] ent=%p calls=%u area=0x%02X room=0x%02X disabled=%d "
-                                "scripted=%d action=%u flags=0x%X "
+                                "scripted=%d action=%u flags=0x%X msgActive=%d "
                                 "updPrio=%u entPrio=%u evtPrio=%u requester=%p\n",
                         (void*)this, calls[si], gRoomControls.area, gRoomControls.room, dis,
                         scripted, this->action, (unsigned)this->flags,
+                        (gMessage.state & MESSAGE_ACTIVE) ? 1 : 0,
                         this->updatePriority, gPriorityHandler.ent_priority,
                         gPriorityHandler.event_priority, (void*)gPriorityHandler.requester);
                 (void)0;

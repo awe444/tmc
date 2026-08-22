@@ -3543,6 +3543,20 @@ held: Vaati *did* answer B's `SetSyncFlag 0x10` with 0x20, and three NPCs
 flags B would have broadcast had it kept running. The deadlock is entirely
 downstream of B going quiet.
 
+**It is not a textbox waiting for a button, which is the first thing to rule
+out and was asked directly.** Three independent checks, all with the watchdog
+off:
+
+- `gMessage.state & MESSAGE_ACTIVE` is **0** on every sampled frame.
+- Hammering A every 40 frames and START every 200, from frame 4400 to 12000 —
+  about 190 A presses — changes nothing: **3 distinct frames across 24 dumps**.
+- The frame itself shows Vaati alone in the throne room with no text box, and
+  without the King, Minister or guards who should be animating by then.
+
+The recording's own input stops at frame 4033, so "it just needs a button" is
+exactly the right suspicion for a scene that sits still; it is simply not what
+this is.
+
 **What it needs next:** what unlinks B from `gEntityLists` two frames after it
 is created, given nothing deletes it. A watchpoint on that entity's `next`
 pointer is the instrument — the same one that answered the cutscene-index
