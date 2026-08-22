@@ -27,8 +27,12 @@
 
 #include "port_gba_mem.h" /* gOamYExtShadow — the untruncated sprite y */
 
+#include "object.h"      /* CUTSCENE_ORCHESTRATOR — the B43 entity watch */
+#include "port_capture.h" /* Port_Capture_Frame — frame numbers in traces */
+
 #include <setjmp.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Forward declaration of RenderSpritePieces (defined below) */
@@ -159,6 +163,101 @@ extern void UpdateCollision(Entity* entity);
  * vanish on the second frame of fade-out). */
 static void ClearEntityDrawLists(void);
 
+/* ====================================================================
+ *  TMC_ENT_WATCH — why an entity stops being updated (B43 / #93)
+ *
+ *  "It stopped being updated" has three causes and the frame separates
+ *  none of them: the entity is unlinked from every list, the list walk is
+ *  truncated before reaching it, or its dispatcher declines to run it.
+ *  ObjectUpdate's [prio] trace covers the third. This covers the first
+ *  two, per frame and per tracked entity:
+ *
+ *    inList   which gEntityLists[] index holds it, or -1 if none does
+ *    reached  whether this frame's iteration actually visited it
+ *
+ *  inList >= 0 with reached=0 means the walk stopped early, and the
+ *  `chain` line names the entity whose next pointer ended it. inList=-1
+ *  means something unlinked it; DeleteEntity's [ent] trace says whether
+ *  a delete did.
+ *
+ *  Tracked entities are picked up from the lists themselves, so one stays
+ *  in the table after it vanishes from them — which is the whole point.
+ *
+ *  B43 was inList=-1 with the entity's own prev/next untouched: not
+ *  unlinked from its list, but written out of the list's head. */
+#define ENTW_MAX 8
+static const Entity* sEntwEnt[ENTW_MAX];
+static int sEntwList[ENTW_MAX];
+static int sEntwReached[ENTW_MAX];
+static int sEntwLast[ENTW_MAX];
+static int sEntwN = 0;
+static int sEntwOn = -1;
+
+static int EntwSlot(const Entity* e) {
+    int i;
+    for (i = 0; i < sEntwN; i++)
+        if (sEntwEnt[i] == e)
+            return i;
+    if (sEntwN >= ENTW_MAX)
+        return -1;
+    sEntwEnt[sEntwN] = e;
+    sEntwList[sEntwN] = -1;
+    sEntwLast[sEntwN] = -2;
+    return sEntwN++;
+}
+
+/* Walk every list, register any cutscene orchestrator seen, and record
+ * where each tracked entity currently is. Reports a chain that ends in
+ * NULL rather than in its list sentinel — the truncation case. */
+static void EntwScan(void) {
+    int i, listIdx;
+    for (i = 0; i < sEntwN; i++) {
+        sEntwList[i] = -1;
+        sEntwReached[i] = 0;
+    }
+    for (listIdx = 0; listIdx < 9; listIdx++) {
+        LinkedList* list = &gEntityLists[listIdx];
+        Entity* e = list->first;
+        int guard = 0;
+        while (e != NULL && e != (Entity*)list && guard++ < 4096) {
+            if (e->kind == OBJECT && e->id == CUTSCENE_ORCHESTRATOR) {
+                int s = EntwSlot(e);
+                if (s >= 0)
+                    sEntwList[s] = listIdx;
+            } else {
+                int s;
+                for (s = 0; s < sEntwN; s++)
+                    if (sEntwEnt[s] == e)
+                        sEntwList[s] = listIdx;
+            }
+            if (e->next == NULL) {
+                fprintf(stderr, "[entw] f=%u list=%d chain ends in NULL at ent=%p "
+                                "kind=%u id=%u pos=%d — walk truncated here\n",
+                        Port_Capture_Frame(), listIdx, (void*)e, e->kind, e->id, guard);
+                break;
+            }
+            e = e->next;
+        }
+    }
+}
+
+static void EntwReport(void) {
+    int i;
+    for (i = 0; i < sEntwN; i++) {
+        int key = (sEntwList[i] + 2) * 4 + sEntwReached[i];
+        if (key == sEntwLast[i])
+            continue;
+        sEntwLast[i] = key;
+        {
+            const Entity* e = sEntwEnt[i];
+            fprintf(stderr, "[entw] f=%u ent=%p inList=%d reached=%d "
+                            "prev=%p next=%p flags=0x%X action=%u\n",
+                    Port_Capture_Frame(), (void*)e, sEntwList[i], sEntwReached[i],
+                    (void*)e->prev, (void*)e->next, (unsigned)e->flags, e->action);
+        }
+    }
+}
+
 /* ram_UpdateEntities (port of arm_UpdateEntities)
  *
  * Arguments:
@@ -203,6 +302,11 @@ void ram_UpdateEntities(u32 mode) {
         endList = 9;
     }
 
+    if (sEntwOn < 0)
+        sEntwOn = (getenv("TMC_ENT_WATCH") != NULL);
+    if (sEntwOn && mode == 0)
+        EntwScan();
+
     for (int listIdx = startList; listIdx < endList; listIdx++) {
         LinkedList* list = &gEntityLists[listIdx];
         Entity* entity = list->first;
@@ -213,6 +317,13 @@ void ram_UpdateEntities(u32 mode) {
 
             /* Get next before update (in case entity gets deleted) */
             Entity* next = entity->next;
+
+            if (sEntwOn && mode == 0) {
+                int s_;
+                for (s_ = 0; s_ < sEntwN; s_++)
+                    if (sEntwEnt[s_] == entity)
+                        sEntwReached[s_] = 1;
+            }
 
             /* Call appropriate update function based on entity kind */
             u8 kind = entity->kind;
@@ -238,6 +349,9 @@ void ram_UpdateEntities(u32 mode) {
             entity = next;
         }
     }
+
+    if (sEntwOn && mode == 0)
+        EntwReport();
 
     /* Clear current entity context */
     gUpdateContext.current_entity = NULL;

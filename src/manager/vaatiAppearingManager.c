@@ -181,18 +181,36 @@ void CreateVaatiApparateManager(VaatiAppearingManager* this, u32 type) {
         manager->parent = (Entity*)super;
         AppendEntityToList((Entity*)manager, 8);
     }
-    if (gArea.transitionManager != NULL) {
+    if (gArea.onEnter != NULL) {
         gScreen.lcd.displayControl &= ~DISPCNT_BG3_ON;
         RoomExitCallback();
-        /* Original GBA code passed gArea.onEnter here, which is a script
-         * callback function pointer into ROM, not a Manager*. On GBA the
-         * ROM bytes were silently corrupted via the DeleteManager writes
-         * (read-only memory ate them) and the early ->next NULL check
-         * occasionally short-circuited; on x86-64 the read of
-         * manager->prev returns NULL and UnlinkEntity SIGSEGVs at 0x0
-         * during Vaati's apparate cutscene (Palace of Winds).
-         * The transitionManager field is the actual Manager pointer that
-         * onEnter/onExit are callbacks for — that's what was meant. */
-        DeleteManager(gArea.transitionManager);
+#ifndef PC_PORT
+        //! @bug: this always variable points to ROM, not a Manager*
+        DeleteManager((Manager*)gArea.onEnter);
+#else
+        /* B43/#93 — the DeleteManager call is dropped, not translated.
+         *
+         * gArea.onEnter is a ROM *function* pointer, so on hardware
+         * DeleteManager unlinks ROM: it reads two words of code as
+         * prev/next, writes through them into ROM, and the writes are
+         * discarded. The decomp flags it above. Its only observable
+         * effects are the two lines kept here.
+         *
+         * A previous port made both the guard and the argument
+         * gArea.transitionManager, to stop the raw onEnter deref
+         * SIGSEGVing on x86-64. That deletes a *real* entity, and during
+         * the castle takeover it is a stale one: Subtask_FadeIn has
+         * swapped the nine list heads into gEntityListsBackup, but the
+         * pre-subtask entities keep their prev/next, and a list sentinel
+         * is the same object on both sides of the swap. Hyrule Field's
+         * transition handler sits at the head of list 6, so
+         * UnlinkEntity's `ent->prev->next = ent->next` writes
+         * gEntityLists[6].first back to the overworld chain — orphaning
+         * the takeover orchestrator, which is never deleted and never
+         * updated again. Its sync-flag broadcasts stop, the helper NPCs
+         * spin forever, and the cutscene cannot end.
+         *
+         * Reproducing the hardware no-op fixes both that and the deref. */
+#endif
     }
 }

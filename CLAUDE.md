@@ -7,19 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty-one of the forty-four tracked bugs
-are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
-confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
-build, which is the repro to use. **B43 and issue #93 are one root cause**: the
-takeover cutscene's orchestrator stops being updated two frames in, at
-`SetSyncFlag 0x10` (line 17 of its script), *without being deleted* —
-`ObjectUpdate` reaches `calls=2` and stops while another orchestrator in the
-same room reaches 545. Vaati answers with sync flag 0x20 and three NPCs then
-spin forever on flags the orchestrator never broadcasts, so the cutscene
-cannot end. **Tag any script trace by entity**: several orchestrators run in
-one recording and conflating them produced a wrong diagnosis twice. The
-`sub_08053BBC` watchdog papers over the resulting hang and converts it into a
-permanent black screen; `TMC_NO_CUTSCENE_WATCHDOG=1` shows both halves.
+complete — every spike landed and forty-two of the forty-four tracked bugs
+are closed; B41 and B42 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -65,10 +54,10 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Six of this milestone's defects were live in the shipping 240×160 build or
+**Seven of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
-them, and the last two (B23, B25) only because it made the rolling barrel worth
-playing. The regression gate proves the shipping build did not *move*; it cannot
+them, B23 and B25 only because it made the rolling barrel worth playing, and
+B43 only because the maintainer recorded the cutscene at 240x160 on request. The regression gate proves the shipping build did not *move*; it cannot
 prove it was right. When a change alters a mechanism rather than a surface,
 count the frames that exercise the mechanism instead of reading a gate pass as
 coverage. B16 and B17 both lived in code the canonical route never executes.
@@ -90,6 +79,33 @@ consecutive reports hit this. B43 was reclassified from "unknown" to "not a
 viewport bug" the moment the maintainer recorded the same cutscene on the
 240x160 build. That is a minute of their time and unreachable by any amount of
 inference.
+
+**A recording also ends where the bug did, and the fixed build runs past that
+point.** The B43 recording's input stops at frame 4033 because the screen had
+gone black; with the fix in, the cutscene reaches a text box forty seconds
+later and correctly waits for a button nobody presses. A replay that sits still
+after a fix is not necessarily still broken — extend the input before
+concluding anything.
+
+**An entity can stop being updated without anything touching the entity
+(B43).** Three mechanisms produce that symptom and the entity distinguishes
+only one of them: it was unlinked (`prev`/`next` change), the list's *head* was
+rewritten out from under it (nothing about it changes), or its dispatcher
+declined to run it (nothing about the list changes). Three passes watched the
+entity and found nothing, because it was the second. `TMC_ENT_WATCH=1` asks the
+other two questions — *which list holds it* and *did this frame's iteration
+reach it* — and `inList=-1` beside intact links is the whole diagnosis.
+
+**A subtask's entity-list bracket swaps nine head pairs and nothing else
+(B43).** `sub_0805E958`/`sub_0805E974` move `gEntityLists` in and out of
+`gEntityListsBackup`; every entity keeps its own links, and a list *sentinel*
+is the same object on both sides. So any pointer held across that bracket still
+writes through to whatever the lists now hold — `gArea` is not part of the
+bracket, and `gArea.transitionManager` unlinked mid-cutscene put list 6's head
+back on the overworld chain. **And when the port substitutes a pointer the
+original never really dereferenced, ask what the original *did with* it**: the
+GBA's `DeleteManager((Manager*)gArea.onEnter)` writes into ROM and is discarded,
+so the correct translation is to delete nothing, not to find a better argument.
 
 **Three bugs — B5, B15, B17 — were one defect reported three times:** a world
 layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
