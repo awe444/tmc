@@ -107,6 +107,22 @@ static int sMaxDyContinuous = 0; /* max dy among deltas <= 64 */
 static uint32_t sCamFramesChecked = 0;
 static uint32_t sCamOutOfRangeX = 0;
 static uint32_t sCamOutOfRangeY = 0;
+static int sCamWorstX = 0;
+static unsigned sCamListedX = 0;
+static unsigned sCamListedY = 0;
+/* Converging vs stuck. Every out-of-range frame observed so far has been part
+ * of a monotonically shrinking run: scroll.c's camera follow clamps only in
+ * the direction of travel and never snaps a camera that starts outside the
+ * range, so entering a room smaller than the viewport eases in at scrollSpeed
+ * — 16 frames at 4 px — and is legitimately out of range the whole way.
+ * The steady-state invariant simply does not hold during that ease.
+ *
+ * A bare count cannot tell that apart from a camera parked outside its room,
+ * which is the thing actually worth catching, so count both. B40's
+ * investigation spent its time here before the two were distinguished. */
+static int sCamPrevOverX = -1, sCamPrevOverY = -1;
+static u32 sCamPrevFrameX = 0, sCamPrevFrameY = 0;
+static unsigned sCamConvergingX = 0, sCamConvergingY = 0;
 static int sCamWorstY = 0;
 
 /* OAM entries whose attr0.y sits in [161,239] while enabled: at 160-line
@@ -258,11 +274,52 @@ static void spike10_sample(uint32_t frame) {
 
     sCamFramesChecked++;
     if (cx < mnx || cx > mxx) {
+        int overx = (cx < mnx) ? (mnx - cx) : (cx - mxx);
         sCamOutOfRangeX++;
+        if (frame == sCamPrevFrameX + 1 && sCamPrevOverX >= 0 && overx < sCamPrevOverX) {
+            sCamConvergingX++;
+        }
+        sCamPrevOverX = overx;
+        sCamPrevFrameX = frame;
+        /* Reported the same way as the vertical case below, which had it and
+         * this did not -- an asymmetry that left "x-out=32" as a bare count
+         * with no room, no frame and no magnitude to chase. */
+        /* Bounded per-occurrence listing as well as the worst, so a count can
+         * be resolved into "which rooms, and contiguous or scattered" without
+         * another build. Same "first few" shape as the map-source audit. */
+        if (sCamListedX < 12) {
+            sCamListedX++;
+            fprintf(stderr,
+                    "[cam10x] frame=%u area=0x%02X room=0x%02X %ux%u camx=%d "
+                    "range=[%d,%d] over=%d\n",
+                    frame, gRoomControls.area, gRoomControls.room,
+                    gRoomControls.width, gRoomControls.height, cx, mnx, mxx, overx);
+        }
+        if (overx > sCamWorstX) {
+            sCamWorstX = overx;
+            fprintf(stderr,
+                    "[cam10] frame=%u area=0x%02X room=0x%02X %ux%u camx=%d "
+                    "range=[%d,%d] over=%d\n",
+                    frame, gRoomControls.area, gRoomControls.room,
+                    gRoomControls.width, gRoomControls.height, cx, mnx, mxx, overx);
+        }
     }
     if (cy < mny || cy > mxy) {
         int over = (cy < mny) ? (mny - cy) : (cy - mxy);
         sCamOutOfRangeY++;
+        if (frame == sCamPrevFrameY + 1 && sCamPrevOverY >= 0 && over < sCamPrevOverY) {
+            sCamConvergingY++;
+        }
+        sCamPrevOverY = over;
+        sCamPrevFrameY = frame;
+        if (sCamListedY < 12) {
+            sCamListedY++;
+            fprintf(stderr,
+                    "[cam10y] frame=%u area=0x%02X room=0x%02X %ux%u camy=%d "
+                    "range=[%d,%d] over=%d\n",
+                    frame, gRoomControls.area, gRoomControls.room,
+                    gRoomControls.width, gRoomControls.height, cy, mny, mxy, over);
+        }
         if (over > sCamWorstY) {
             sCamWorstY = over;
             fprintf(stderr,
@@ -599,8 +656,10 @@ void Port_MapCheck_Report(void) {
             sOamHighYFrames, sOamHighYEntriesTotal, sOamHighYEntriesMax);
     fprintf(stderr,
             "[mapcheck] spike10: camera in range on %u gameplay frames: "
-            "x-out=%u y-out=%u (worst y overshoot %d px)\n",
-            sCamFramesChecked, sCamOutOfRangeX, sCamOutOfRangeY, sCamWorstY);
+            "x-out=%u (%u converging) y-out=%u (%u converging) "
+            "(worst x overshoot %d px, worst y %d px)\n",
+            sCamFramesChecked, sCamOutOfRangeX, sCamConvergingX, sCamOutOfRangeY,
+            sCamConvergingY, sCamWorstX, sCamWorstY);
     fprintf(stderr,
             "[mapcheck] spike8: OAM y at %d lines: enabled=%u rescued=%u "
             "(over %u frames) unresolved=%u\n",

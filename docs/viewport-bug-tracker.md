@@ -3202,6 +3202,53 @@ it diverges into different rooms entirely (0x03/0x16/0x15 against 0x05/0x04/0x06
 which is the third report running where frame-exact input replay cannot be used
 as an A/B across sizes. The code answers it instead.
 
+### The camera-range assertions in that room are not a defect
+
+Flagged while fixing B40 and chased afterwards, because `TMC_CAMTRACE` reports
+`** X OUT OF RANGE **` on entry to several rooms in this dungeon — `camx=688`
+against a `[0,368]` limit in room 0x06, `camx=232` against `[-24,-24]` in 0x05.
+
+**They are the once-per-room trace catching a transient the engine has always
+had.** `TMC_CAMTRACE` fires on the first frame the room number changes, which
+is before the camera has eased into the new room; the README already points at
+`--mapcheck`'s per-frame `spike10:` assertion for exactly this, and that is
+what resolves it.
+
+Per frame, over the whole recording: **32 x-out and 8 y-out frames of 6642**.
+Listed individually they are *two* runs of 16 frames and *one* of 8, each
+strictly converging — overshoot 64, 60, 56 ... 4 at exactly 4 px per frame,
+which is `scrollSpeed`. `scroll.c`'s camera follow clamps only in the direction
+of travel and never snaps a camera that starts outside the range, so a room
+entry eases in and is legitimately out of range the whole way. The steady-state
+invariant does not hold during that ease, and never did.
+
+All three runs are entries into rooms **smaller than the viewport on the
+flagged axis** (240x208 and 272x208 against 320x240), where min == max and the
+camera is pinned. At 240x160 those same rooms are not smaller on that axis, so
+the pinned value differs by `UI_CENTER_DX` and there is less distance to ease
+away — the extra travel is a consequence of centring a narrow room, which is
+the expansion's design, not a fault in it.
+
+**And the worst of it is behind the fade.** The frames with the largest
+overshoot are 0.0% non-black; by the time anything is visible the camera has
+converged most of the way, and it settles symmetric.
+
+`spike10:` now reports converging frames separately — `x-out=32 (30
+converging)`, where the 2 and 1 that do not count are simply each run's first
+frame, having no predecessor to improve on. A bare count could not tell an
+ease-in from a camera parked outside its room, which is the thing actually
+worth catching; and `[cam10x]` now lists occurrences the way the vertical case
+already did, an asymmetry that had left `x-out=32` with no room, frame or
+magnitude to chase.
+
+**Lesson (41).** *An assertion that encodes a steady-state invariant will fire
+on every legitimate transient, and a bare count cannot tell you which it was.*
+This one was correct on every frame it flagged and still described no defect.
+What made it answerable in minutes was listing the occurrences and asking
+whether the error was shrinking — the same question that separates "converging"
+from "stuck" for any settling quantity, and worth building into the instrument
+rather than re-deriving by hand.
+
 **Lesson (40).** *A defect predicted in a comment is still a defect, and the
 comment does not fix it.* B24's fix identified the second instance, named the
 file, and left it — reasonably, since it had no way to reach the scene. Three
