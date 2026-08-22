@@ -2,6 +2,7 @@
 #include "collision.h"
 #include "effects.h"
 #include "entity.h"
+#include "port_capture.h" /* Port_Capture_Frame — frame numbers in traces */
 #include "map.h"
 #include "object.h"
 #include "physics.h"
@@ -530,6 +531,19 @@ void sub_08008926(Entity* entity) {
 void UpdateIcePlayerVelocity(Entity* entity) {
     u32 direction = ((u32)entity->animationState >> 1) << 3;
     ApplyIceVelocityCore(entity, direction, 0);
+}
+
+/* B43: the entity-list save/restore around a subtask (sub_0805E958 /
+ * sub_0805E974). An entity created inside the subtask is not in the saved
+ * copy, so the restore drops it from every list without deleting it. */
+void Port_DiagEntityLists(const char* what, void* ra) {
+    static int en = -1;
+    if (en < 0)
+        en = (getenv("TMC_ENT_WATCH") != NULL);
+    if (en)
+        fprintf(stderr, "[entw] f=%u gEntityLists %s from %p (list6 first=%p last=%p)\n",
+                Port_Capture_Frame(), what, ra, (void*)gEntityLists[6].first,
+                (void*)gEntityLists[6].last);
 }
 
 /* Sync-flag tripwires for #93 cutscene-softlock chase. */

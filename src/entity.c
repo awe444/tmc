@@ -10,6 +10,16 @@
 #include "room.h"
 #ifdef PC_PORT
 #include "port_entity_ctx.h"
+#include <stdio.h>
+#include <stdlib.h>
+/* B43 (TMC_ENT_WATCH=1): the two ends of a subtask's entity-list bracket.
+ * The swap moves the nine list *heads* only — every entity keeps its
+ * prev/next, and a list sentinel is the same object on both sides — so a
+ * pointer left over from before the swap still writes through to the live
+ * heads. Printing both ends with the frame says which side of the bracket
+ * a list change belongs to, which is what separated this bug from the
+ * restore it was first blamed on. */
+void Port_DiagEntityLists(const char* what, void* ra);
 #endif
 
 typedef struct Temp {
@@ -547,11 +557,17 @@ void ReleaseTransitionManager(void* mgr) {
 extern LinkedList gEntityListsBackup[9];
 
 void sub_0805E958(void) {
+#ifdef PC_PORT
+    Port_DiagEntityLists("save+clear", __builtin_return_address(0));
+#endif
     MemCopy(gEntityLists, gEntityListsBackup, sizeof(gEntityLists));
     sub_0805E98C();
 }
 
 void sub_0805E974(void) {
+#ifdef PC_PORT
+    Port_DiagEntityLists("restore", __builtin_return_address(0));
+#endif
     MemCopy(gEntityListsBackup, gEntityLists, sizeof(gEntityLists));
 }
 

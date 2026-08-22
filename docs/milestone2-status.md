@@ -1,10 +1,23 @@
 # Milestone 2 — status at session close, 2026-08-10
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and **all forty tracked bugs are
-closed**, B27 included — Hyrule Town, festival town and Minish Village,
-playtested and confirmed 2026-08-11. **One thing is still open and it is a
+the items the plan did not anticipate, and **forty-two of the forty-four
+tracked bugs are closed** (B41 and B42 remain open), B27 included — Hyrule
+Town, festival town and Minish Village, playtested and confirmed 2026-08-11. **One thing is still open and it is a
 judgement rather than work: frame time.**
+
+**B43 closed 2026-08-22, and it was never a viewport bug.** The western-wood
+takeover cutscene ended on a permanent black screen at 240x160 as well as at
+320x240 — the maintainer's 240x160 recording is what made it reproducible on
+the shipping build. One port-only line in `CreateVaatiApparateManager` deleted
+a real entity where the GBA's version dereferences a ROM function pointer and
+does nothing; the entity was stale across the cutscene subtask's list-head
+swap, so unlinking it wrote `gEntityLists[6].first` back onto the overworld
+chain and the takeover orchestrator stopped being reached — never deleted,
+never unlinked. That single line owned the black screen, issue #93's softlock,
+and the missing fade-in. The #93 watchdog in `sub_08053BBC` is removed with it,
+which restores the cutscene's GBA-native ~20 s pacing in place of the three
+seconds the watchdog rushed it through. Gate green in both halves.
 
 **B21 closed 2026-08-20**, having been recorded as unfixable since 2026-08-07.
 Every blocked route had been an attempt to make the layer reach the extra
