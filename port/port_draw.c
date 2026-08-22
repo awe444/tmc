@@ -27,6 +27,7 @@
 
 #include "port_gba_mem.h" /* gOamYExtShadow — the untruncated sprite y */
 
+#include "map.h"
 #include "object.h"      /* CUTSCENE_ORCHESTRATOR — the B43 entity watch */
 #include "port_capture.h" /* Port_Capture_Frame — frame numbers in traces */
 
@@ -995,6 +996,28 @@ static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefor
             (int)gOAMControls.updated - (int)oamBefore);
 
     if (entity->kind == OBJECT && entity->id == OBJECT_70) {
+        /* Which map layer is on which BG, and at what priority. The player is
+         * hidden by whichever layer sits at a priority below his OAM one, so
+         * the binding is the other half of the question. */
+        static int bound = 0;
+        if (!bound) {
+            bound = 1;
+            fprintf(stderr, "[sink]   mapBottom->bg%d mapTop->bg%d  "
+                            "bg0=%04X(p%d) bg1=%04X(p%d) bg2=%04X(p%d) bg3=%04X(p%d) dispcnt=%04X\n",
+                    gMapBottom.bgSettings == &gScreen.bg1 ? 1 :
+                        gMapBottom.bgSettings == &gScreen.bg2 ? 2 :
+                        gMapBottom.bgSettings == &gScreen.bg3 ? 3 :
+                        gMapBottom.bgSettings == &gScreen.bg0 ? 0 : -1,
+                    gMapTop.bgSettings == &gScreen.bg1 ? 1 :
+                        gMapTop.bgSettings == &gScreen.bg2 ? 2 :
+                        gMapTop.bgSettings == &gScreen.bg3 ? 3 :
+                        gMapTop.bgSettings == &gScreen.bg0 ? 0 : -1,
+                    gScreen.bg0.control, gScreen.bg0.control & 3,
+                    gScreen.bg1.control, gScreen.bg1.control & 3,
+                    gScreen.bg2.control, gScreen.bg2.control & 3,
+                    gScreen.bg3.control, gScreen.bg3.control & 3,
+                    gScreen.lcd.displayControl);
+        }
         const u8* objVram = (const u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
         int nz = 0, i;
         if (objVram)

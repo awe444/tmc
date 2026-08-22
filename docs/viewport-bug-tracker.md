@@ -103,7 +103,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
-| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it. Open: who fills that tile on hardware |
+| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it — but that tile is a **red herring**: the mask it draws sits at OAM priority 2, the same as the ground, so filling it would not reveal him, and painted solid its coverage of Link is flat across the sink rather than growing. The disappearance is `flipY = 3` against an opaque priority-2 ground and nothing else. Open: whether hardware shows him at all, which needs a reference this repo cannot produce |
 | B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
@@ -3647,6 +3647,77 @@ every frame by `interrupts.c:379`, so `SurfaceAction_Swamp`'s
 runs **4 to 11 px** while `surfaceTimer` climbs 0 to 0xF0. Link is pushed a few
 pixels down, not slid off the screen. Whatever clips him is the mask, not his
 position.
+
+**Third pass: the mask is a red herring, and filling tile 133 would not fix
+anything.** Painting it solid (`TMC_SINK_FILL133=1`) and measuring what it
+covers, frame by frame, kills the whole line of enquiry the first two passes
+were on:
+
+| frame | Link px in box | covered by mask | Link rows | mask rows |
+|---|---|---|---|---|
+| 912 (before) | 289 | 0 (0%) | 59..83 | — |
+| 916 | 313 | 175 (56%) | 64..90 | 56..79 |
+| 924 | 336 | 169 (50%) | 65..92 | 56..79 |
+| 940 | 289 | 197 (68%) | 63..87 | 56..79 |
+| 1000 | 289 | 172 (60%) | 65..89 | 56..79 |
+| 1100 | 247 | 149 (60%) | 70..92 | 56..79 |
+
+Three things follow:
+
+- **The coverage does not grow.** It is flat at 50–68% for the whole sink, the
+  spread being which walk frame he is on. Whatever produces "clipped gradually
+  more and more", it is not this.
+- **It covers the wrong end.** The mask holds rows 56..79 while Link occupies
+  63..95, so it hides his *head and torso* and leaves his legs showing. For a
+  sink you want the opposite. Note the stairs frame (12) is placed the other
+  way — its pieces run y `-8, 0, +8`, i.e. mostly *below* the anchor — so the
+  two placements are deliberate and different.
+- **It is at OAM priority 2, the same as BG2.** Wherever BG2 is opaque the
+  mask changes nothing at all. **A correctly filled tile 133 would not make
+  Link visible by one pixel.**
+
+So B46's neighbour — the blank tile — is at most a missing cosmetic mud patch.
+**The disappearance is entirely `flipY = 3` against an opaque priority-2
+ground**, and nothing else in the scene bears on it.
+
+**The only progressive thing in the scene is `spriteOffsetY`**, which moves
+Link's sprite down 0 → 11 px (top row 59 → 70, measured across the sink) while
+the mask stays put. That is the sole candidate left for a growing clip, and by
+itself it reveals *more* of him below the mask rather than less.
+
+**The layer arrangement is ordinary**, so there is no binding mistake to find:
+
+```
+mapBottom->bg2  mapTop->bg1
+bg0=1F0C(p0) bg1=1D45(p1) bg2=1C42(p2) bg3=1E03(p3) dispcnt=1740
+```
+
+BG3 is configured at priority 3 — the one priority that would *tie* with Link
+and let the OBJ win — but `dispcnt` bit 11 is clear, so it is off and has no
+map bound. Every enabled layer sits above him.
+
+**Stairs is not the differential it looked like.** The type-1 path holds
+`flipY = 3` for a single frame: `Object70_Init` sets it, and `Object70_Action1`
+replaces it with 1 or 2 on the very next frame from the collision layer. So the
+sibling port's "fully invisible on the stairs" is not what the code does, and
+the swamp is the only place that *holds* priority 3.
+
+**What this needs now is an oracle, and there isn't one in this repo.** Every
+input has been checked against the ROM or the ARM and they all agree: Link is
+behind the ground while sinking. Either hardware shows him hidden too — in
+which case the report is about something else in the scene — or one of the two
+remaining inputs differs there in a way the ROM data alone does not reveal. No
+GBA emulator is installed in this environment, so the picture hardware draws
+cannot be obtained here.
+
+**The falsifiable prediction, for whoever gets a reference frame.** If hardware
+shows Link sunk with only his head above the mud, then *both* of these must be
+true and both are then testable in one comparison: the priority-2 layer has a
+transparent pit at the mud, and the mask is drawn about 24 px lower than we
+draw it — its y offsets would have to run `0, +8, +16` like the stairs frame's
+rather than `-24, -16, -8`. If hardware shows him fully hidden, the port is
+right about the sink and the report is about the *mud patch* that tile 133
+never draws.
 
 **So the question is sharper than it was.** The mask is at OAM priority 2 and
 Link at 3, which is the only arrangement in which the mask can cover him — but
