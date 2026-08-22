@@ -10,6 +10,7 @@
 #include "game.h"
 #include "map.h"
 #include "room.h"
+#include "common.h"
 #include "screen.h"
 #include "subtask.h"
 #include "ui.h"
@@ -1093,7 +1094,27 @@ static void mapsource_trace_reject(void) {
     }
 }
 
+/* TMC_FILL_PROBE=1 — run the script engine's white screen-fill on a timer,
+ * so "does a full-screen fill actually fill the screen" can be asked without
+ * the story state that normally produces one. sub_0807FB28 does exactly this
+ * pair around a boss's element award: SetFillColor(0x7fff, 1) sets the
+ * backdrop white and masks every layer out of DISPCNT, then SetFillColor(0, 0)
+ * restores. Same fixture rationale as TMC_OAMY_PROBE. Diagnostic only. */
+static void mapsource_fill_probe(void) {
+    static int en = -1;
+    static unsigned n = 0;
+    if (en < 0) en = (getenv("TMC_FILL_PROBE") != NULL);
+    if (!en || gMain.task != TASK_GAME) return;
+    n++;
+    if ((n % 240) < 60) {
+        SetFillColor(0x7fff, 1);
+    } else if ((n % 240) == 60) {
+        SetFillColor(0, 0);
+    }
+}
+
 void Port_MapSource_Update(void) {
+    mapsource_fill_probe();
     int layer;
     /* Clear every layer first: which BG a map binds to can change between
      * frames, so a stale binding on a BG this frame's layers no longer use

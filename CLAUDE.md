@@ -7,7 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all forty tracked bugs are closed.
+complete — every spike landed and forty of the forty-two tracked bugs
+are closed; B41 and B42 are open and both need recordings.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +28,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty-two
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -63,7 +64,12 @@ coverage. B16 and B17 both lived in code the canonical route never executes.
 
 **When a bug needs a human at the controls, ask for a recording early.**
 `record-bug.sh` found B13, B5, B15 and B16 in one pass each, after rounds of
-inference found nothing.
+inference found nothing. **A story-gated cutscene is that case by
+construction** — the scripted tester can warp to a room but cannot set story
+flags or run a cutscene, so B41 and B42 stalled at "named suspect, unverified".
+What inference *is* good for there is narrowing: a synthetic fixture
+(`TMC_FILL_PROBE`, `TMC_OAMY_PROBE`) can rule a mechanism out without the
+scene, and ruling one out is worth asking for.
 
 **Three bugs — B5, B15, B17 — were one defect reported three times:** a world
 layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
