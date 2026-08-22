@@ -271,10 +271,23 @@ void Minecart_Action4(MinecartEntity* this) {
     gPlayerEntity.base.animationState = super->animationState * 2;
 }
 
+/* playerUtils.c — see Minecart_Action5. */
+extern bool32 ScrollTransitionIsPending(void);
+
 void Minecart_Action5(MinecartEntity* this) {
     LinearMoveUpdate(super);
     CopyPosition(super, &gPlayerEntity.base);
-    if (gRoomControls.reload_flags == 0) {
+    /* `reload_flags == 0` is the engine saying the room scroll is over, and
+     * this is where the cart stops carrying the player and gives the camera
+     * back. A *pending* faded transition is still a scroll in progress -- see
+     * ScrollTransitionIsPending. Without this the cart exits on its very first
+     * frame, 32 frames before the room changes, so it hands the camera back
+     * into a room it has not entered: the camera pans on to the next room
+     * while the cart and the player stay behind in the old one, and the ride
+     * never completes. B40, and the same defect as the lily pad's B24 --
+     * named as likely in ScrollTransitionIsPending's own comment. Always
+     * false at GBA-native size. */
+    if (gRoomControls.reload_flags == 0 && !ScrollTransitionIsPending()) {
         super->action = 3;
         super->speed = 0x700;
         gRoomControls.camera_target = &gPlayerEntity.base;
