@@ -7,7 +7,7 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty of the forty-three bugs are
+complete — see `docs/milestone2-status.md`.** Forty-one of the forty-four bugs are
 closed: thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
 observed** rather than diagnosed. **B41, B42 and B43 are open**, both reported
 2026-08-20 without recordings and both in story-gated cutscenes the scripted
@@ -97,6 +97,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B41 | White flash after a boss's element award covers only part of the screen | **Open, awaiting a recording.** `SetFillColor`'s flat fill is *ruled out* — measured at 100% of 320x240 with `TMC_FILL_PROBE=1`. Suspect is `WHITE_TRIANGLE_EFFECT` (spawned by `bossDoor.c:215`), whose per-scanline window rasteriser clips with explicit `MAX_X_COORD = 240; MAX_Y_COORD = 160` |
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Open, diagnosed, not fixed. NOT a viewport bug** — the maintainer reproduced it on the 240x160 play build and sent a recording made there; it replays black at the shipping size with an identical signature. Pre-session baseline reproduces too. The Vaati takeover subtask exits via `Subtask_FadeOut`'s `SetFade(gUI.fadeType, gUI.fadeInTime)` with `gUI.fadeType = FADE_IN_OUT\|FADE_INSTANT` and time `0x100` — an instant fade *to black* — immediately after the cutscene's own `SetFade(FADE_INSTANT, 0x100)` fade-in. Gameplay resumes behind it |
+| B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3401,6 +3402,53 @@ entry in the run asked for 2 — i.e. who sets the cutscene index, and whether
 the `0x5/256` fade type is stale by the same mechanism or a separate one.
 `TMC_CUTSCENE_TRACE=1` on `vaati_takeover_240x160.script` is the one-command
 starting point.
+
+## B44 — closing the window skips every SDL teardown step *(fixed)*
+
+Reported 2026-08-20: the maintainer's desktop session died when they closed the
+game window. **Not a viewport bug and not reproducible here** — see the limits
+below — but the exit path had a real defect on exactly the route they used.
+
+`main()` ends with a full teardown:
+
+```c
+AgbMain();
+Port_Audio_Shutdown();
+Port_PPU_Shutdown();
+Port_Config_CloseGamepads();
+SDL_DestroyWindow(window);
+SDL_Quit();
+```
+
+**`AgbMain()` never returns on that route.** Closing the window raises
+`SDL_EVENT_QUIT`, `Port_PumpEvents` sets `gQuitRequested`, and the next
+`VBlankIntrWait` calls `exit(0)` from inside the frame loop
+(`port_bios.c:295`). All five calls are skipped. At process exit the window,
+its renderer, its textures and the audio device stream are all still live, and
+`exit()` then runs the capture atexit handlers and every static destructor
+while **the SDL audio callback thread is still running**. `SoftReset` exits the
+same way.
+
+**Fix.** One idempotent `Port_Shutdown()` in `port_main.c`, called from
+`main()` and from both `exit(0)` sites. Audio is torn down first on purpose:
+stopping the callback thread before anything it might touch is destroyed is the
+whole point of the ordering. Verified with a breakpoint that it now runs from
+`VBlankIntrWait` — the window-close path — and the process exits normally.
+
+**What this does *not* establish.** No crash was reproduced. Headless runs exit
+0 with or without the fix, and they cannot show the problem: `SDL_VIDEODRIVER=dummy`
+allocates no GPU resources, which is exactly the class being leaked. A
+user-space segfault also would not normally take a desktop session with it —
+that points at the compositor or driver — so this is a real defect on the
+reported path and a plausible contributor, not a demonstrated cause.
+
+**Lesson (42).** *A headless test suite cannot see a bug in the resources it
+declines to allocate.* Every run in this project is `SDL_VIDEODRIVER=dummy`,
+which is what makes the capture tooling deterministic and what made this
+invisible: the dummy driver creates no window, no renderer and no textures, so
+the leak has nothing to leak. The gate is green across this fix in both
+directions and always would have been. Exit paths are worth reading rather than
+testing here.
 
 ## D3 addendum: three scenes override their border colour
 

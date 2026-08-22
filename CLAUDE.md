@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty of the forty-three tracked bugs
+complete — every spike landed and forty-one of the forty-four tracked bugs
 are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
 confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
 build, which is the repro to use.
@@ -30,7 +30,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty-two
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty-four
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -344,6 +344,15 @@ about the device — all wrong. The engine was identical; one out-of-bounds read
 of a four-entry table returned different padding per toolchain and let desktop
 recover from a fault both platforms had. In decompiled code an out-of-range
 index is defined on hardware (ROM is contiguous) and undefined here.
+
+**Every capture runs `SDL_VIDEODRIVER=dummy`, and that is a blind spot as well
+as the thing that makes replay deterministic (B44).** The dummy driver creates
+no window, no renderer and no textures, so anything about real GPU resources —
+notably teardown — is invisible to the whole suite and to the gate. Closing the
+window exits through `exit(0)` inside the frame loop, which for a long time
+skipped all five of `main()`'s shutdown calls; both exit sites now go through
+`Port_Shutdown()`. **Never run a windowed build to investigate**: it opens on
+the maintainer's desktop.
 
 ## Building
 

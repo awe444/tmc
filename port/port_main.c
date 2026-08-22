@@ -87,6 +87,37 @@ static void Port_LogVideoDiagnostics(void) {
     fprintf(stderr, "\n");
 }
 
+/* The one teardown, run at most once.
+ *
+ * main() used to inline these five calls after AgbMain(), which is correct for
+ * the path where the engine loop returns and wrong for the one people
+ * actually use: closing the window sets gQuitRequested and Port_VBlankIntrWait
+ * calls exit(0) from inside the frame loop (port_bios.c), so AgbMain never
+ * returns and none of it ran. The window, its renderer and textures, and the
+ * audio device stream were all still live at process exit, with the SDL audio
+ * callback thread running while atexit handlers and static destructors went
+ * off underneath it.
+ *
+ * Audio first, deliberately: stopping the callback thread before anything it
+ * might touch is destroyed is the whole point of the ordering. */
+static SDL_Window* sShutdownWindow = NULL;
+
+void Port_Shutdown(void) {
+    static bool done = false;
+    if (done) {
+        return;
+    }
+    done = true;
+    Port_Audio_Shutdown();
+    Port_PPU_Shutdown();
+    Port_Config_CloseGamepads();
+    if (sShutdownWindow != NULL) {
+        SDL_DestroyWindow(sShutdownWindow);
+        sShutdownWindow = NULL;
+    }
+    SDL_Quit();
+}
+
 static bool Port_InitVideo(void) {
     const char* err = NULL;
     const char* forcedDriver = getenv("SDL_VIDEODRIVER");
@@ -629,12 +660,12 @@ int main(int argc, char* argv[]) {
 
     fprintf(stderr, "Port layer initialized. Entering AgbMain...\n");
 
+    sShutdownWindow = window;
+
     AgbMain();
 
-    Port_Audio_Shutdown();
-    Port_PPU_Shutdown();
-    Port_Config_CloseGamepads();
-    SDL_DestroyWindow(window);
-    SDL_Quit();
+    /* AgbMain returns only when the engine loop falls out of its own accord.
+     * Closing the window does not come back through here — see Port_Shutdown. */
+    Port_Shutdown();
     return 0;
 }
