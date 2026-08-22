@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All thirty-nine bugs are closed:
-thirty-eight fixed with a root cause and evidence, and B4 closed as **no longer
+complete — see `docs/milestone2-status.md`.** All forty bugs are closed:
+thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
 observed** rather than diagnosed. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
 playtest report during this work and is tracked here because that is where
@@ -91,6 +91,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B37 | Mt Crenel rain sheet fills only the centred 240 columns | **Fixed** 2026-08-20 — the weather manager takes BG1 from the room's top map layer and fills it with a tiled rain sheet; with the map layer off the map source is refused and the fallback clip confined it. A tiled pattern wants the screenblock wrap, exactly as BG3's overlays do. The layer now declares itself |
 | B38 | Vapour wisps and steam render opaque white | **Fixed** 2026-08-20 — **not a viewport bug.** VirtuaPPU never read OAM attr0 bits 10-11, so OBJ mode 1 (semi-transparent) was ignored. On hardware such a sprite is a blend first target regardless of BLDCNT, which is why Mt Crenel's `bldcnt=0x2F40` has an *empty* first-target field and still blends |
 | B39 | Rain layer is garbage after returning from the pause menu | **Fixed** 2026-08-20 — **pre-existing, not caused by B37**: 13,567 garbage px in the centred 240 before that fix, 13,540 after, which only widened it into the borders. The port's post-menu `gBGxBuffer`→VRAM copy wrote the room's top tilemap into BG1's screenblock, over the reload the re-run handler had just done. It now skips a BG no map layer is bound to — B25's exclusion, one step further |
+| B40 | Cave of Flames minecart never emerges: softlock | **Fixed** 2026-08-20 — B24's defect in the file B24's own fix predicted. `Minecart_Action5` ends its carry state on `reload_flags == 0`, which reads true for all 32 frames of a deferred faded transition, so the cart hands the camera back before the room changes and the ride never completes. Guarded with `ScrollTransitionIsPending()`, as the lily pad already was |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3151,6 +3152,110 @@ the display mode affine". The rule was always "is this buffer what belongs in
 that screenblock", and a second way to fail it — a layer the engine has
 temporarily handed to something else — was sitting one room away. The comment
 B25 left described the general rule correctly; only the code was specific.
+
+## B40 — Cave of Flames minecart never emerges, softlocking the ride *(fixed)*
+
+Reported 2026-08-20 with a recording: *"Link and the minecart do not emerge
+from the door the minecart is supposed to pass through. We briefly see Link and
+the minecart bounce back after entering the doorway from the right, the camera
+shifts left into the room Link and minecart are expected to enter, but they
+never do."*
+
+**This one was predicted.** `ScrollTransitionIsPending`'s own comment, written
+for B24, ends: *"(LilypadLarge_Action3, and minecart.c has the same shape)"*,
+and CLAUDE.md carried it forward as "`minecart.c` has the same shape and is
+still unexercised". It stayed unexercised until someone rode the cart.
+
+`Minecart_Action5` is the carry-across-the-scroll state, and it is
+`LilypadLarge_Action3` line for line in the part that matters:
+
+```c
+if (gRoomControls.reload_flags == 0) {
+    super->action = 3;
+    super->speed = 0x700;
+    gRoomControls.camera_target = &gPlayerEntity.base;
+}
+```
+
+`reload_flags == 0` is the engine saying the scroll is over. Sliding, the
+transition is applied on the spot and the flag is already set the first time
+this runs. **Fading, the apply is deferred 32 frames and nothing marks a
+transition as in progress**, so the test passes on the carry state's very first
+frame: the cart drops out of its ride and hands the camera back to the player
+before the room has changed. The camera pans on into the destination room while
+the cart and the player stay behind in the old one — exactly what the report
+describes, in that order.
+
+**Fix.** B24's, verbatim: `&& !ScrollTransitionIsPending()`. The ride completes
+and the scene continues into the NPC dialogue that follows it.
+
+**It is an expansion bug by construction, and this is the rare case where that
+needs no experiment.** The deferral only exists when `VIEWPORT_SCROLL_FADE` is
+set, which is `VIEWPORT_WIDTH > DISPLAY_WIDTH || VIEWPORT_HEIGHT >
+DISPLAY_HEIGHT` — so at 240x160 `ScrollTransitionIsPending()` returns FALSE and
+the condition is the engine's own. Three instructions are added there (the call
+and its test), the same as the lily pad's fix, which is why that shape was kept
+rather than compiled out. Gate: 11/11, 0 of 265,497,600 fetches.
+
+Replaying the recording at 240x160 does **not** answer the size question here —
+it diverges into different rooms entirely (0x03/0x16/0x15 against 0x05/0x04/0x06),
+which is the third report running where frame-exact input replay cannot be used
+as an A/B across sizes. The code answers it instead.
+
+### The camera-range assertions in that room are not a defect
+
+Flagged while fixing B40 and chased afterwards, because `TMC_CAMTRACE` reports
+`** X OUT OF RANGE **` on entry to several rooms in this dungeon — `camx=688`
+against a `[0,368]` limit in room 0x06, `camx=232` against `[-24,-24]` in 0x05.
+
+**They are the once-per-room trace catching a transient the engine has always
+had.** `TMC_CAMTRACE` fires on the first frame the room number changes, which
+is before the camera has eased into the new room; the README already points at
+`--mapcheck`'s per-frame `spike10:` assertion for exactly this, and that is
+what resolves it.
+
+Per frame, over the whole recording: **32 x-out and 8 y-out frames of 6642**.
+Listed individually they are *two* runs of 16 frames and *one* of 8, each
+strictly converging — overshoot 64, 60, 56 ... 4 at exactly 4 px per frame,
+which is `scrollSpeed`. `scroll.c`'s camera follow clamps only in the direction
+of travel and never snaps a camera that starts outside the range, so a room
+entry eases in and is legitimately out of range the whole way. The steady-state
+invariant does not hold during that ease, and never did.
+
+All three runs are entries into rooms **smaller than the viewport on the
+flagged axis** (240x208 and 272x208 against 320x240), where min == max and the
+camera is pinned. At 240x160 those same rooms are not smaller on that axis, so
+the pinned value differs by `UI_CENTER_DX` and there is less distance to ease
+away — the extra travel is a consequence of centring a narrow room, which is
+the expansion's design, not a fault in it.
+
+**And the worst of it is behind the fade.** The frames with the largest
+overshoot are 0.0% non-black; by the time anything is visible the camera has
+converged most of the way, and it settles symmetric.
+
+`spike10:` now reports converging frames separately — `x-out=32 (30
+converging)`, where the 2 and 1 that do not count are simply each run's first
+frame, having no predecessor to improve on. A bare count could not tell an
+ease-in from a camera parked outside its room, which is the thing actually
+worth catching; and `[cam10x]` now lists occurrences the way the vertical case
+already did, an asymmetry that had left `x-out=32` with no room, frame or
+magnitude to chase.
+
+**Lesson (41).** *An assertion that encodes a steady-state invariant will fire
+on every legitimate transient, and a bare count cannot tell you which it was.*
+This one was correct on every frame it flagged and still described no defect.
+What made it answerable in minutes was listing the occurrences and asking
+whether the error was shrinking — the same question that separates "converging"
+from "stuck" for any settling quantity, and worth building into the instrument
+rather than re-deriving by hand.
+
+**Lesson (40).** *A defect predicted in a comment is still a defect, and the
+comment does not fix it.* B24's fix identified the second instance, named the
+file, and left it — reasonably, since it had no way to reach the scene. Three
+weeks later it arrived as a softlock in a dungeon. When a fix's investigation
+turns up a sibling, the cheap move is to apply the same guard immediately: the
+reasoning is already loaded, and the alternative is waiting for someone to find
+it the expensive way.
 
 ## D3 addendum: three scenes override their border colour
 

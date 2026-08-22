@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and all thirty-nine tracked bugs are closed.
+complete — every spike landed and all forty tracked bugs are closed.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -27,7 +27,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Thirty-nine
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -77,8 +77,11 @@ them.** B16 lost the player's facing that way; B24 lost a lily pad's whole
 carry-across-the-scroll state, which exits on `reload_flags == 0` and so quit
 28 frames before the room changed, leaving the pad and the player outside the
 room. Anything that runs between a hand-off and the end of a scroll must be
-checked against `ScrollTransitionIsPending()`. `minecart.c` has the same shape
-and is still unexercised.
+checked against `ScrollTransitionIsPending()`. **`minecart.c` had the same
+shape and was named in that comment for three weeks before anyone rode the
+cart; it arrived as a Cave of Flames softlock (B40).** When a fix's
+investigation turns up a sibling, guard it then — the reasoning is already
+loaded, and the alternative is waiting for the expensive report.
 
 **B22 is the same assumption a fourth time, one axis over, and it broke
 gameplay rather than rendering.** A room that is *exactly* viewport-sized on

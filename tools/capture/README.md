@@ -32,7 +32,7 @@ python3 tools/capture/diff_captures.py \
 | `--exit-frame=N` | hard-quit after N frames (safety net) |
 | `--uncapped` | disable frame pacing + vsync (fast headless runs) |
 | `--capture-canvas` | dump the composed 320×240 presentation canvas (borders included) instead of raw PPU output |
-| `--mapcheck` | per-frame diff of rendered BG tiles vs `gMapData*Special`, plus the camera-delta, OAM-high-Y and expanded-column censuses (`port/port_mapcheck.c`) |
+| `--mapcheck` | per-frame diff of rendered BG tiles vs `gMapData*Special`, plus the camera-delta, OAM-high-Y and expanded-column censuses (`port/port_mapcheck.c`). **Its `spike10:` camera assertion splits converging from stuck**: an out-of-range camera easing into a room is `scroll.c`'s own behaviour — it clamps only in the direction of travel and never snaps — so a room entry is legitimately out of range for ~16 frames at 4 px each. `x-out=32 (30 converging)` is three clean ease-ins and no defect; a **non-converging** run is the thing worth chasing. `[cam10x]`/`[cam10y]` list the first dozen occurrences with room, frame and magnitude |
 | `--mapsource-audit` | cross-check every map-sampled tile fetch against the screenblock entry the hardware path would read. **240-only** — it is an equivalence check and there is no valid reference above native width, so it reports nothing there |
 | `--mapsource-report` | per-layer bound/rejected frame counts on exit |
 | `--no-map-sampling` | disable map-source binding entirely (everything on the screenblock path). The A/B switch behind the Spike 3 equivalence check |
