@@ -3439,10 +3439,67 @@ gating, which looks wrong beside `updatePriority` / `gPriorityHandler` but is
 not — `EntityDisabled` is consulted inside each kind's dispatcher
 (`object.c:206`, `npc.c:18`, `manager.c:67`), not by the loop.
 
-**What it needs next:** why the child orchestrator entity leaves the entity
-lists after `RequestPriorityOverPlayer`. That is #93's open question, and it is
-now also B43's. `TMC_FADE_TRACE=1` and `TMC_CUTSCENE_TRACE=1` on
-`vaati_takeover_240x160.script` reproduce both in one run.
+**The orchestrator is not unlinked by anything — it deletes itself, and it
+should not be able to.** A conditional breakpoint on `DeleteEntity` gives the
+whole path: `CutsceneOrchestrator` -> `ExecuteScriptAndHandleAnimation` ->
+`HandlePostScriptActions` -> `DeleteThisEntity`. That is post-script action bit
+6, `DoPostScriptAction 0x0006`, in area 0x80 room 0x02 — this cutscene.
+
+**And it is spurious.** `script_CutsceneOrchestratorTakeoverCutscene` contains
+exactly one `DoPostScriptAction 0x0006`, on its last line, immediately after
+`SetRoomFlag 0x0000`:
+
+```
+    StopBgm
+    SetRoomFlag 0x0000
+    DoPostScriptAction 0x0006
+SCRIPT_END
+```
+
+`SetRoomFlag` is called **zero times in the entire run** — traced, not
+inferred — and `CheckRoomFlag(0)` reads 0 at the moment of the self-delete. So
+the instruction pointer reaches the last line without executing the one before
+it. There is also no "child" orchestrator: `gUnk_080FCE30`, the list the script
+loads mid-cutscene, is a minister and six guards, and only one
+`CUTSCENE_ORCHESTRATOR` exists in the scene. The #93 comment's wording is
+misleading on both counts.
+
+**Ruled out this pass**, each by measurement rather than argument:
+
+- *Stale recycled context.* `DestroyScriptExecutionContext` and
+  `InitScriptExecutionContext` both `MemClear` the whole struct, so a leftover
+  action bit cannot survive reuse.
+- *Two entities sharing one context.* The port replaces the GBA's
+  in-entity context pointer with `gEntityScriptCtxTable`; scanning it every
+  frame for duplicate non-NULL entries over the whole run reports **zero**.
+- *The entity-to-slot mapping.* 1 player + 7 aux + 72 entities = 80 =
+  `PC_MAX_ENTITY_SLOTS`, and both arrays are `GenericEntity`, so neither the
+  bounds nor the `scriptContext` write is wrong.
+- *Priority gating.* The port's `ram_UpdateEntities` does none, which looks
+  wrong beside `updatePriority` but is not — `EntityDisabled` is consulted
+  inside each kind's dispatcher.
+
+**The watchdog is what turns the hang into the black screen, demonstrated.**
+`TMC_NO_CUTSCENE_WATCHDOG=1` disables the #93 replacement sequence:
+
+| | end of the recording | 4400 frames later |
+|---|---|---|
+| watchdog on | 0% non-black | 0% non-black |
+| watchdog off | 100% non-black | 100% non-black, throne room, 3 distinct frames |
+
+With it off the cutscene never finishes — frame 8800 is still Vaati in the
+throne room — which is #93. With it on, the forced sync flags carry the scene
+to its exit and `Subtask_FadeOut`'s fade-out then leaves the screen black,
+which is B43. **One root cause, two presentations**, now shown rather than
+suspected: fixing the orchestrator's premature self-delete should retire both,
+and the watchdog with them.
+
+**What it needs next:** why the script's instruction pointer arrives at the
+final `DoPostScriptAction` without running the `SetRoomFlag` before it. That is
+a walk over script data the port reads from ROM through packed pointers, which
+is the B28 family — a mis-sized command would desynchronise the pointer and
+land it inside the wrong bytes. Tracing `ExecuteScript`'s opcode and IP for
+this entity is the next instrument.
 
 ## B44 — closing the window skips every SDL teardown step *(fixed)*
 

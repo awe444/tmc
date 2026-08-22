@@ -92,6 +92,16 @@ void SetGlobalFlag(u32 flag) {
 }
 
 void SetRoomFlag(u32 flag) {
+#ifdef PC_PORT
+    {
+        static int en = -1;
+        if (en < 0) en = (getenv("TMC_ENT_TRACE") != NULL);
+        if (en)
+            fprintf(stderr, "[ent] SetRoomFlag(%u) area=0x%02X room=0x%02X flagOff=0x%X\n",
+                    (unsigned)flag, gRoomControls.area, gRoomControls.room,
+                    (unsigned)gArea.localFlagOffset);
+    }
+#endif
     WriteBit(&gRoomVars.flags, flag);
 }
 

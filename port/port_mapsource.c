@@ -11,6 +11,7 @@
 #include "map.h"
 #include "room.h"
 #include "common.h"
+#include "port_entity_ctx.h"
 #include "fade.h"
 extern bool32 ScrollTransitionIsPending(void);
 #include "screen.h"
@@ -1122,7 +1123,31 @@ static void mapsource_fill_probe(void) {
     }
 }
 
+/* TMC_ENT_TRACE=1 — two entities sharing one ScriptExecutionContext. The
+ * context is per entity on GBA (a pointer inside the entity); the port keeps a
+ * side table instead, and a duplicate there means one script's
+ * DoPostScriptAction lands on somebody else's entity. B43/#93. */
+static void mapsource_ctx_dup_check(void) {
+    static int en = -1;
+    static int reported = 0;
+    int i, j;
+    if (en < 0) en = (getenv("TMC_ENT_TRACE") != NULL);
+    if (!en || reported > 8) return;
+    for (i = 0; i < PC_MAX_ENTITY_SLOTS; i++) {
+        if (gEntityScriptCtxTable[i] == NULL) continue;
+        for (j = i + 1; j < PC_MAX_ENTITY_SLOTS; j++) {
+            if (gEntityScriptCtxTable[j] == gEntityScriptCtxTable[i]) {
+                reported++;
+                fprintf(stderr, "[ent] SHARED CONTEXT %p: slots %d and %d  area=0x%02X room=0x%02X\n",
+                        (void*)gEntityScriptCtxTable[i], i, j,
+                        gRoomControls.area, gRoomControls.room);
+            }
+        }
+    }
+}
+
 void Port_MapSource_Update(void) {
+    mapsource_ctx_dup_check();
     mapsource_fill_probe();
     int layer;
     /* Clear every layer first: which BG a map binds to can change between

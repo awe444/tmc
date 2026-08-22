@@ -10,7 +10,12 @@ unexplained literals as load-bearing until proven otherwise.
 complete — every spike landed and forty-one of the forty-four tracked bugs
 are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
 confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
-build, which is the repro to use.
+build, which is the repro to use. **B43 and issue #93 are one root cause**: the
+takeover cutscene's orchestrator hits its script's final
+`DoPostScriptAction 0x0006` and self-deletes without ever running the
+`SetRoomFlag 0x0000` immediately before it, so the cutscene cannot end. The
+`sub_08053BBC` watchdog papers over the resulting hang and converts it into a
+permanent black screen; `TMC_NO_CUTSCENE_WATCHDOG=1` shows both halves.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once

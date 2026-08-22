@@ -531,6 +531,11 @@ void sub_08053BBC(void) {
      * play. Once the sequence finishes, force RoomFlag 0 to exit. */
     static int sStep = 0;
     static int sFrameInStep = 0;
+    /* TMC_NO_CUTSCENE_WATCHDOG=1 disables the replacement sequence below, so
+     * the original #93 failure can be observed instead of the rescue. */
+    static int sWatchdogOff = -1;
+    if (sWatchdogOff < 0) sWatchdogOff = (getenv("TMC_NO_CUTSCENE_WATCHDOG") != NULL);
+    if (sWatchdogOff) goto skip_watchdog;
     static const struct { u32 setFlag; int frames; } kSeq[] = {
         { 0x010, 30 },  /* wake Vaati 1 */
         { 0x004, 30 },  /* wake King 1 */
@@ -561,6 +566,7 @@ void sub_08053BBC(void) {
         sStep = 0;
         sFrameInStep = 0;
     }
+skip_watchdog:;
 #endif
     if (CheckRoomFlag(0)) {
 #ifdef PC_PORT
