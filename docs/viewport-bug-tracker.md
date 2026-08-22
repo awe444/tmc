@@ -7,9 +7,11 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** All forty bugs are closed:
-thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B36 is not a viewport bug at all** — it
+complete — see `docs/milestone2-status.md`.** Forty of the forty-two bugs are
+closed: thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
+observed** rather than diagnosed. **B41 and B42 are open**, both reported
+2026-08-20 without recordings and both in story-gated cutscenes the scripted
+tester cannot reach. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
 playtest report during this work and is tracked here because that is where
 the reports come. **B21 closed 2026-08-20**, after nearly two
@@ -92,6 +94,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B38 | Vapour wisps and steam render opaque white | **Fixed** 2026-08-20 — **not a viewport bug.** VirtuaPPU never read OAM attr0 bits 10-11, so OBJ mode 1 (semi-transparent) was ignored. On hardware such a sprite is a blend first target regardless of BLDCNT, which is why Mt Crenel's `bldcnt=0x2F40` has an *empty* first-target field and still blends |
 | B39 | Rain layer is garbage after returning from the pause menu | **Fixed** 2026-08-20 — **pre-existing, not caused by B37**: 13,567 garbage px in the centred 240 before that fix, 13,540 after, which only widened it into the borders. The port's post-menu `gBGxBuffer`→VRAM copy wrote the room's top tilemap into BG1's screenblock, over the reload the re-run handler had just done. It now skips a BG no map layer is bound to — B25's exclusion, one step further |
 | B40 | Cave of Flames minecart never emerges: softlock | **Fixed** 2026-08-20 — B24's defect in the file B24's own fix predicted. `Minecart_Action5` ends its carry state on `reload_flags == 0`, which reads true for all 32 frames of a deferred faded transition, so the cart hands the camera back before the room changes and the ride never completes. Guarded with `ScrollTransitionIsPending()`, as the lily pad already was |
+| B41 | White flash after a boss's element award covers only part of the screen | **Open, awaiting a recording.** `SetFillColor`'s flat fill is *ruled out* — measured at 100% of 320x240 with `TMC_FILL_PROBE=1`. Suspect is `WHITE_TRIANGLE_EFFECT` (spawned by `bossDoor.c:215`), whose per-scanline window rasteriser clips with explicit `MAX_X_COORD = 240; MAX_Y_COORD = 160` |
+| B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3256,6 +3260,63 @@ weeks later it arrived as a softlock in a dungeon. When a fix's investigation
 turns up a sibling, the cheap move is to apply the same guard immediately: the
 reasoning is already loaded, and the alternative is waiting for someone to find
 it the expensive way.
+
+## B41 — white flash after a boss's element award covers only part of the screen *(open)*
+
+Reported 2026-08-20, no recording. **Not yet confirmed against the scene** —
+what follows is one ruled-out mechanism and one suspect.
+
+**Ruled out: the script engine's flat fill.** `sub_0807FB28` wraps a boss's
+element award in `SetFillColor(0x7fff, 1)` / `SetFillColor(0, 0)`, which sets
+the backdrop white and masks every layer out of DISPCNT. That was the obvious
+candidate and it is innocent: driven synthetically with `TMC_FILL_PROBE=1` it
+fills **100.0%** of the 320x240 frame, on every frame it is active. The probe
+exists because the scene needs story state the scripted tester cannot produce —
+same rationale as `TMC_OAMY_PROBE`.
+
+**Suspect: the white triangle effect.** `bossDoor.c:215` spawns
+`WHITE_TRIANGLE_EFFECT` — the radial white flash — and it does not draw with a
+layer at all. It rasterises a per-scanline *window* through `sub_0801E49C`,
+and that rasteriser is written against the hardware screen in three separate
+places:
+
+```c
+void sub_0801E64C(...) {
+    // GBA Resolutions
+    const s32 MAX_X_COORD = 240;
+    const s32 MAX_Y_COORD = 160;
+```
+
+plus `sub_0801E49C`'s own `for (y1 = 0xa0; y1 > 0; y1--)` — 160 lines — and the
+scratch buffer it fills, `MemFill16(0xffff, gUnk_02018EE0, 0x780)`, where
+`0x780` is 160 lines x 3 x 4 bytes. Confining the effect to the top-left
+240x160 of the viewport is exactly what those produce, and exactly what was
+reported.
+
+**Not a one-liner, which is why it is not fixed here.** The three sites are
+coupled to a fixed-size EWRAM scratch buffer that would have to grow — the B29
+hazard class, where an address that only exists as data has no grep to find it.
+And the per-scanline window edges are written as **bytes**, so an x past 255
+wraps; the >255 window path exists (B11's `set_window_h_bounds`) but this
+writer does not use it. `include/screen.h` already warns that some sites rely
+on that 8-bit wrap deliberately.
+
+**What it needs:** a recording, to confirm the suspect is the mechanism and to
+verify a fix. Attempting the spawn synthetically did not reach a visible
+effect — it needs setup the real sequence provides.
+
+## B42 — the table behind Vaati disappears when he warps out *(open)*
+
+Reported 2026-08-20, no recording. The Elemental Sanctuary flashback, at the
+end where Vaati warps away.
+
+**No lead.** The one observation worth recording so it is not re-derived:
+`vaatiAppearingManager.c` tears down with `sub_0801E104()` — the same window
+teardown B41's suspect uses — and clears `DISPCNT_BG3_ON` in the same breath.
+That the two reports touch the same machinery is suggestive and is not
+evidence; a table is room furniture and would not normally be on BG3.
+
+**What it needs:** a recording and the save, per the usual workflow.
 
 ## D3 addendum: three scenes override their border colour
 
