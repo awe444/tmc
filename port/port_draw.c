@@ -917,6 +917,44 @@ static void DrawEntitySprites(Entity* entity, s32 x, s32 y, u32 flags, u16 extra
     }
 }
 
+
+/* TMC_SINK_TRACE=1 — the swamp/stairs "player goes behind the ground" pair.
+ *
+ * OBJECT_70 sets the player's spriteOrientation.flipY to 3, which is OAM
+ * priority 3 (the ARM builds attr2 bits 10-11 from byte 0x1B & 0xC0,
+ * asm/src/intr.s:sub_080B299C), putting him behind an opaque BG2. Whatever
+ * stays visible has to come from OBJECT_70 itself, whose definition carries
+ * gfx_type 2 — "load nothing, point spriteVramOffset at a fixed OBJ VRAM
+ * tile", 133. So the two questions are what priority the player ended up at
+ * and whether anything is at that tile, and this prints both, per frame.
+ *
+ * `oam+=` is the OAM entries the entity actually emitted: an entity that
+ * emits entries and still shows nothing is drawing blank tiles, which is a
+ * different fault from one that emits none. */
+static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefore) {
+    fprintf(stderr,
+            "[sink] f=%u a=%02X:%02X world=(%d,%d) ent=%p kind=%u id=%u type=%u "
+            "scr=(%d,%d) spr=%d frame=%u draw=%u orient=0x%02X attr2prio=%u "
+            "vramOff=%u oam+=%d\n",
+            Port_Capture_Frame(), gRoomControls.area, gRoomControls.room,
+            (int)entity->x.HALF.HI, (int)entity->y.HALF.HI,
+            (void*)entity, entity->kind, entity->id, entity->type,
+            (int)x, (int)y, (int)entity->spriteIndex, entity->frameIndex,
+            entity->spriteSettings.draw, *(u8*)&entity->spriteOrientation,
+            (unsigned)((extra >> 10) & 3), (unsigned)entity->spriteVramOffset,
+            (int)gOAMControls.updated - (int)oamBefore);
+
+    if (entity->kind == OBJECT && entity->id == OBJECT_70) {
+        const u8* objVram = (const u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+        int nz = 0, i;
+        if (objVram)
+            for (i = 0; i < 32; i++)
+                if (objVram[i]) nz++;
+        fprintf(stderr, "[sink]   OBJ VRAM tile133 nonzero=%d/32%s\n", nz,
+                nz == 0 ? "  <- blank: its twelve pieces draw nothing" : "");
+    }
+}
+
 /* ---- ProcessEntityForDraw (port of sub_080B255C, USA path) ----
  *
  * Handles one entity: resolves params, checks shadow flags, renders.
@@ -928,11 +966,27 @@ static void ProcessEntityForDraw(Entity* entity) {
 
     ResolveEntitySpriteParams(entity, &x, &y, &flags, &extra);
 
+    /* TMC_SINK_TRACE=1 — the swamp sink. Link goes to OAM priority 3 (behind
+     * the ground BG) while OBJECT_70 follows him; whatever is still visible
+     * has to come from OBJECT_70. Prints both, with the OAM entries each
+     * actually emitted, so "drew nothing" is distinguishable from "drew
+     * behind something". */
+    int sinkTrace = 0;
+    u8 sinkOamBefore = gOAMControls.updated;
+    {
+        static int en = -1;
+        if (en < 0) en = (getenv("TMC_SINK_TRACE") != NULL);
+        if (en && ((entity->kind == PLAYER) || (entity->kind == OBJECT && entity->id == OBJECT_70)))
+            sinkTrace = 1;
+    }
+
     /* Check shadow flag (bit 3 of spritePriority byte, offset 0x29) */
     s8 prioRaw = *(s8*)&entity->spritePriority;
     if (!(prioRaw & 8)) {
         /* No shadow — just draw the entity sprites */
         DrawEntitySprites(entity, x, y, flags, extra);
+        if (sinkTrace)
+            SinkTraceReport(entity, x, y, extra, sinkOamBefore);
         return;
     }
 
@@ -984,6 +1038,8 @@ static void ProcessEntityForDraw(Entity* entity) {
         }
         DrawEntitySprites(entity, x, y, flags, extra);
     }
+    if (sinkTrace)
+        SinkTraceReport(entity, x, y, extra, sinkOamBefore);
 
     /* Deferred list handling — add shadow/underlay entry */
     u8 prioByte = *(u8*)&entity->spritePriority;

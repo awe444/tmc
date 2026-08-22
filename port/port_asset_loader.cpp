@@ -8,6 +8,7 @@ extern "C" {
 #include "port_gba_mem.h"
 #include "port_rom.h"
 #include "port_asset_index.h"
+#include "port_capture.h" /* Port_Capture_Frame — order the OBJ VRAM loads */
 #include "structures.h"
 #include "area.h"
 #undef this
@@ -1406,6 +1407,33 @@ extern "C" bool32 Port_LoadGfxGroupFromAssets(u32 group) {
             } else {
                 MemCopy(fileData->data(), reinterpret_cast<void*>(static_cast<uintptr_t>(entry.dest)),
                         static_cast<u32>(fileData->size()));
+            }
+
+            /* TMC_SINK_TRACE: every load that lands on OBJ VRAM tile 133, in
+             * order and with the frame. The AssetLogOnce above dedupes, so it
+             * cannot show which load was last before the swamp sink. */
+            {
+                static int en = -1;
+                if (en < 0) en = (getenv("TMC_SINK_TRACE") != nullptr);
+                const u32 tile133 = 0x06010000u + 133u * 32u;
+                if (en && entry.dest <= tile133 &&
+                    tile133 < entry.dest + static_cast<u32>(fileData->size())) {
+                    size_t off = tile133 - entry.dest;
+                    u32 nz = 0;
+                    for (size_t i = off; i < off + 32 && i < fileData->size(); ++i)
+                        if ((*fileData)[i]) nz++;
+                    u32 totalNz = 0;
+                    for (u8 b : *fileData) if (b) totalNz++;
+                    size_t z0 = off, z1 = off;
+                    while (z0 > 0 && (*fileData)[z0 - 1] == 0) z0--;
+                    while (z1 < fileData->size() && (*fileData)[z1] == 0) z1++;
+                    fprintf(stderr, "[sink] f=%u gfx group %u -> %s dest=0x%08X size=%u "
+                                    "covers tile133 (src nonzero %u/32) fileNonzero=%u/%u "
+                                    "zeroRun=[0x%zX,0x%zX)\n",
+                            Port_Capture_Frame(), group, entry.file.c_str(), entry.dest,
+                            static_cast<u32>(fileData->size()), nz, totalNz,
+                            static_cast<u32>(fileData->size()), z0, z1);
+                }
             }
         }
 

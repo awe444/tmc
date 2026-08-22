@@ -7,11 +7,12 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-two of the forty-four bugs are
+complete — see `docs/milestone2-status.md`.** Forty-two of the forty-five bugs are
 closed: forty fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41 and B42 are open**, both reported
-2026-08-20 without recordings and both in story-gated cutscenes the scripted
-tester cannot reach. **B43 closed 2026-08-22**, once the maintainer's 240x160
+observed** rather than diagnosed. **B41, B42 and B45 are open.** B41 and B42
+were reported 2026-08-20 without recordings, both in story-gated cutscenes the
+scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
+diagnosed to one blank OBJ VRAM tile, and is not a viewport bug either. **B43 closed 2026-08-22**, once the maintainer's 240x160
 recording made it reproducible on the shipping build: it was one port-only line
 in `CreateVaatiApparateManager`, and it owned #93 as well. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -100,6 +101,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
+| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it. Open: who fills that tile on hardware |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3545,6 +3547,87 @@ invisible: the dummy driver creates no window, no renderer and no textures, so
 the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
+
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(open, diagnosed)*
+
+Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
+Walking west into the swamp should clip the bottom of Link's sprite gradually
+as he sinks, until he is warped back out. He disappears completely instead.
+
+**Reproduced.** Link is whole at frame 914 and entirely gone by 916 — one
+step, not a fade. The sink itself still works: `SurfaceAction_Swamp` keeps
+running, `surfaceTimer` climbs to 0xF0 and `RespawnPlayer()` fires on schedule.
+Only the picture is wrong.
+
+**Not a viewport bug.** Nothing in the chain below reads `VIEWPORT_WIDTH` or
+`VIEWPORT_HEIGHT`, and the decisive state is byte-identical at 240x160: the
+same two gfx loads land on the same OBJ VRAM tile with the same contents
+(`[sink] f=1807 gfx group 23 ... covers tile133 (src nonzero 0/32)`). It was
+live in the shipping build.
+
+**The chain, measured with `TMC_SINK_TRACE=1`:**
+
+1. `SurfaceAction_Swamp` spawns `OBJECT_70` on the first swamp frame.
+2. `Object70_Action1` sets `gPlayerEntity.base.spriteOrientation.flipY = 3`
+   every frame it lives. That field is **OAM priority**, not a flip: the ARM
+   builds attr2 bits 10-11 from `[entity + 0x1B] & 0xC0`
+   (`asm/src/intr.s`, `sub_080B299C`), and the port's
+   `ResolveEntitySpriteParams` matches it exactly. Confirmed in the trace as
+   `orient=0x80 attr2prio=2` becoming `orient=0xC0 attr2prio=3` at frame 913.
+3. Castor Wilds runs `bg2ctl=0x1C42`, i.e. **BG2 at priority 2**, and BG2 is
+   the full-coverage ground layer — `TMC_MASK_BG2=1` paints the whole frame
+   magenta. An OBJ at priority 3 is behind a BG at priority 2, so Link is
+   hidden. `TMC_DISABLE_BG2=1` brings him back, standing in the mud.
+   **This step is correct**: it is what the registers say and what hardware
+   would do.
+4. So what stays visible has to be `OBJECT_70`, and it is drawn in front —
+   `attr2prio=2` ties with BG2 and OBJ wins ties. It emits **twelve** OAM
+   entries every frame, a 4x3 block of 8x8 sprites covering Link.
+5. **Every one of those twelve points at OBJ VRAM tile 133, and tile 133 is
+   all zeros.** `OBJECT_70`'s definition is
+   `{ { 1, 0, 0, 0, 133, 2, 0 }, { 0, 0, 0, 0, 167, 0, 0 } }` — `gfx_type` 2,
+   which `LoadObjectSprite` reads as *load nothing, point `spriteVramOffset`
+   at fixed tile 133*. Something else is supposed to have put a graphic
+   there. Nothing has.
+
+**Where tile 133's content goes.** Two loads cover it in the whole run, and
+only two:
+
+```
+f=479  gfx group 15 -> gfx_350de0_112x104  dest=0x06010800  5632 B  (src nonzero 32/32)
+f=614  gfx group 23 -> gfx_1d7e0_128x128   dest=0x06010000  8192 B  (src nonzero  0/32)
+```
+
+Group 15 fills it during the intro; group 23, loaded on entering the room,
+covers tiles 0..255 and its own source is blank at tile 133, so it wipes it.
+Groups 25/26/27 patch small ranges *after* group 23 (tiles 192, 213, 228) —
+which is the shape a "restore the fixed tiles" load would have — but **no gfx
+group in the extracted table targets tile 133**. Searched every group for an
+entry whose `dest <= 0x060110A0 < dest + size`: exactly three, groups 15, 23
+and 89, all of them large sheets landing on 0x06010000 or 0x06010800, and 89
+is the same file as 23. Nothing small and nothing aimed at it. Link's own tiles
+are elsewhere (`vramOff=352`), so this is not the player's animation streaming
+either.
+
+**What is still open:** who fills tile 133 on hardware. The candidates not yet
+separated are a `LoadSwapGFX` slot allocation the port resolves to a different
+offset, and an extractor gap in the gfx-group table itself — the latter is the
+B28 family (`Extracted assets are not the ROM`) and worth checking first,
+since the answer is static data.
+
+**The sibling port hit this too and worked around it.** `999sian/tmc`'s
+`object70.c` forces `flipY = 2` under `PC_PORT`, with the comment "Object70's
+head-overlay sprite isn't wired up on PC yet ... fully invisible on the stairs
+/ during the swamp sink". Their `port_draw.c` then adds a per-scanline OBJ
+clip to fake the waterline. That is two workarounds for the missing tile and
+neither is taken here; it does confirm the same diagnosis reached
+independently, and it names a **second scene with the same cause: stairs**,
+which has not been checked here.
+
+**Not fixed on purpose.** Both available fixes are guesses until the tile's
+real source is known: forcing priority 2 makes Link visible but unclipped and
+in front of scenery he should be behind, and inventing a scanline clip
+reproduces the symptom rather than the mechanism.
 
 ## D3 addendum: three scenes override their border colour
 
