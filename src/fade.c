@@ -162,7 +162,22 @@ void SetFadeProgress(u32 arg0) {
     }
 }
 
+#ifdef PC_PORT
+/* TMC_FADE_TRACE=1 — every SetFade/SetFadeInverted with its caller. The order
+ * of the last few writes is what decides whether a scene ends visible or
+ * black, and the losing write is invisible in gFadeControl afterwards. B43. */
+void Port_TraceFade(const char* fn, u32 type, u32 speed, void* ret) {
+    static int en = -1;
+    if (en < 0) en = (getenv("TMC_FADE_TRACE") != NULL);
+    if (en)
+        fprintf(stderr, "[fade] %s(type=0x%X speed=%u) from %p\n", fn, type, speed, ret);
+}
+#endif
+
 void SetFade(u32 type, u32 speed) {
+#ifdef PC_PORT
+    Port_TraceFade("SetFade", type, speed, __builtin_return_address(0));
+#endif
     gFadeControl.speed = speed;
     gFadeControl.type = type;
     gFadeControl.active = 1;
@@ -191,6 +206,9 @@ void SetFade(u32 type, u32 speed) {
 }
 
 void SetFadeInverted(u32 speed) {
+#ifdef PC_PORT
+    Port_TraceFade("SetFadeInverted", gFadeControl.type, speed, __builtin_return_address(0));
+#endif
     gFadeControl.speed = speed;
     gFadeControl.type ^= FADE_IN_OUT;
     gFadeControl.active = 1;

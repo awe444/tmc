@@ -3397,11 +3397,52 @@ related softlock whose root cause is unresolved, and the obvious change —
 overriding the exit fade — would be a second workaround stacked on the first
 without knowing which of them owns the defect.
 
-**What it needs next:** why `gMenu.field_0x3` is 1 while the only subtask
-entry in the run asked for 2 — i.e. who sets the cutscene index, and whether
-the `0x5/256` fade type is stale by the same mechanism or a separate one.
-`TMC_CUTSCENE_TRACE=1` on `vaati_takeover_240x160.script` is the one-command
-starting point.
+**The index is not the problem — that question is closed.** A watchpoint on
+`_gMenuSharedStorage[3]` names the writer in one run: `AuxCutscene_Init`
+(`subtaskAuxCutscene.c:63`) sets `gMenu.field_0x3 = p->_3 & 0xf` from
+`sCutsceneData[gUI.field_0x3]`. Entry **2** is
+`{ AREA_HYRULE_CASTLE, 2, 1, 1, 16, 16 }`, whose `_3` is 1 — so asking for aux
+cutscene 2 correctly yields dispatch index 1, the Vaati takeover, in Hyrule
+Castle room 2, which is the scene reported. `sub_08053BE8`'s
+`sub_080A71C4(5, 2, ...)` is the right entry and everything downstream of it
+agrees.
+
+**The fade chain, in order, from `TMC_FADE_TRACE=1`:**
+
+```
+SetFade(type=0x4 speed=256)          sub_08053BBC   cutscene's own fade in
+SetFadeInverted(type=0x4 speed=16)   AuxCutscene_Exit   fade out to leave
+SetFade(type=0x5 speed=256)          Subtask_FadeOut    <- last write
+```
+
+The last write wins and it is a fade **out**. `FADE_INSTANT` is a misnomer —
+`FadeMain` uses `type & 0x1C` to pick which effect handlers run, and 0x4
+selects the palette one — so `SetFade(0x5, 256)` is an ordinary fade-out that
+happens to complete in a single step, ending at intensity 256, black.
+
+**And that is the engine's own intent.** `gUI.fadeType = FADE_IN_OUT |
+FADE_INSTANT`, `fadeInTime = 0x100`, straight from `sub_08053BE8`. So this
+subtask is *supposed* to hand back a black screen, and something after it is
+supposed to fade in. Nothing does.
+
+**Which points back at the workaround already in the file.** `sub_08053BBC`'s
+`#ifdef PC_PORT` block exists because "the child orchestrator entity
+disappears mid-script ... neither in any of gEntityLists nor seen by
+ObjectUpdate after the parent orchestrator's `Call sub_0807FBC4` priority bump
+runs" (#93). That watchdog restores the cutscene's *progression* by forcing the
+sync flags and `SetRoomFlag 0`; it does nothing about whatever that script
+would have done afterwards — including the fade back in. B43 and #93 look like
+one root cause with two symptoms.
+
+**Ruled out along the way:** the port's `ram_UpdateEntities` has no priority
+gating, which looks wrong beside `updatePriority` / `gPriorityHandler` but is
+not — `EntityDisabled` is consulted inside each kind's dispatcher
+(`object.c:206`, `npc.c:18`, `manager.c:67`), not by the loop.
+
+**What it needs next:** why the child orchestrator entity leaves the entity
+lists after `RequestPriorityOverPlayer`. That is #93's open question, and it is
+now also B43's. `TMC_FADE_TRACE=1` and `TMC_CUTSCENE_TRACE=1` on
+`vaati_takeover_240x160.script` reproduce both in one run.
 
 ## B44 — closing the window skips every SDL teardown step *(fixed)*
 
