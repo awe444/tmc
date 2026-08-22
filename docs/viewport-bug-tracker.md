@@ -104,7 +104,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
-| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and only three large sheet loads land anywhere near it, none aimed at it — but that tile is a **red herring**: the mask it draws sits at OAM priority 2, the same as the ground, so filling it would not reveal him, and painted solid its coverage of Link is flat across the sink rather than growing. The disappearance is `flipY = 3` against an opaque priority-2 ground and nothing else. Open: whether hardware shows him at all, which needs a reference this repo cannot produce |
+| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and that tile is a **red herring** — the mask it draws is blank on hardware too. **mGBA screenshots from the maintainer show the player clearly visible in the mud and clipped from the bottom**, while hardware OAM shows his sprite never clipped (32 px, two pieces, all sink) and at priority 3 throughout. He is therefore seen *through a pit in the priority-2 ground*, and the port's BG2 has no such pit — `TMC_MASK_BG2` leaves 24 non-magenta pixels around him, all sprites. Open: which tiles the bottom map holds under him on hardware, and why the port's are opaque |
 | B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
 | B47 | The port's `tmc.sav` will not load in mGBA or on hardware | **Open, diagnosed.** `port_save.c` skips the EEPROM serial protocol and stores each 8-byte block in the game's in-memory order; hardware stores the wire order, which is the reverse. Confirmed against a save the real game initialised under mGBA. The game reads its signature back scrambled and offers a new file — symmetric, so emulator saves do not load in the port either. `tools/mgba/savconv.py` converts either way; fixing `port_save.c` needs a migration for existing saves |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
@@ -3553,7 +3553,7 @@ the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
 
-## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — faithful to hardware; the ripple palette is the real defect)*
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — the port's ground layer has no mud pit; hardware shows him through it)*
 
 Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
 Walking west into the swamp should clip the bottom of Link's sprite gradually
@@ -3817,6 +3817,78 @@ expectation is worth one look on their own hardware or on mGBA: if the real
 game shows him clipped rather than gone, then something outside OAM, BGCNT and
 the mask differs and this comparison would have to be extended to the map data.
 Everything reachable through those three now says it does not.
+
+**Fifth pass — the fourth pass's conclusion was wrong, and the maintainer's
+screenshots are what showed it.** Eight mGBA captures of the same walk show the
+player clearly visible in the mud and clipped progressively from the bottom,
+head last. "Faithful to hardware" was wrong; the port really is broken here.
+
+**What the hardware state proves, now that the picture is known.** Across the
+whole sink on mGBA, sampled every 15 frames from the first mask frame to the
+respawn:
+
+| sink frame | Link pieces | Link y-extent | height | mask y | tile 133 |
+|---|---|---|---|---|---|
+| 0 | 2 | 54..86 | 32 | 56..80 | blank |
+| 60 | 2 | 55..87 | 32 | 56..80 | blank |
+| 120 | 2 | 57..89 | 32 | 56..80 | blank |
+| 180 | 2 | 59..91 | 32 | 56..80 | blank |
+| 225 | 2 | 60..92 | 32 | 56..80 | blank |
+| 240 | 0 | — | — | — | — |
+
+Three things follow, and together they localise the bug:
+
+- **The sprite is never clipped.** It stays 32 px tall and two pieces for the
+  entire sink and simply moves down 6 px, which is `spriteOffsetY` growing
+  4 -> 11 exactly as in the port. So the clip in the screenshots is not the
+  sprite, and not the mask either — the mask is fixed at y 56..80 and its tile
+  is blank on every sampled frame.
+- **The player is at OAM priority 3 throughout, and he is visible.** The only
+  other sprites on screen are the HUD (priority 0), the twelve blank mask
+  entries and three 8x8 ripple dots. Nothing there can draw a head, a face and
+  a cap. **So the priority-2 ground is transparent where he shows** — there is
+  a pit in it, and he is seen through it.
+- **In the port that pit is not there.** `TMC_MASK_BG2=1` paints BG2's
+  non-transparent pixels flat magenta and leaves only 24 non-magenta pixels in
+  a 64x64 box around him, and those are sprites in front, not holes. BG1 is
+  sparse and covers nothing there.
+
+**So the defect is in the port's BG2 content, not in its sprites or its
+priorities.** Everything the earlier passes checked — the OAM priority
+derivation, the compositing tie rule, the object definition, the gfx table, the
+mask geometry, tile 133 — is confirmed identical to hardware and none of it was
+ever the problem. What differs is which pixels the ground layer draws over the
+mud, and the amount of him covered grows as he sinks the 6 px the offset moves
+him.
+
+**Corrections this pass makes to the entries above:**
+
+- The fourth pass's table is right about every register and every OAM entry and
+  wrong in its conclusion. Identical sprite state does not imply an identical
+  picture when a *background* differs, and the one input never compared against
+  hardware was the one that mattered. The mGBA-side check that would have caught
+  it needs the BG2 scroll, and the scroll registers are write-only — reading
+  `0x04000018` gives open bus — which is why it was skipped. A write watchpoint
+  on `0x04000018` does capture it and is the way in.
+- The third pass's "the mask covers the wrong end and does not grow" stands and
+  is now explained: the mask is not the clip and never was.
+- The ripple palette difference (hardware 9, port 12) still stands as a real
+  and separate defect.
+
+**Next, and it is now a narrow question:** which tiles the bottom map holds
+under the player on hardware, and whether their pixels are transparent where
+the port's are opaque. That is the B5/B15/B17 family — a world layer drawing
+something other than what the map says — and it is answerable entirely from
+mGBA: capture BG2HOFS/BG2VOFS with a write watchpoint, convert his screen
+position to a map index, read the entry from the screenblock at `0x0600E000`,
+and read that tile's pixels from the char base.
+
+**Lesson.** *A state comparison is only as good as the inputs it covers, and
+"every register matches" is not "the same picture".* Four passes compared
+sprites, priorities and object data against the ROM and agreed with hardware
+every time, because the layer that was actually wrong was never in the
+comparison. One look at the real screen refuted the whole chain in a second.
+Ask for the picture before concluding from the state.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
