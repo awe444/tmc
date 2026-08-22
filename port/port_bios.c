@@ -293,6 +293,11 @@ void VBlankIntrWait(void) {
     }
 
     if (gQuitRequested) {
+        /* Tear SDL down before exit() rather than leaving the window, its GPU
+         * resources and a live audio callback thread to be reaped by process
+         * teardown. This is the path window-close takes, and until this call
+         * existed it skipped every one of main()'s shutdown steps. */
+        Port_Shutdown();
         exit(0);
     }
 
@@ -469,6 +474,7 @@ s32 Div(s32 num, s32 denom) {
 void SoftReset(u32 flags) {
     (void)flags;
     printf("SoftReset called — exiting.\n");
+    Port_Shutdown();
     exit(0);
 }
 

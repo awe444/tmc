@@ -5,6 +5,7 @@
 #include "manager/diggingCaveEntranceManager.h"
 #include "message.h"
 #include "npc.h"
+#include "object.h"
 #include "physics.h"
 #include "room.h"
 #ifdef PC_PORT
@@ -418,6 +419,20 @@ void DeleteEntityAny(Entity* ent) {
 }
 
 void DeleteEntity(Entity* ent) {
+#ifdef PC_PORT
+    /* TMC_ENT_TRACE=1 — deletions of the cutscene orchestrator, with the
+     * caller. B43/#93: the child orchestrator leaves the entity lists
+     * mid-script and the cutscene's own script never finishes. */
+    {
+        static int en = -1;
+        if (en < 0) en = (getenv("TMC_ENT_TRACE") != NULL);
+        if (en && ent->kind == OBJECT && ent->id == CUTSCENE_ORCHESTRATOR) {
+            fprintf(stderr, "[ent] DeleteEntity orchestrator %p action=%u next=%p from %p\n",
+                    (void*)ent, ent->action, (void*)ent->next,
+                    __builtin_return_address(0));
+        }
+    }
+#endif
     if (ent->next != NULL) {
         UnloadGFXSlots(ent);
         UnloadOBJPalette(ent);

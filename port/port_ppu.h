@@ -47,6 +47,12 @@ void Port_PPU_SetVSync(bool enabled);
 // Cleanup
 void Port_PPU_Shutdown(void);
 
+/* Full SDL teardown -- audio, PPU, gamepads, window, SDL_Quit -- run at most
+ * once. Called from main() when AgbMain returns and from the quit path in
+ * port_bios.c, which exits from inside the frame loop and would otherwise
+ * skip all of it. Lives in port_main.c. */
+void Port_Shutdown(void);
+
 void Port_OpenInGameSettingsModal(void);
 bool Port_InGameSettingsModalIsOpen(void);
 

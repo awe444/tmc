@@ -7,8 +7,19 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty of the forty-two tracked bugs
-are closed; B41 and B42 are open and both need recordings.
+complete — every spike landed and forty-one of the forty-four tracked bugs
+are closed; B41, B42 and B43 are open. **B43 is diagnosed, unfixed, and
+confirmed *not* a viewport bug** — the maintainer recorded it on the 240x160
+build, which is the repro to use. **B43 and issue #93 are one root cause**: the
+takeover cutscene's orchestrator stops being updated two frames in, at
+`SetSyncFlag 0x10` (line 17 of its script), *without being deleted* —
+`ObjectUpdate` reaches `calls=2` and stops while another orchestrator in the
+same room reaches 545. Vaati answers with sync flag 0x20 and three NPCs then
+spin forever on flags the orchestrator never broadcasts, so the cutscene
+cannot end. **Tag any script trace by entity**: several orchestrators run in
+one recording and conflating them produced a wrong diagnosis twice. The
+`sub_08053BBC` watchdog papers over the resulting hang and converts it into a
+permanent black screen; `TMC_NO_CUTSCENE_WATCHDOG=1` shows both halves.
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -28,7 +39,7 @@ Read in this order:
 
 1. `docs/milestone2-status.md` — where things stand, what is left, and the
    frame-time numbers the shipping decision rests on.
-2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty-two
+2. `docs/viewport-bug-tracker.md` — authoritative for behaviour. Forty-four
    bugs, the decisions taken, the screenblock-fallback sweep, and the lessons
    that cost the most to learn. **Read B26, B27 and B30-B33 together**: they are
    one theme — the periphery showing world the authored data never expected to
@@ -70,6 +81,15 @@ flags or run a cutscene, so B41 and B42 stalled at "named suspect, unverified".
 What inference *is* good for there is narrowing: a synthetic fixture
 (`TMC_FILL_PROBE`, `TMC_OAMY_PROBE`) can rule a mechanism out without the
 scene, and ruling one out is worth asking for.
+
+**And when a recording cannot be transplanted across a configuration, ask for
+one made *on* that configuration.** Frame-exact input replay desynchronises
+under any change — viewport, or a compile-time switch like
+`VIEWPORT_SCROLL_FADE` — so it cannot serve as a cross-size A/B; three
+consecutive reports hit this. B43 was reclassified from "unknown" to "not a
+viewport bug" the moment the maintainer recorded the same cutscene on the
+240x160 build. That is a minute of their time and unreachable by any amount of
+inference.
 
 **Three bugs — B5, B15, B17 — were one defect reported three times:** a world
 layer loses its map source, falls back to the VRAM screenblock, and 32 tiles
@@ -333,6 +353,15 @@ about the device — all wrong. The engine was identical; one out-of-bounds read
 of a four-entry table returned different padding per toolchain and let desktop
 recover from a fault both platforms had. In decompiled code an out-of-range
 index is defined on hardware (ROM is contiguous) and undefined here.
+
+**Every capture runs `SDL_VIDEODRIVER=dummy`, and that is a blind spot as well
+as the thing that makes replay deterministic (B44).** The dummy driver creates
+no window, no renderer and no textures, so anything about real GPU resources —
+notably teardown — is invisible to the whole suite and to the gate. Closing the
+window exits through `exit(0)` inside the frame loop, which for a long time
+skipped all five of `main()`'s shutdown calls; both exit sites now go through
+`Port_Shutdown()`. **Never run a windowed build to investigate**: it opens on
+the maintainer's desktop.
 
 ## Building
 

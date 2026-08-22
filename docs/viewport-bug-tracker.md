@@ -7,9 +7,9 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty of the forty-two bugs are
+complete — see `docs/milestone2-status.md`.** Forty-one of the forty-four bugs are
 closed: thirty-nine fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41 and B42 are open**, both reported
+observed** rather than diagnosed. **B41, B42 and B43 are open**, both reported
 2026-08-20 without recordings and both in story-gated cutscenes the scripted
 tester cannot reach. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -96,6 +96,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B40 | Cave of Flames minecart never emerges: softlock | **Fixed** 2026-08-20 — B24's defect in the file B24's own fix predicted. `Minecart_Action5` ends its carry state on `reload_flags == 0`, which reads true for all 32 frames of a deferred faded transition, so the cart hands the camera back before the room changes and the ride never completes. Guarded with `ScrollTransitionIsPending()`, as the lily pad already was |
 | B41 | White flash after a boss's element award covers only part of the screen | **Open, awaiting a recording.** `SetFillColor`'s flat fill is *ruled out* — measured at 100% of 320x240 with `TMC_FILL_PROBE=1`. Suspect is `WHITE_TRIANGLE_EFFECT` (spawned by `bossDoor.c:215`), whose per-scanline window rasteriser clips with explicit `MAX_X_COORD = 240; MAX_Y_COORD = 160` |
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
+| B43 | Vaati takeover cutscene ends on a permanent black screen | **Open, diagnosed, not fixed. NOT a viewport bug** — the maintainer reproduced it on the 240x160 play build and sent a recording made there; it replays black at the shipping size with an identical signature. Pre-session baseline reproduces too. The Vaati takeover subtask exits via `Subtask_FadeOut`'s `SetFade(gUI.fadeType, gUI.fadeInTime)` with `gUI.fadeType = FADE_IN_OUT\|FADE_INSTANT` and time `0x100` — an instant fade *to black* — immediately after the cutscene's own `SetFade(FADE_INSTANT, 0x100)` fade-in. Gameplay resumes behind it |
+| B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3317,6 +3319,295 @@ That the two reports touch the same machinery is suggestive and is not
 evidence; a table is room furniture and would not normally be on BG3.
 
 **What it needs:** a recording and the save, per the usual workflow.
+
+## B43 — western-wood cutscene ends on a permanent black screen *(open, diagnosed)*
+
+Reported 2026-08-20 with a recording. Walking south into the western wood
+starts a Hyrule Castle cutscene; the screen goes black and stays black.
+
+**Pre-existing, not from the recent work.** Built the pre-session baseline
+(`32c9562a`) and replayed: identical, 0.0% non-black on the last five dumps.
+That was checked first because five fixes had just landed.
+
+**Reproduced and localised.** The screen is black while *gameplay is running*:
+`substate = GAMEMAIN_UPDATE`, area 0x03 room 0x08, for the last **1540 frames**
+of the recording. The live BG palette is `0/255` non-black while the engine's
+working copy is `250/255` — `TMC_BLEND_TRACE`'s "fade that never lifted"
+signature (B36). `gFadeControl` is `type=0x5 progress=0 active=0`:
+`FADE_IN_OUT | FADE_INSTANT` at progress 0 is, by `sub_080501C0`, an intensity
+of 256 — fully black — and the fade is *complete*, so nothing will move it.
+
+The cutscene is the **Vaati takeover**, `gUnk_080FD138` outer step 1
+(`sub_08053B58`). `TMC_CUTSCENE_TRACE` shows it advancing overlay 0 -> 1 -> 2
+and settling at 2, which is `sub_08053BBC` — the step that already carries a
+PC_PORT watchdog for a *different* softlock on this same cutscene (#93, the
+orchestrator entity disappearing mid-script; its comment says the cause is
+"still under investigation").
+
+**The anomaly is the exit fade.** Throughout, `gUI.fadeType = 0x5` and
+`gUI.fadeInTime = 256`. `sub_08053BBC`'s exit does `SetFade(FADE_INSTANT,
+0x100)` — no `FADE_IN_OUT`, so it ends *visible* — and then `Subtask_FadeOut`
+runs `SetFade(gUI.fadeType, gUI.fadeInTime)` = `SetFade(0x5, 256)`, an instant
+fade **out**, undoing it. Every-frame tracing shows exactly that: the fade-out
+completing, one frame where speed becomes 256, then 1540 frames of gameplay
+behind black.
+
+Where `0x5 / 0x100` comes from is the open question. The two sites that set it
+are `sub_08053B3C` and `sub_08053BE8` — the entries for outer steps *3* and
+*2*, not 1 — while the entry that matches this cutscene, `roomInit.c:5047`,
+passes `FADE_INSTANT` with time 4. That points at a stale `gUI.fadeType`, but
+it is not proven.
+
+**It is not a viewport bug.** The first write-up could not tell, because the
+320x240 recording desynchronises under any configuration change — at 240x160 it
+never reaches the cutscene, and forcing `VIEWPORT_SCROLL_FADE 0` at 320x240
+diverges the same way. **The maintainer settled it by recording the cutscene on
+the 240x160 build itself** (`vaati_takeover_240x160.script`), which replays
+black there with the identical signature: same cutscene, same overlay 0-1-2,
+same `uiFadeType=0x5 uiFadeTime=256`, same completed fade-out with gameplay
+running behind it. That recording is now the repro to work from — it is
+deterministic on the shipping build, which the gate protects.
+
+**The lesson for the A/B question**: when frame-exact replay cannot be
+transplanted across a configuration, a recording made *on the other
+configuration* is the substitute, and it is a thing only the maintainer can
+produce. Asking for it is cheaper than any amount of inference.
+
+**Refined, on the 240x160 repro.** The whole run contains exactly **one**
+`sub_080A71C4` call: `state=5 field5=2 fadeType=0x5 time=256`, i.e.
+`sub_08053BE8`, the entry for outer step **2**. `CutsceneMain_Update` then
+dispatches `gMenu.field_0x3` = **1** — the Vaati takeover — and
+`Subtask_FadeOut` consumes the `0x5/256` that entry left. So the fade type
+belongs to a different cutscene than the one that ran. `roomInit.c:5047`, the
+entry that pairs `field5=1` with `FADE_INSTANT`/4, never runs.
+
+**One hypothesis tested and rejected.** `gUI.field_0x3` (offset 0x003) and
+`gMenu.field_0x3` (offset 0x03) look like one hardware byte named through two
+struct views — `gMenu` lives in `_gMenuSharedStorage`, which
+`port_linked_stubs.c` allocates *separately* and documents as EWRAM
+0x02000080 shared with `gChooseFileState`/`gIntroState`. If the port had split
+an alias, `GameMain_Subtask`'s `gUI.field_0x3 = gUI.field_0x5` would no longer
+reach the dispatcher. Adding `gMenu.field_0x3 = gUI.field_0x5` beside it
+changed nothing: still step 1, still black. So either they are genuinely
+separate on hardware, or the hand-off is not where the value arrives.
+Recorded because it is the obvious next idea and it does not work.
+
+**Not fixed here on purpose.** The file already carries one workaround for a
+related softlock whose root cause is unresolved, and the obvious change —
+overriding the exit fade — would be a second workaround stacked on the first
+without knowing which of them owns the defect.
+
+**The index is not the problem — that question is closed.** A watchpoint on
+`_gMenuSharedStorage[3]` names the writer in one run: `AuxCutscene_Init`
+(`subtaskAuxCutscene.c:63`) sets `gMenu.field_0x3 = p->_3 & 0xf` from
+`sCutsceneData[gUI.field_0x3]`. Entry **2** is
+`{ AREA_HYRULE_CASTLE, 2, 1, 1, 16, 16 }`, whose `_3` is 1 — so asking for aux
+cutscene 2 correctly yields dispatch index 1, the Vaati takeover, in Hyrule
+Castle room 2, which is the scene reported. `sub_08053BE8`'s
+`sub_080A71C4(5, 2, ...)` is the right entry and everything downstream of it
+agrees.
+
+**The fade chain, in order, from `TMC_FADE_TRACE=1`:**
+
+```
+SetFade(type=0x4 speed=256)          sub_08053BBC   cutscene's own fade in
+SetFadeInverted(type=0x4 speed=16)   AuxCutscene_Exit   fade out to leave
+SetFade(type=0x5 speed=256)          Subtask_FadeOut    <- last write
+```
+
+The last write wins and it is a fade **out**. `FADE_INSTANT` is a misnomer —
+`FadeMain` uses `type & 0x1C` to pick which effect handlers run, and 0x4
+selects the palette one — so `SetFade(0x5, 256)` is an ordinary fade-out that
+happens to complete in a single step, ending at intensity 256, black.
+
+**And that is the engine's own intent.** `gUI.fadeType = FADE_IN_OUT |
+FADE_INSTANT`, `fadeInTime = 0x100`, straight from `sub_08053BE8`. So this
+subtask is *supposed* to hand back a black screen, and something after it is
+supposed to fade in. Nothing does.
+
+**Which points back at the workaround already in the file.** `sub_08053BBC`'s
+`#ifdef PC_PORT` block exists because "the child orchestrator entity
+disappears mid-script ... neither in any of gEntityLists nor seen by
+ObjectUpdate after the parent orchestrator's `Call sub_0807FBC4` priority bump
+runs" (#93). That watchdog restores the cutscene's *progression* by forcing the
+sync flags and `SetRoomFlag 0`; it does nothing about whatever that script
+would have done afterwards — including the fade back in. B43 and #93 look like
+one root cause with two symptoms.
+
+**Ruled out along the way:** the port's `ram_UpdateEntities` has no priority
+gating, which looks wrong beside `updatePriority` / `gPriorityHandler` but is
+not — `EntityDisabled` is consulted inside each kind's dispatcher
+(`object.c:206`, `npc.c:18`, `manager.c:67`), not by the loop.
+
+**The orchestrator is not unlinked by anything — it deletes itself, and it
+should not be able to.** A conditional breakpoint on `DeleteEntity` gives the
+whole path: `CutsceneOrchestrator` -> `ExecuteScriptAndHandleAnimation` ->
+`HandlePostScriptActions` -> `DeleteThisEntity`. That is post-script action bit
+6, `DoPostScriptAction 0x0006`, in area 0x80 room 0x02 — this cutscene.
+
+**And it is spurious.** `script_CutsceneOrchestratorTakeoverCutscene` contains
+exactly one `DoPostScriptAction 0x0006`, on its last line, immediately after
+`SetRoomFlag 0x0000`:
+
+```
+    StopBgm
+    SetRoomFlag 0x0000
+    DoPostScriptAction 0x0006
+SCRIPT_END
+```
+
+`SetRoomFlag` is called **zero times in the entire run** — traced, not
+inferred — and `CheckRoomFlag(0)` reads 0 at the moment of the self-delete. So
+the instruction pointer reaches the last line without executing the one before
+it. There is also no "child" orchestrator: `gUnk_080FCE30`, the list the script
+loads mid-cutscene, is a minister and six guards, and only one
+`CUTSCENE_ORCHESTRATOR` exists in the scene. The #93 comment's wording is
+misleading on both counts.
+
+**Ruled out this pass**, each by measurement rather than argument:
+
+- *Stale recycled context.* `DestroyScriptExecutionContext` and
+  `InitScriptExecutionContext` both `MemClear` the whole struct, so a leftover
+  action bit cannot survive reuse.
+- *Two entities sharing one context.* The port replaces the GBA's
+  in-entity context pointer with `gEntityScriptCtxTable`; scanning it every
+  frame for duplicate non-NULL entries over the whole run reports **zero**.
+- *The entity-to-slot mapping.* 1 player + 7 aux + 72 entities = 80 =
+  `PC_MAX_ENTITY_SLOTS`, and both arrays are `GenericEntity`, so neither the
+  bounds nor the `scriptContext` write is wrong.
+- *Priority gating.* The port's `ram_UpdateEntities` does none, which looks
+  wrong beside `updatePriority` but is not — `EntityDisabled` is consulted
+  inside each kind's dispatcher.
+
+**The watchdog is what turns the hang into the black screen, demonstrated.**
+`TMC_NO_CUTSCENE_WATCHDOG=1` disables the #93 replacement sequence:
+
+| | end of the recording | 4400 frames later |
+|---|---|---|
+| watchdog on | 0% non-black | 0% non-black |
+| watchdog off | 100% non-black | 100% non-black, throne room, 3 distinct frames |
+
+With it off the cutscene never finishes — frame 8800 is still Vaati in the
+throne room — which is #93. With it on, the forced sync flags carry the scene
+to its exit and `Subtask_FadeOut`'s fade-out then leaves the screen black,
+which is B43. **One root cause, two presentations**, now shown rather than
+suspected: fixing the orchestrator's premature self-delete should retire both,
+and the watchdog with them.
+
+**Correction to the previous entry: there is no pointer desync, and the
+orchestrator that self-deleted was not this one.** Tagging the instruction
+trace with the entity pointer — which the first version did not do — separates
+three orchestrator runs, and the earlier conclusion conflated two of them:
+
+```
+ent=A area=0x03 room=0x08  462 cmds, last=Call              (Hyrule Field)
+ent=B area=0x80 room=0x02   78 cmds, last=SetSyncFlag       (the takeover)
+ent=A area=0x80 room=0x02   56 cmds, last=DoPostScriptAction (A finishing)
+```
+
+The `DoPostScriptAction` self-delete belongs to **A**, the Hyrule Field
+orchestrator, which survives into the castle room and ends its own script
+normally. **B, the takeover orchestrator, never self-deletes and its pointer
+never desynchronises.** Its walk maps onto
+`script_CutsceneOrchestratorTakeoverCutscene` line for line:
+
+```
+  +0 BeginBlock   +2 SetScrollSpeed   +6 SetEntityPositionRelative
+ +12 CameraTargetEntity  +14 EndBlock  +16 SetFadeTime  +20 SetFade4
+ +22 WaitForFadeFinish x64   +24 Wait  +28 SetScrollSpeed
+ +32 SetEntityPositionRelative  +38 CameraTargetEntity  +40 Wait
+ +44 PlayBgm      +48 SetSyncFlag 0x10
+```
+
+and stops there — line 17 of the script. Line 18,
+`WaitForSyncFlagAndClear 0x00000020`, never executes once, while
+`WaitForFadeFinish` above it logged 64 times, so this is not a wait that fails
+to satisfy.
+
+**B stops being updated after exactly two frames.** Counting `ObjectUpdate`
+calls per orchestrator: **B reaches `calls=2`** and never advances, while A
+reaches 545 in the same window. Across the whole run `DeleteEntity` is called
+on A and never on B. So B leaves the update iteration **without being deleted** —
+which is what #93 described, though not where it said: it happens two frames
+in, at `SetSyncFlag`, not after any `Call sub_0807FBC4` priority bump.
+
+Ruled out for B while it is stalled: it is never `EntityDisabled`
+(`disabled=0` throughout, `updPrio=1` against `entPrio` 0 or 1); `ENT_SCRIPTED`
+stays set and `action` stays 1, so `CutsceneOrchestrator` would run its script
+if called; the script pointer is never NULL and never an unresolved GBA
+address (`[SCRIPT]` warnings: zero).
+
+**And the cutscene is otherwise working.** `[sync]` shows `cur=0x00000020`
+held: Vaati *did* answer B's `SetSyncFlag 0x10` with 0x20, and three NPCs
+(ids 36, 39, 40) then spin forever waiting on 0x004, 0x010 and 0x400 — the
+flags B would have broadcast had it kept running. The deadlock is entirely
+downstream of B going quiet.
+
+**It is not a textbox waiting for a button, which is the first thing to rule
+out and was asked directly.** Three independent checks, all with the watchdog
+off:
+
+- `gMessage.state & MESSAGE_ACTIVE` is **0** on every sampled frame.
+- Hammering A every 40 frames and START every 200, from frame 4400 to 12000 —
+  about 190 A presses — changes nothing: **3 distinct frames across 24 dumps**.
+- The frame itself shows Vaati alone in the throne room with no text box, and
+  without the King, Minister or guards who should be animating by then.
+
+The recording's own input stops at frame 4033, so "it just needs a button" is
+exactly the right suspicion for a scene that sits still; it is simply not what
+this is.
+
+**What it needs next:** what unlinks B from `gEntityLists` two frames after it
+is created, given nothing deletes it. A watchpoint on that entity's `next`
+pointer is the instrument — the same one that answered the cutscene-index
+question in a single run.
+
+## B44 — closing the window skips every SDL teardown step *(fixed)*
+
+Reported 2026-08-20: the maintainer's desktop session died when they closed the
+game window. **Not a viewport bug and not reproducible here** — see the limits
+below — but the exit path had a real defect on exactly the route they used.
+
+`main()` ends with a full teardown:
+
+```c
+AgbMain();
+Port_Audio_Shutdown();
+Port_PPU_Shutdown();
+Port_Config_CloseGamepads();
+SDL_DestroyWindow(window);
+SDL_Quit();
+```
+
+**`AgbMain()` never returns on that route.** Closing the window raises
+`SDL_EVENT_QUIT`, `Port_PumpEvents` sets `gQuitRequested`, and the next
+`VBlankIntrWait` calls `exit(0)` from inside the frame loop
+(`port_bios.c:295`). All five calls are skipped. At process exit the window,
+its renderer, its textures and the audio device stream are all still live, and
+`exit()` then runs the capture atexit handlers and every static destructor
+while **the SDL audio callback thread is still running**. `SoftReset` exits the
+same way.
+
+**Fix.** One idempotent `Port_Shutdown()` in `port_main.c`, called from
+`main()` and from both `exit(0)` sites. Audio is torn down first on purpose:
+stopping the callback thread before anything it might touch is destroyed is the
+whole point of the ordering. Verified with a breakpoint that it now runs from
+`VBlankIntrWait` — the window-close path — and the process exits normally.
+
+**What this does *not* establish.** No crash was reproduced. Headless runs exit
+0 with or without the fix, and they cannot show the problem: `SDL_VIDEODRIVER=dummy`
+allocates no GPU resources, which is exactly the class being leaked. A
+user-space segfault also would not normally take a desktop session with it —
+that points at the compositor or driver — so this is a real defect on the
+reported path and a plausible contributor, not a demonstrated cause.
+
+**Lesson (42).** *A headless test suite cannot see a bug in the resources it
+declines to allocate.* Every run in this project is `SDL_VIDEODRIVER=dummy`,
+which is what makes the capture tooling deterministic and what made this
+invisible: the dummy driver creates no window, no renderer and no textures, so
+the leak has nothing to leak. The gate is green across this fix in both
+directions and always would have been. Exit paths are worth reading rather than
+testing here.
 
 ## D3 addendum: three scenes override their border colour
 

@@ -11,6 +11,9 @@
 #include "map.h"
 #include "room.h"
 #include "common.h"
+#include "port_entity_ctx.h"
+#include "fade.h"
+extern bool32 ScrollTransitionIsPending(void);
 #include "screen.h"
 #include "subtask.h"
 #include "ui.h"
@@ -962,7 +965,7 @@ static void mapsource_trace_blend(void) {
     u16 bldcnt, bldalpha, bldy;
     u32 key;
     int i, nonblack, workingNonblack, semiObjs;
-    if (en < 0) en = (getenv("TMC_BLEND_TRACE") != NULL);
+    if (en < 0) { const char* v = getenv("TMC_BLEND_TRACE"); en = (v == NULL) ? 0 : (v[0] - '0'); }
     if (!en) return;
     bldcnt = *(volatile u16*)&gIoMem[0x50];
     bldalpha = *(volatile u16*)&gIoMem[0x52];
@@ -997,18 +1000,25 @@ static void mapsource_trace_blend(void) {
             semiObjs++;
         }
     }
-    key = ((u32)bldcnt << 16) ^ ((u32)bldalpha << 8) ^ (u32)bldy ^
+    key = ((u32)gFadeControl.active << 31) ^ ((u32)gFadeControl.progress << 20) ^
+          ((u32)ScrollTransitionIsPending() << 30) ^ ((u32)gMain.substate << 26) ^
+          ((u32)bldcnt << 16) ^ ((u32)bldalpha << 8) ^ (u32)bldy ^
           ((u32)nonblack << 24) ^ ((u32)workingNonblack << 12) ^ ((u32)semiObjs << 4);
-    if (key == last) return;
+    if (key == last && en < 3) return;
     last = key;
     fprintf(stderr,
             "[blend] area=0x%02X room=0x%02X bldcnt=0x%04X (tgt1=0x%02X effect=%d "
             "tgt2=0x%02X) bldalpha=0x%04X eva=%d evb=%d bldy=0x%04X evy=%d "
-            "bgpltt_nonblack=%d/255 palbuffer_nonblack=%d/255 semi_objs=%d\n",
+            "bgpltt_nonblack=%d/255 palbuffer_nonblack=%d/255 semi_objs=%d "
+            "scrollpend=%d substate=%d fade{act=%d type=0x%X prog=%d sustain=%d speed=%d mask=0x%X}\n",
             gRoomControls.area, gRoomControls.room, bldcnt,
             bldcnt & 0x3F, (bldcnt >> 6) & 3, (bldcnt >> 8) & 0x3F,
             bldalpha, bldalpha & 0x1F, (bldalpha >> 8) & 0x1F,
-            bldy, bldy & 0x1F, nonblack, workingNonblack, semiObjs);
+            bldy, bldy & 0x1F, nonblack, workingNonblack, semiObjs,
+            (int)ScrollTransitionIsPending(), (int)gMain.substate,
+            (int)gFadeControl.active, (unsigned)gFadeControl.type,
+            (int)gFadeControl.progress, (int)gFadeControl.sustain,
+            (int)gFadeControl.speed, (unsigned)gFadeControl.mask);
 }
 
 /* TMC_TILE_PROBE=col,row — what the renderer will do with one room tile.
@@ -1113,7 +1123,31 @@ static void mapsource_fill_probe(void) {
     }
 }
 
+/* TMC_ENT_TRACE=1 — two entities sharing one ScriptExecutionContext. The
+ * context is per entity on GBA (a pointer inside the entity); the port keeps a
+ * side table instead, and a duplicate there means one script's
+ * DoPostScriptAction lands on somebody else's entity. B43/#93. */
+static void mapsource_ctx_dup_check(void) {
+    static int en = -1;
+    static int reported = 0;
+    int i, j;
+    if (en < 0) en = (getenv("TMC_ENT_TRACE") != NULL);
+    if (!en || reported > 8) return;
+    for (i = 0; i < PC_MAX_ENTITY_SLOTS; i++) {
+        if (gEntityScriptCtxTable[i] == NULL) continue;
+        for (j = i + 1; j < PC_MAX_ENTITY_SLOTS; j++) {
+            if (gEntityScriptCtxTable[j] == gEntityScriptCtxTable[i]) {
+                reported++;
+                fprintf(stderr, "[ent] SHARED CONTEXT %p: slots %d and %d  area=0x%02X room=0x%02X\n",
+                        (void*)gEntityScriptCtxTable[i], i, j,
+                        gRoomControls.area, gRoomControls.room);
+            }
+        }
+    }
+}
+
 void Port_MapSource_Update(void) {
+    mapsource_ctx_dup_check();
     mapsource_fill_probe();
     int layer;
     /* Clear every layer first: which BG a map binds to can change between
