@@ -4026,18 +4026,18 @@ itself. The regression that first looked like a setback was the second data
 point, and the cheapest way to get it was to ship the wrong rule at a
 173-frame diff and read what it broke.
 
-**Where the change lives, and a caution.** `libs/ViruaPPU`, the same submodule
-as B38's OBJ fix, on branch `b45-obj-priority-claim`, pushed as
-`origin/b45-obj-priority-claim` (commit `500b20f`). **It is not in master.** PR
-#44 merged the superproject with the pointer at `500b20f`, and the following
-commit `6230be1a "bump submodule"` moved it back to `d523d7f`, the pre-B45
-commit; the submodule's own `main` was never fast-forwarded onto the branch
-either. So the tracker says fixed and the shipping tree does not have it. Two
-steps close that: merge `b45-obj-priority-claim` into the submodule's `main`,
-then bump `libs/ViruaPPU` here to the merged commit. **A submodule pointer can
-move backwards in an ordinary-looking commit and nothing in this repo's diff
-shows the code that left with it** — worth checking `git ls-tree HEAD
-libs/ViruaPPU` against the branch you expect after any merge that touches it.
+**Where the change lives.** `libs/ViruaPPU`, the same submodule as B38's OBJ
+fix; merged as its PR #7 and carried here by the pointer at `53c7cc4`.
+
+**It took two goes to land, and the near-miss is the lesson.** PR #44 merged
+the superproject with the pointer at `500b20f`, and the very next commit,
+`6230be1a "bump submodule"`, moved it back to `d523d7f` — the pre-B45 commit —
+while the submodule's own `main` had not yet been fast-forwarded onto the
+branch. For a while the tracker said fixed and the shipping tree did not have
+it, with nothing in this repo's diff to show the code that had left. **A
+submodule pointer can move backwards in an ordinary-looking commit**: after any
+merge that touches one, check `git ls-tree HEAD libs/ViruaPPU` against the
+commit you expect, and grep the checkout for something the fix introduced.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,

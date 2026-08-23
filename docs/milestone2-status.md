@@ -19,8 +19,9 @@ from the bottom as he sinks out of the rectangle. Six passes had compared every
 register, OAM entry, map and tileset against hardware, matched on all of them,
 and concluded the port was faithful — the difference was a compositing rule,
 which no state comparison can see. `tools/mgba/README.md` is the technique.
-**The fix is in the `libs/ViruaPPU` submodule and is currently *not* in master
-— see B45's caution in the tracker.**
+The fix is in the `libs/ViruaPPU` submodule (its PR #7) and is carried here by
+the pointer at `53c7cc4`; it took a second pass to land, and why is worth
+reading in B45.
 
 **B46 and B47 came out of the same work and are open.** B46: the wading overlay
 never draws in shallow water, provable by inspection. B47: the port's `tmc.sav`
