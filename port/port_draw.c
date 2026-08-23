@@ -27,6 +27,7 @@
 
 #include "port_gba_mem.h" /* gOamYExtShadow — the untruncated sprite y */
 
+#include "map.h"
 #include "object.h"      /* CUTSCENE_ORCHESTRATOR — the B43 entity watch */
 #include "port_capture.h" /* Port_Capture_Frame — frame numbers in traces */
 
@@ -300,6 +301,29 @@ void ram_UpdateEntities(u32 mode) {
         /* Managers: only list 8 */
         startList = 8;
         endList = 9;
+    }
+
+    /* TMC_SINK_TRACE: does anything ever put data in OBJ VRAM tile 133?
+     * Sampled every frame and printed on change, because the answer decides
+     * whether OBJECT_70's twelve pieces are a missing load or blank by
+     * design (B45). */
+    {
+        static int en = -1;
+        static int lastAny = -1;
+        if (en < 0) en = (getenv("TMC_SINK_TRACE") != NULL);
+        if (en && mode == 0) {
+            const u8* base = (const u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+            int any = 0, k;
+            if (base)
+                for (k = 0; k < 32; k++)
+                    if (base[k]) { any = 1; break; }
+            if (any != lastAny) {
+                lastAny = any;
+                fprintf(stderr, "[sink] f=%u a=%02X:%02X OBJ VRAM tile133 -> %s\n",
+                        Port_Capture_Frame(), gRoomControls.area, gRoomControls.room,
+                        any ? "HAS DATA" : "blank");
+            }
+        }
     }
 
     if (sEntwOn < 0)
@@ -917,6 +941,138 @@ static void DrawEntitySprites(Entity* entity, s32 x, s32 y, u32 flags, u16 extra
     }
 }
 
+
+static int sSinkOamArm = 0;
+
+/* TMC_SINK_TRACE=1 — the swamp/stairs "player goes behind the ground" pair.
+ *
+ * OBJECT_70 sets the player's spriteOrientation.flipY to 3, which is OAM
+ * priority 3 (the ARM builds attr2 bits 10-11 from byte 0x1B & 0xC0,
+ * asm/src/intr.s:sub_080B299C), putting him behind an opaque BG2. Whatever
+ * stays visible has to come from OBJECT_70 itself, whose definition carries
+ * gfx_type 2 — "load nothing, point spriteVramOffset at a fixed OBJ VRAM
+ * tile", 133. So the two questions are what priority the player ended up at
+ * and whether anything is at that tile, and this prints both, per frame.
+ *
+ * `oam+=` is the OAM entries the entity actually emitted: an entity that
+ * emits entries and still shows nothing is drawing blank tiles, which is a
+ * different fault from one that emits none. */
+/* Twelve 8x8 pieces all pointing at one tile is a strange way to draw
+ * anything — one 32x32 sprite would do — so dump sprite 167's neighbouring
+ * frames once and see whether frame 11 looks like the others or like data
+ * read past the end of the sprite's frame table. */
+static void SinkDumpSpriteFrames(u16 sprIdx) {
+    int f;
+    for (f = 0; f < 16; f++) {
+        const u8* d = LookupFrameData(sprIdx, (u8)f);
+        if (!d) {
+            fprintf(stderr, "[sink]   spr%u frame %2d: (no data)\n", sprIdx, f);
+            continue;
+        }
+        {
+            u8 n = d[0];
+            int i;
+            fprintf(stderr, "[sink]   spr%u frame %2d: %u piece(s)", sprIdx, f, n);
+            for (i = 0; i < n && i < 14; i++) {
+                const u8* p = d + 1 + i * 5;
+                fprintf(stderr, " [%+d,%+d sh=%02X t=%u]", (int)(s8)p[0], (int)(s8)p[1],
+                        p[2], (unsigned)(p[3] | (p[4] << 8)));
+            }
+            fprintf(stderr, "\n");
+        }
+    }
+}
+
+static void SinkTraceReport(Entity* entity, s32 x, s32 y, u16 extra, u8 oamBefore) {
+    fprintf(stderr,
+            "[sink] f=%u a=%02X:%02X world=(%d,%d) ent=%p kind=%u id=%u type=%u "
+            "scr=(%d,%d) spr=%d frame=%u draw=%u orient=0x%02X attr2prio=%u "
+            "vramOff=%u sprOffY=%d surfTimer=%u oam+=%d\n",
+            Port_Capture_Frame(), gRoomControls.area, gRoomControls.room,
+            (int)entity->x.HALF.HI, (int)entity->y.HALF.HI,
+            (void*)entity, entity->kind, entity->id, entity->type,
+            (int)x, (int)y, (int)entity->spriteIndex, entity->frameIndex,
+            entity->spriteSettings.draw, *(u8*)&entity->spriteOrientation,
+            (unsigned)((extra >> 10) & 3), (unsigned)entity->spriteVramOffset,
+            (int)(s8)entity->spriteOffsetY, (unsigned)gPlayerState.surfaceTimer,
+            (int)gOAMControls.updated - (int)oamBefore);
+
+    if (entity->kind == OBJECT && entity->id == OBJECT_70) {
+        /* Which map layer is on which BG, and at what priority. The player is
+         * hidden by whichever layer sits at a priority below his OAM one, so
+         * the binding is the other half of the question. */
+        static int bound = 0;
+        if (!bound) {
+            bound = 1;
+            fprintf(stderr, "[sink]   mapBottom->bg%d mapTop->bg%d  "
+                            "bg0=%04X(p%d) bg1=%04X(p%d) bg2=%04X(p%d) bg3=%04X(p%d) dispcnt=%04X\n",
+                    gMapBottom.bgSettings == &gScreen.bg1 ? 1 :
+                        gMapBottom.bgSettings == &gScreen.bg2 ? 2 :
+                        gMapBottom.bgSettings == &gScreen.bg3 ? 3 :
+                        gMapBottom.bgSettings == &gScreen.bg0 ? 0 : -1,
+                    gMapTop.bgSettings == &gScreen.bg1 ? 1 :
+                        gMapTop.bgSettings == &gScreen.bg2 ? 2 :
+                        gMapTop.bgSettings == &gScreen.bg3 ? 3 :
+                        gMapTop.bgSettings == &gScreen.bg0 ? 0 : -1,
+                    gScreen.bg0.control, gScreen.bg0.control & 3,
+                    gScreen.bg1.control, gScreen.bg1.control & 3,
+                    gScreen.bg2.control, gScreen.bg2.control & 3,
+                    gScreen.bg3.control, gScreen.bg3.control & 3,
+                    gScreen.lcd.displayControl);
+        }
+        const u8* objVram = (const u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+        int nz = 0, i;
+        if (objVram)
+            for (i = 0; i < 32; i++)
+                if (objVram[i]) nz++;
+        fprintf(stderr, "[sink]   OBJ VRAM tile133 nonzero=%d/32%s\n", nz,
+                nz == 0 ? "  <- blank: its twelve pieces draw nothing" : "");
+        sSinkOamArm++;   /* nth frame of the sink, for the hardware OAM diff */
+        {
+            static int dumped = 0;
+            if (!dumped) { dumped = 1; SinkDumpSpriteFrames((u16)entity->spriteIndex); }
+        }
+        /* TMC_SINK_FILL133=1 — paint tile 133 solid so the mask's geometry
+         * relative to the player is visible. Diagnostic only: it answers
+         * "which part of him would this cover", which the blank tile hides. */
+        {
+            static int fillEn = -1;
+            if (fillEn < 0) fillEn = (getenv("TMC_SINK_FILL133") != NULL);
+            if (fillEn) {
+                u8* w = (u8*)gba_TryMemPtr(0x06010000 + 133 * 32);
+                if (w) {
+                    int i;
+                    for (i = 0; i < 32; i++)
+                        w[i] = 0x11; /* every pixel palette index 1 */
+                }
+            }
+        }
+        {
+            /* Tile 133 sits inside the shared special-FX sheet (every
+             * gObjectDefinition_F entry is gfx_type 2 at a fixed tile in
+             * 59..242). If the whole sheet were blank this would be a much
+             * bigger bug than one object; print the map once. */
+            static int once = 0;
+            if (!once) {
+                const u8* base = (const u8*)gba_TryMemPtr(0x06010000);
+                once = 1;
+                if (base) {
+                    int t;
+                    fprintf(stderr, "[sink]   OBJ VRAM tiles 0..255, '.'=blank '#'=data:\n[sink]   ");
+                    for (t = 0; t < 256; t++) {
+                        int any = 0, k;
+                        for (k = 0; k < 32; k++)
+                            if (base[t * 32 + k]) { any = 1; break; }
+                        fputc(any ? '#' : '.', stderr);
+                        if ((t & 63) == 63) fprintf(stderr, "\n[sink]   ");
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
+}
+
 /* ---- ProcessEntityForDraw (port of sub_080B255C, USA path) ----
  *
  * Handles one entity: resolves params, checks shadow flags, renders.
@@ -928,11 +1084,27 @@ static void ProcessEntityForDraw(Entity* entity) {
 
     ResolveEntitySpriteParams(entity, &x, &y, &flags, &extra);
 
+    /* TMC_SINK_TRACE=1 — the swamp sink. Link goes to OAM priority 3 (behind
+     * the ground BG) while OBJECT_70 follows him; whatever is still visible
+     * has to come from OBJECT_70. Prints both, with the OAM entries each
+     * actually emitted, so "drew nothing" is distinguishable from "drew
+     * behind something". */
+    int sinkTrace = 0;
+    u8 sinkOamBefore = gOAMControls.updated;
+    {
+        static int en = -1;
+        if (en < 0) en = (getenv("TMC_SINK_TRACE") != NULL);
+        if (en && ((entity->kind == PLAYER) || (entity->kind == OBJECT && entity->id == OBJECT_70)))
+            sinkTrace = 1;
+    }
+
     /* Check shadow flag (bit 3 of spritePriority byte, offset 0x29) */
     s8 prioRaw = *(s8*)&entity->spritePriority;
     if (!(prioRaw & 8)) {
         /* No shadow — just draw the entity sprites */
         DrawEntitySprites(entity, x, y, flags, extra);
+        if (sinkTrace)
+            SinkTraceReport(entity, x, y, extra, sinkOamBefore);
         return;
     }
 
@@ -984,6 +1156,8 @@ static void ProcessEntityForDraw(Entity* entity) {
         }
         DrawEntitySprites(entity, x, y, flags, extra);
     }
+    if (sinkTrace)
+        SinkTraceReport(entity, x, y, extra, sinkOamBefore);
 
     /* Deferred list handling — add shadow/underlay entry */
     u8 prioByte = *(u8*)&entity->spritePriority;
@@ -1140,6 +1314,63 @@ static void ProcessDeferredList(void) {
  * priority, renders each entity's sprites into gOAMControls.oam[].
  */
 
+/* The finished OAM, in the same decode mGBA's debugger dump gets, so the two
+ * can be diffed entry for entry. Printed on the 1st, 21st and 61st frame of a
+ * sink so the comparison is against a matched point in the scene rather than a
+ * matched frame number (the two emulators' clocks differ by a constant). */
+/* BG2's screenblock and BG1's, so the two emulators' ground layers can be
+ * diffed. Only meaningful with the port at 240x160: the screenblock is written
+ * from the camera, so a different viewport gives a different scroll and the
+ * two maps do not correspond. */
+static void SinkDumpMaps(void) {
+    struct { const char* name; u32 addr; } bl[] = {
+        { "bg2map", 0x0600E000u }, { "bg1map", 0x0600E800u },
+    };
+    int b, i;
+    fprintf(stderr, "[sink-scroll] bg1=(%d,%d) bg2=(%d,%d) bg3=(%d,%d)\n",
+            (int)gScreen.bg1.xOffset, (int)gScreen.bg1.yOffset,
+            (int)gScreen.bg2.xOffset, (int)gScreen.bg2.yOffset,
+            (int)gScreen.bg3.xOffset, (int)gScreen.bg3.yOffset);
+    {   /* BG2's char base (0) — the pixels the map entries point at. */
+        const u16* c = (const u16*)gba_TryMemPtr(0x06000000u);
+        int i;
+        if (c)
+            for (i = 0; i < 8192; i += 8)
+                fprintf(stderr, "[sink-bg2chr] %5d: %04X %04X %04X %04X %04X %04X %04X %04X\n",
+                        i, c[i], c[i+1], c[i+2], c[i+3], c[i+4], c[i+5], c[i+6], c[i+7]);
+    }
+    for (b = 0; b < 2; b++) {
+        const u16* m = (const u16*)gba_TryMemPtr(bl[b].addr);
+        if (!m) continue;
+        for (i = 0; i < 1024; i += 8) {
+            fprintf(stderr, "[sink-%s] %4d: %04X %04X %04X %04X %04X %04X %04X %04X\n",
+                    bl[b].name, i, m[i], m[i+1], m[i+2], m[i+3],
+                    m[i+4], m[i+5], m[i+6], m[i+7]);
+        }
+    }
+}
+
+static void SinkDumpOam(void) {
+    int i;
+    fprintf(stderr, "[sink-oam] frame %u (sink frame %d)\n",
+            Port_Capture_Frame(), sSinkOamArm);
+    for (i = 0; i < 128; i++) {
+        const u8* p = (const u8*)&gOAMControls.oam[0] + i * 8;
+        u16 a0, a1, a2;
+        memcpy(&a0, p, 2); memcpy(&a1, p + 2, 2); memcpy(&a2, p + 4, 2);
+        if ((a0 & 0x0300) == 0x0200)
+            continue;
+        if (i >= (int)gOAMControls.updated)
+            break;
+        fprintf(stderr, "[sink-oam] %3d y=%3u x=%3u shape=%u size=%u prio=%u "
+                        "tile=%4u pal=%2u mode=%u\n",
+                i, (unsigned)(a0 & 0xFF), (unsigned)(a1 & 0x1FF),
+                (unsigned)(a0 >> 14), (unsigned)(a1 >> 14),
+                (unsigned)((a2 >> 10) & 3), (unsigned)(a2 & 0x3FF),
+                (unsigned)(a2 >> 12), (unsigned)((a0 >> 10) & 3));
+    }
+}
+
 void ram_DrawEntities(void) {
     if (gOAMControls.updated >= 0x80)
         return;
@@ -1167,4 +1398,14 @@ void ram_DrawEntities(void) {
          * re-renders the same entities at their last positions. See
          * comment in ram_UpdateEntities. */
     }
+    if (sSinkOamArm == 1 || sSinkOamArm == 21 || sSinkOamArm == 61) {
+        static int lastDumped = -1;
+        if (lastDumped != sSinkOamArm) {
+            lastDumped = sSinkOamArm;
+            SinkDumpOam();
+            if (sSinkOamArm == 1)
+                SinkDumpMaps();
+        }
+    }
+
 }

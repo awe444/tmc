@@ -7,11 +7,16 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-two of the forty-four bugs are
-closed: forty fixed with a root cause and evidence, and B4 closed as **no longer
-observed** rather than diagnosed. **B41 and B42 are open**, both reported
-2026-08-20 without recordings and both in story-gated cutscenes the scripted
-tester cannot reach. **B43 closed 2026-08-22**, once the maintainer's 240x160
+complete — see `docs/milestone2-status.md`.** Forty-three of the forty-seven
+bugs are closed: forty-one fixed with a root cause and evidence, and B4 closed
+as **no longer observed** rather than diagnosed. **B41, B42, B46 and B47 are
+open.** B41 and B42
+were reported 2026-08-20 without recordings, both in story-gated cutscenes the
+scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
+**closed 2026-08-22** against mGBA, which turned out to run headless here and
+to write savestates carrying a frame's state and picture together. **B46**
+was found by inspection while ruling a mechanism out of B45 — the second bug in
+the tracker found by instrument rather than by report, after B34. **B43 closed 2026-08-22**, once the maintainer's 240x160
 recording made it reproducible on the shipping build: it was one port-only line
 in `CreateVaatiApparateManager`, and it owned #93 as well. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -100,6 +105,9 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
+| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — **Fixed.** That tile is blank on hardware too, because **OBJECT_70 is a priority window, not a mask**: the OBJ layer composites at the priority of the *last covering sprite in OAM order*, opaque or not, so twelve blank priority-2 sprites lend the player's priority-3 sprite a tie against the priority-2 ground and he shows through the mud, clipped from the bottom as he sinks out of the rectangle. VirtuaPPU dropped transparent OBJ pixels outright. Two mGBA savestates pin "last" rather than "best": the swamp and the name-entry glyph give opposite answers to the same shape. 11/11, audit clean, dense 173-frame route diff identical |
+| B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
+| B47 | The port's `tmc.sav` will not load in mGBA or on hardware | **Open, diagnosed.** `port_save.c` skips the EEPROM serial protocol and stores each 8-byte block in the game's in-memory order; hardware stores the wire order, which is the reverse. Confirmed against a save the real game initialised under mGBA. The game reads its signature back scrambled and offers a new file — symmetric, so emulator saves do not load in the port either. `tools/mgba/savconv.py` converts either way; fixing `port_save.c` needs a migration for existing saves |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
@@ -3545,6 +3553,587 @@ invisible: the dummy driver creates no window, no renderer and no textures, so
 the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
+
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(fixed)*
+
+Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
+Walking west into the swamp should clip the bottom of Link's sprite gradually
+as he sinks, until he is warped back out. He disappears completely instead.
+
+**Reproduced.** Link is whole at frame 914 and entirely gone by 916 — one
+step, not a fade. The sink itself still works: `SurfaceAction_Swamp` keeps
+running, `surfaceTimer` climbs to 0xF0 and `RespawnPlayer()` fires on schedule.
+Only the picture is wrong.
+
+**Not a viewport bug.** Nothing in the chain below reads `VIEWPORT_WIDTH` or
+`VIEWPORT_HEIGHT`, and the decisive state is byte-identical at 240x160: the
+same two gfx loads land on the same OBJ VRAM tile with the same contents
+(`[sink] f=1807 gfx group 23 ... covers tile133 (src nonzero 0/32)`). It was
+live in the shipping build.
+
+**The chain, measured with `TMC_SINK_TRACE=1`:**
+
+1. `SurfaceAction_Swamp` spawns `OBJECT_70` on the first swamp frame.
+2. `Object70_Action1` sets `gPlayerEntity.base.spriteOrientation.flipY = 3`
+   every frame it lives. That field is **OAM priority**, not a flip: the ARM
+   builds attr2 bits 10-11 from `[entity + 0x1B] & 0xC0`
+   (`asm/src/intr.s`, `sub_080B299C`), and the port's
+   `ResolveEntitySpriteParams` matches it exactly. Confirmed in the trace as
+   `orient=0x80 attr2prio=2` becoming `orient=0xC0 attr2prio=3` at frame 913.
+3. Castor Wilds runs `bg2ctl=0x1C42`, i.e. **BG2 at priority 2**, and BG2 is
+   the full-coverage ground layer — `TMC_MASK_BG2=1` paints the whole frame
+   magenta. An OBJ at priority 3 is behind a BG at priority 2, so Link is
+   hidden. `TMC_DISABLE_BG2=1` brings him back, standing in the mud.
+   **This step is correct**: it is what the registers say and what hardware
+   would do.
+4. So what stays visible has to be `OBJECT_70`, and it is drawn in front —
+   `attr2prio=2` ties with BG2 and OBJ wins ties. It emits **twelve** OAM
+   entries every frame, a 4x3 block of 8x8 sprites covering Link.
+5. **Every one of those twelve points at OBJ VRAM tile 133, and tile 133 is
+   all zeros.** `OBJECT_70`'s definition is
+   `{ { 1, 0, 0, 0, 133, 2, 0 }, { 0, 0, 0, 0, 167, 0, 0 } }` — `gfx_type` 2,
+   which `LoadObjectSprite` reads as *load nothing, point `spriteVramOffset`
+   at fixed tile 133*. Something else is supposed to have put a graphic
+   there. Nothing has.
+
+**Where tile 133's content goes.** Two loads cover it in the whole run, and
+only two:
+
+```
+f=479  gfx group 15 -> gfx_350de0_112x104  dest=0x06010800  5632 B  (src nonzero 32/32)
+f=614  gfx group 23 -> gfx_1d7e0_128x128   dest=0x06010000  8192 B  (src nonzero  0/32)
+```
+
+Group 15 fills it during the intro; group 23, loaded on entering the room,
+covers tiles 0..255 and its own source is blank at tile 133, so it wipes it.
+Groups 25/26/27 patch small ranges *after* group 23 (tiles 192, 213, 228) —
+which is the shape a "restore the fixed tiles" load would have — but **no gfx
+group in the extracted table targets tile 133**. Searched every group for an
+entry whose `dest <= 0x060110A0 < dest + size`: exactly three, groups 15, 23
+and 89, all of them large sheets landing on 0x06010000 or 0x06010800, and 89
+is the same file as 23. Nothing small and nothing aimed at it. Link's own tiles
+are elsewhere (`vramOff=352`), so this is not the player's animation streaming
+either.
+
+**Second pass, 2026-08-22: the "missing overlay load" theory is dead.** Both
+the first write-up here and the sibling port's comment assumed a graphic was
+supposed to be loaded at tile 133 and the port was failing to load it. It is
+not:
+
+- **The ROM has no gfx-group entry targeting that tile.** Searching
+  `baserom.gba` for the little-endian dest word `0x060110A0` gives **zero**
+  hits, and for tile 137 (`0x06011120`) likewise — while the neighbouring
+  small patches the same table does carry are right there:
+  `0x06011800` (tile 192) twice and `0x06011C80` (tile 228) once, at ROM
+  0xFFD50–0xFFD68. So the extracted `gfx_groups.json` is faithful, and nothing
+  fills tile 133 on hardware either.
+- **The object definition is byte-identical to the ROM.** OBJECT_70's row
+  packs to `01 00 85 08 00 00 A7 00`, which occurs exactly once, at ROM
+  `0x126B18`, between the two `MULTI_FORM` pointers for 0x6F and 0x71. So
+  `gfx = 133, gfx_type = 2, spriteIndex = 167` is what the game says.
+- Watched every frame of the run: tile 133 holds data only between the
+  intro's group-15 load (f479) and the room's group-23 load (f614). From
+  entering Castor Wilds it is blank to the end.
+
+**What OBJECT_70 actually draws is a mask.** Sprite 167 frame 11 —
+`frameIndex = type + 0xb`, so type 0 — is **twelve 8x8 pieces in a 4x3 grid,
+every one at tile offset 0**, spanning `x -16..+15, y -24..0`. One repeated
+tile over a 32x24 rectangle. Frame 12, the type-1 (stairs) case, is the same
+shape at 16x24. Painting tile 133 solid (`TMC_SINK_FILL133=1`, with
+`TMC_DISABLE_BG2=1` so the player is visible) shows where it lands: **over
+Link's upper body, from the top of his head to about his chest**, with his
+legs and the green splash below it.
+
+**And the sink is not a translation.** `gPlayerState.spriteOffsetY` is reset
+every frame by `interrupts.c:379`, so `SurfaceAction_Swamp`'s
+`+= 4 + (surfaceTimer >> 5)` never accumulates: traced across the whole sink it
+runs **4 to 11 px** while `surfaceTimer` climbs 0 to 0xF0. Link is pushed a few
+pixels down, not slid off the screen. Whatever clips him is the mask, not his
+position.
+
+**Third pass: the mask is a red herring, and filling tile 133 would not fix
+anything.** Painting it solid (`TMC_SINK_FILL133=1`) and measuring what it
+covers, frame by frame, kills the whole line of enquiry the first two passes
+were on:
+
+| frame | Link px in box | covered by mask | Link rows | mask rows |
+|---|---|---|---|---|
+| 912 (before) | 289 | 0 (0%) | 59..83 | — |
+| 916 | 313 | 175 (56%) | 64..90 | 56..79 |
+| 924 | 336 | 169 (50%) | 65..92 | 56..79 |
+| 940 | 289 | 197 (68%) | 63..87 | 56..79 |
+| 1000 | 289 | 172 (60%) | 65..89 | 56..79 |
+| 1100 | 247 | 149 (60%) | 70..92 | 56..79 |
+
+Three things follow:
+
+- **The coverage does not grow.** It is flat at 50–68% for the whole sink, the
+  spread being which walk frame he is on. Whatever produces "clipped gradually
+  more and more", it is not this.
+- **It covers the wrong end.** The mask holds rows 56..79 while Link occupies
+  63..95, so it hides his *head and torso* and leaves his legs showing. For a
+  sink you want the opposite. Note the stairs frame (12) is placed the other
+  way — its pieces run y `-8, 0, +8`, i.e. mostly *below* the anchor — so the
+  two placements are deliberate and different.
+- **It is at OAM priority 2, the same as BG2.** Wherever BG2 is opaque the
+  mask changes nothing at all. **A correctly filled tile 133 would not make
+  Link visible by one pixel.**
+
+So B46's neighbour — the blank tile — is at most a missing cosmetic mud patch.
+**The disappearance is entirely `flipY = 3` against an opaque priority-2
+ground**, and nothing else in the scene bears on it.
+
+**The only progressive thing in the scene is `spriteOffsetY`**, which moves
+Link's sprite down 0 → 11 px (top row 59 → 70, measured across the sink) while
+the mask stays put. That is the sole candidate left for a growing clip, and by
+itself it reveals *more* of him below the mask rather than less.
+
+**The layer arrangement is ordinary**, so there is no binding mistake to find:
+
+```
+mapBottom->bg2  mapTop->bg1
+bg0=1F0C(p0) bg1=1D45(p1) bg2=1C42(p2) bg3=1E03(p3) dispcnt=1740
+```
+
+BG3 is configured at priority 3 — the one priority that would *tie* with Link
+and let the OBJ win — but `dispcnt` bit 11 is clear, so it is off and has no
+map bound. Every enabled layer sits above him.
+
+**Stairs is not the differential it looked like.** The type-1 path holds
+`flipY = 3` for a single frame: `Object70_Init` sets it, and `Object70_Action1`
+replaces it with 1 or 2 on the very next frame from the collision layer. So the
+sibling port's "fully invisible on the stairs" is not what the code does, and
+the swamp is the only place that *holds* priority 3.
+
+**What this needs now is an oracle, and there isn't one in this repo.** Every
+input has been checked against the ROM or the ARM and they all agree: Link is
+behind the ground while sinking. Either hardware shows him hidden too — in
+which case the report is about something else in the scene — or one of the two
+remaining inputs differs there in a way the ROM data alone does not reveal. No
+GBA emulator is installed in this environment, so the picture hardware draws
+cannot be obtained here.
+
+**The falsifiable prediction, for whoever gets a reference frame.** If hardware
+shows Link sunk with only his head above the mud, then *both* of these must be
+true and both are then testable in one comparison: the priority-2 layer has a
+transparent pit at the mud, and the mask is drawn about 24 px lower than we
+draw it — its y offsets would have to run `0, +8, +16` like the stairs frame's
+rather than `-24, -16, -8`. If hardware shows him fully hidden, the port is
+right about the sink and the report is about the *mud patch* that tile 133
+never draws.
+
+**So the question is sharper than it was.** The mask is at OAM priority 2 and
+Link at 3, which is the only arrangement in which the mask can cover him — but
+priority 2 is also BG2's, and BG2 is the opaque full-coverage ground, so it
+covers *all* of him first. For any of this to be visible, **the priority-2
+layer has to be transparent where he stands** and it is not: `TMC_MASK_BG2=1`
+leaves 24 non-magenta pixels in a 64x64 box around him, and those are sprites
+in front, not holes. Two candidates remain, both narrow:
+
+1. the layer *content* is wrong — the bottom map or its tileset should have a
+   transparent pit at the mud, which is authored data and cheap to read; or
+2. the priority *assignment* is wrong — the room puts the ground at BG2
+   priority 2 (`bg2ctl=0x1C42`) and the swamp needs it elsewhere.
+
+Nothing else is left: the OAM priority derivation is verified against the ARM,
+the compositing order matches the hardware rule (OBJ wins ties, checked in
+`mode1_composite_line`), and the object and gfx data are verified against the
+ROM.
+
+**Ruled out this pass**, each by measurement:
+
+- *A missing gfx load for tile 133* — the ROM has no such entry (above).
+- *A corrupt extracted sheet* — group 23's file is blank at tile 133 and the
+  ROM's group table agrees; 4143 of its 8192 bytes are non-zero, which is an
+  ordinary sprite sheet with ordinary holes. The only blank tiles in OBJ VRAM
+  0..255 during the sink are 133, 137, 251 and 252.
+- *The wading overlay* — `ProcessEntityForDraw`'s `ram_0x80b2b58` overlay fires
+  only for act tiles 0x0F and 0x2F, and the swamp's is **0x13**
+  (`ACT_TILE_19` in `tiles.h`). It is not part of this. It is, however,
+  broken on its own account — see B46.
+- *A wrong frame index* — sprite 167's frames 0..15 all decode sanely
+  (1, 1, 4, 1, 1, 2, 2, 1, 4, 1, 4, **12**, 6, 1, 1, 2 pieces), so frame 11 is
+  not data read past the end of a table.
+
+**Fourth pass: answered against real hardware.** mGBA 0.10.2 was installed on
+request, and it turns out to run headless (`SDL_VIDEODRIVER=dummy`) with a
+stdin-driven CLI debugger — so the reference implementation can be replayed and
+interrogated by script. `tools/mgba/README.md` has the harness. The maintainer's
+own recording was replayed into it and the two OAM dumps compared at a matched
+frame.
+
+**Aligning the two.** Frame numbers do not correspond (the port skips the BIOS),
+so the alignment is on an event: the frame OBJECT_70's twelve mask entries first
+appear. mGBA 1034, port 913 — a constant 121, which is the `--offset 120` the
+sweep found independently. At that frame the HUD entries, the mask entries and
+the mud-ripple entries are at **identical positions** in both, so the scene is
+aligned, not merely the clock.
+
+**Hardware does what the port does.** At every sampled frame of the sink:
+
+| | hardware (mGBA) | port |
+|---|---|---|
+| `DISPCNT` | `1740` | `1740` |
+| `BG2CNT` | `1C42` (priority 2) | `1C42` |
+| player OAM priority | **3** | **3** |
+| mask entries | 12 × tile 133, prio 2, at x 109/117/125/133, y 56/64/72 | identical |
+| OBJ VRAM tile 133 | **blank, 0/32 bytes** | **blank** |
+
+So the ROM really does put the player at OAM priority 3 behind an opaque
+priority-2 ground, and the mask really does draw a blank tile. **The
+disappearance is what the game does, not what the port does to it** — and the
+first two passes' theory, that a graphic was missing from tile 133, is now dead
+twice over: the ROM has no loader for that tile, and hardware leaves it blank.
+
+**What the port gets wrong is the ripple, not the player.** At the same matched
+frame, four sprites sit at identical positions with identical tiles in both:
+
+```
+(80,116) tile 78   (80,126) tile 78   (85,119) tile 80   (85,123) tile 80
+hardware: palette 9        port: palette 12
+```
+
+Same tiles, same places, same frame, **different palette**. That is
+phase-independent and it is a real defect: the mud disturbance that marks where
+the player went under is drawn in the wrong colours. It is also the only thing
+the player *should* still see during the sink, which is very likely what the
+report is actually about — "he disappears and nothing marks the spot" rather
+than "he should be clipped".
+
+**One difference that is not a defect.** The player's sprite decomposes
+differently in the two dumps — hardware 16x32 + 8x16 from tiles 352/360, the
+port 16x16 + 8x16 + 16x8 + 8x8 from 352/356/358/360, offset 5 px in x. That is
+animation *phase*: the mask follows the entity and the mask positions are
+identical, so the entity is in the same place and only the walk frame differs.
+Worth re-checking phase-matched before reading anything into it.
+
+**Also observed, harmless:** the port applies `flipY = 3` one frame later than
+hardware, so the player is visible for a single extra frame at the start of the
+sink.
+
+**Where this leaves B45.** The reported symptom — the player vanishing on
+entering the mud — is faithful. What is missing is the ripple's colour, which
+is a different and much smaller bug. Before closing, the maintainer's
+expectation is worth one look on their own hardware or on mGBA: if the real
+game shows him clipped rather than gone, then something outside OAM, BGCNT and
+the mask differs and this comparison would have to be extended to the map data.
+Everything reachable through those three now says it does not.
+
+**Fifth pass — the fourth pass's conclusion was wrong, and the maintainer's
+screenshots are what showed it.** Eight mGBA captures of the same walk show the
+player clearly visible in the mud and clipped progressively from the bottom,
+head last. "Faithful to hardware" was wrong; the port really is broken here.
+
+**What the hardware state proves, now that the picture is known.** Across the
+whole sink on mGBA, sampled every 15 frames from the first mask frame to the
+respawn:
+
+| sink frame | Link pieces | Link y-extent | height | mask y | tile 133 |
+|---|---|---|---|---|---|
+| 0 | 2 | 54..86 | 32 | 56..80 | blank |
+| 60 | 2 | 55..87 | 32 | 56..80 | blank |
+| 120 | 2 | 57..89 | 32 | 56..80 | blank |
+| 180 | 2 | 59..91 | 32 | 56..80 | blank |
+| 225 | 2 | 60..92 | 32 | 56..80 | blank |
+| 240 | 0 | — | — | — | — |
+
+Three things follow, and together they localise the bug:
+
+- **The sprite is never clipped.** It stays 32 px tall and two pieces for the
+  entire sink and simply moves down 6 px, which is `spriteOffsetY` growing
+  4 -> 11 exactly as in the port. So the clip in the screenshots is not the
+  sprite, and not the mask either — the mask is fixed at y 56..80 and its tile
+  is blank on every sampled frame.
+- **The player is at OAM priority 3 throughout, and he is visible.** The only
+  other sprites on screen are the HUD (priority 0), the twelve blank mask
+  entries and three 8x8 ripple dots. Nothing there can draw a head, a face and
+  a cap. **So the priority-2 ground is transparent where he shows** — there is
+  a pit in it, and he is seen through it.
+- **In the port that pit is not there.** `TMC_MASK_BG2=1` paints BG2's
+  non-transparent pixels flat magenta and leaves only 24 non-magenta pixels in
+  a 64x64 box around him, and those are sprites in front, not holes. BG1 is
+  sparse and covers nothing there.
+
+**So the defect is in the port's BG2 content, not in its sprites or its
+priorities.** Everything the earlier passes checked — the OAM priority
+derivation, the compositing tie rule, the object definition, the gfx table, the
+mask geometry, tile 133 — is confirmed identical to hardware and none of it was
+ever the problem. What differs is which pixels the ground layer draws over the
+mud, and the amount of him covered grows as he sinks the 6 px the offset moves
+him.
+
+**Corrections this pass makes to the entries above:**
+
+- The fourth pass's table is right about every register and every OAM entry and
+  wrong in its conclusion. Identical sprite state does not imply an identical
+  picture when a *background* differs, and the one input never compared against
+  hardware was the one that mattered. The mGBA-side check that would have caught
+  it needs the BG2 scroll, and the scroll registers are write-only — reading
+  `0x04000018` gives open bus — which is why it was skipped. A write watchpoint
+  on `0x04000018` does capture it and is the way in.
+- The third pass's "the mask covers the wrong end and does not grow" stands and
+  is now explained: the mask is not the clip and never was.
+- The ripple palette difference (hardware 9, port 12) still stands as a real
+  and separate defect.
+
+**Next, and it is now a narrow question:** which tiles the bottom map holds
+under the player on hardware, and whether their pixels are transparent where
+the port's are opaque. That is the B5/B15/B17 family — a world layer drawing
+something other than what the map says — and it is answerable entirely from
+mGBA: capture BG2HOFS/BG2VOFS with a write watchpoint, convert his screen
+position to a map index, read the entry from the screenblock at `0x0600E000`,
+and read that tile's pixels from the char base.
+
+**Lesson.** *A state comparison is only as good as the inputs it covers, and
+"every register matches" is not "the same picture".* Four passes compared
+sprites, priorities and object data against the ROM and agreed with hardware
+every time, because the layer that was actually wrong was never in the
+comparison. One look at the real screen refuted the whole chain in a second.
+Ask for the picture before concluding from the state.
+
+**Sixth pass: the port put at 240x160, which makes the layers comparable — and
+every layer matches.** The earlier passes compared a 320x240 port against
+240x160 hardware, which is unsound for anything scroll-dependent. Rebuilt at
+240x160 and replayed the same recording: it reaches the same sink, and the
+alignment is exact — the twelve mask entries and the four ripple entries are at
+**identical screen positions** in both (mask x 109/117/125/133, y 56/64/72;
+ripple 80/116, 80/126, 85/119, 85/123). So the two runs are on the same frame
+of the same scene and the backgrounds can be diffed directly.
+
+They agree, everywhere it matters:
+
+| compared | result |
+|---|---|
+| BG2 screenblock (`0x0600E000`, 1024 entries) | **0 differ** |
+| BG1 screenblock (`0x0600E800`, 1024 entries) | **0 differ** |
+| BG2 char base (`0x06000000`, 8192 halfwords) | 254 differ, in tiles 356–381 |
+| …transparency of those tiles | **identical**: 21 tiles hold transparent pixels, 705 pixels, and **no tile differs** in its transparent-pixel count |
+| every tile under the player (screen x 104–144, y 48–96) | **fully opaque, 0 transparent pixels, in both** |
+
+The 26 differing tiles are all fully opaque on both sides — a background
+tile-animation phase difference, not a pit.
+
+**And the hardware OAM is unambiguous, read raw rather than decoded:**
+
+```
+ 7  attr0=8036 attr1=8075 attr2=6D60   OBJ mode 0 (normal)  priority 3  tile 352  pal 6
+ 8  attr0=803E attr1=0085 attr2=6D68   OBJ mode 0 (normal)  priority 3  tile 360  pal 6
+13  attr0=0038 attr1=006D attr2=0885   OBJ mode 0 (normal)  priority 2  tile 133  pal 0
+```
+
+`DISPCNT = 0x1740` — no windows, BG3 off. No OBJ is in window or
+semi-transparent mode.
+
+**So this is now a contradiction, stated plainly.** By the hardware rule an OBJ
+at priority 3 is behind a BG at priority 2, and every BG2 tile over the player
+is opaque in both emulators, from identical maps and identical transparency. He
+therefore cannot be drawn — and mGBA draws him. The port renders him hidden at
+240x160 through **both** paths, the map-source one and `--no-map-sampling`'s
+screenblock one, so it is not the port's map sampling either.
+
+One of the premises is false and the measurements above do not say which. The
+port shares whatever the false premise is, which is why it produces the wrong
+picture from state that matches.
+
+**What resolves it in one step:** a savestate taken at the moment of one of
+those screenshots, so the exact state behind a *known picture* can be read.
+Every dump above is from a replay whose picture cannot be seen from here;
+pairing one frame's state with one frame's image is the only way to find which
+layer is actually producing the visible pixels. mGBA writes savestates with
+Shift+F1 as `<rom>.ss1`.
+
+**Still standing from earlier passes, and unaffected:** the ripple palette
+defect (hardware 9, port 12, at identical positions with identical tiles), and
+B47's save byte order.
+
+**Seventh pass — root cause found, from a savestate.** The maintainer's mGBA
+savestate is a PNG with the state in `gbAs`/`gbAx` chunks, so it carries the
+frame's **picture and its state together** — which is exactly what every
+previous pass lacked. Decompressed, the block layout is
+`[header 0x800][PRAM 0x800][OAM 0xC00][VRAM 0x1000][IWRAM 0x19000][WRAM 0x21000]`.
+
+Reading a column through the player at x=118 in that frame, against the
+screenshot decoded from the same file:
+
+| rows | BG0 | BG1 | BG2 | OBJs covering (entry, priority) | what the screen shows |
+|---|---|---|---|---|---|
+| 60–62 | 0 | 0 | **6** | — | mud |
+| 63–78 | 0 | 0 | **6** | (7, prio 3) | **the player** |
+| 79–82 | 0 | 0 | **6** | (9, prio 3) | mud |
+| 83–89 | 0 | 0 | **6** | (23, prio 3) | mud |
+
+BG2 is opaque at **every** row, and every one of the player's pieces is at
+priority 3 — yet entry 7 is drawn over the ground and entries 9 and 23 are not.
+The only thing that distinguishes them is the twelve blank priority-2 sprites,
+which span y 56..79.
+
+**So OBJECT_70 is not a mask. It is a priority window.** Its twelve pieces are
+blank on hardware, and their whole function is that **a transparent OBJ pixel
+still claims the pixel's OBJ priority**. Inside that rectangle the OBJ layer
+composites at priority 2 rather than 3, ties with the priority-2 ground, and an
+OBJ beats a BG on a tie — so the player is drawn over the mud. As he sinks he
+slides out of the rectangle, loses the borrowed priority, and is clipped from
+the bottom up. That is the entire sinking effect, and it is why every previous
+pass found identical state and different pictures: the difference was never in
+the state, it was in a compositing rule.
+
+The port drops it in one line, in `virtuappu_mode1_render_obj_line`:
+
+```c
+if (color_index == 0u) {
+    continue;              /* transparent OBJ pixel contributes nothing at all */
+}
+```
+
+**The rule, pinned by two savestates.** The OBJ layer is composited against
+the BGs at the priority of the **last sprite in OAM order that covers the
+pixel**, opaque or not — not at the priority of the sprite that supplied the
+colour. The two are different quantities and routinely come from different
+sprites. Each savestate carries its own picture, so the state and the pixels it
+produced are readable from one file:
+
+| | transparent sprite | opaque sprite | last covering | hardware draws |
+|---|---|---|---|---|
+| swamp, (118,70) | OAM[14] prio 2 | OAM[7] prio 3 | **14 → prio 2** | ties the priority-2 ground, OBJ wins the tie → **the player** |
+| name entry, (27,52) | OAM[27] prio 1 | OAM[33] prio 2 | **33 → prio 2** | loses to BG1 at priority 1 → **white**, the letter's apex |
+
+Taking the *best* priority any covering sprite claims gets the swamp right and
+eats two pixels of that apex — which is exactly the regression the first
+attempt produced, and what identified the rule. "Last", not "best".
+
+VirtuaPPU walks OAM backwards, so the last sprite in OAM order is the first one
+reached: the claim is taken once and later, lower-index sprites leave it alone.
+It is kept in its own buffer, separate from the one that resolves sprites
+against each other — folding them together also loses colours, because that
+buffer decides which sprite's colour survives.
+
+**Verified.** Canonical route 11/11 pixel-identical; map-source audit 0
+mismatched in 265,497,600 fetches; and the dense 173-frame diff of the whole
+route at 240x160 is **identical on every frame** with and without the change,
+which is the bar a global renderer change has to clear (B38). On the
+maintainer's own 320x240 recording the frame before the mud is byte-identical
+to the pre-fix build and every frame in the mud differs, showing the player
+progressively clipped from the bottom exactly as mGBA draws him.
+
+**Lesson (45).** *Two scenes with the same shape and opposite answers are worth
+more than either alone.* The swamp said a transparent sprite lends its
+priority; the name-entry glyph said it does not. Only holding both at once
+gives the rule — "the last covering sprite", which neither scene implies by
+itself. The regression that first looked like a setback was the second data
+point, and the cheapest way to get it was to ship the wrong rule at a
+173-frame diff and read what it broke.
+
+**Where the change lives.** `libs/ViruaPPU`, the same submodule as B38's OBJ
+fix, on branch `b45-obj-priority-claim`. The submodule pointer needs bumping in
+this repo once that branch is pushed.
+
+**The sibling port reached the same wrong theory and shipped two workarounds
+for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
+commented "Object70's head-overlay sprite isn't wired up on PC yet ... fully
+invisible on the stairs / during the swamp sink", and their `port_draw.c` adds
+a per-scanline OBJ clip to fake the waterline. There is no head overlay to wire
+up — the ROM never loads that tile — so the first is a guess and the second
+reproduces the symptom rather than the mechanism. What their comment *is* good
+for is naming a **second scene with the same cause: stairs**, which is the
+type-1 case (`frameIndex` 12, a 16x24 mask) and has not been checked here.
+
+**Not fixed on purpose.** Both available fixes are guesses until the tile's
+real source is known: forcing priority 2 makes Link visible but unclipped and
+in front of scenery he should be behind, and inventing a scanline clip
+reproduces the symptom rather than the mechanism.
+
+## B46 — the wading overlay never draws in shallow water *(open, found by inspection)*
+
+Found while ruling the overlay out of B45, not from a report. Recorded because
+CLAUDE.md's rule is to guard the sibling while the reasoning is loaded.
+
+`ProcessEntityForDraw` renders a "shoes" overlay over an entity's feet when it
+stands on act tile **0x0F** (shallow water) or **0x2F** (tall grass), from the
+pointer table at ROM `0xB2B58`. That is what makes Link look like he is wading
+rather than standing on top of the water. **The port's index arithmetic can
+never reach the water entries, so it never draws.**
+
+The ARM (`asm/src/intr.s`) uses `(spriteSettings & 0x30)` as a **byte** offset
+and adds `frame * 2`, then indexes the pointer table with that byte offset
+divided by four:
+
+```
+ldrb r1, [r4, #0x18] ; and r1, r1, #0x30      @ byte offset, {0,16,32,48}
+...
+add  r2, r1, r2, lsl #1                        @ + frame*2
+ldr  sl, [r3, r2]                              @ table[byteOffset], i.e. index byteOffset>>2
+```
+
+The port instead computes `row = (ss & 0x30) >> 2` — `{0,4,8,12}` — and
+`idx = row + (frame << 1)`, which is `row + frame*2` where the ARM's is
+`row + frame/2`. Two consequences:
+
+- **Shallow water never draws at all.** Its frame is
+  `((gOAMControls.field_0x1 & 0x18) + 0x80) >> 2` = **32..38**, so the port's
+  `idx` is 64..76 and the guard is `idx < 16u`. It fails every time.
+- **Tall grass draws the wrong entry.** Its frame is `(x ^ y) & 6` =
+  `{0,2,4,6}`; the ARM wants table indices `row + {0,1,2,3}`, the port asks for
+  `row + {0,4,8,12}`.
+
+**And the table is bigger than the port's copy.** `sShoesOverlayPtrs` is
+declared `[16]` and `LoadShoesOverlayTableFromRom` reads sixteen words. Reading
+the ROM at `0xB2B58` shows **36** consecutive IWRAM pointers (0x03006848 …
+0x030068C5) before the data stops being pointers — the water entries the ARM
+indexes at 16..31 are inside that range and outside the port's copy. So even
+with the arithmetic fixed, the table has to grow.
+
+Not fixed here: it is a rendering change with no recording behind it yet, and
+the scene it affects — Link standing in shallow water or tall grass — is worth
+a before/after look by someone at the controls. The sibling port
+(`999sian/tmc`) fixed both halves, including reading the *integer* position
+bytes `x.HALF.HI ^ y.HALF.HI` for the grass frame where the port reads the
+fractional ones, so the frame jitters with sub-pixel motion instead of being
+stable per tile. That third point has not been verified here.
+
+## B47 — the port's `tmc.sav` will not load in mGBA or on hardware *(open, diagnosed)*
+
+Found 2026-08-22 when the maintainer tried to open one of their recording saves
+in mGBA and got an empty file select. Not a viewport bug; it has been true of
+every save this port has ever written.
+
+**The port stores each 8-byte EEPROM block in the opposite byte order to real
+hardware.** Side by side, the same save:
+
+```
+port :  41 47 42 5A 45 4C 44 41   "AGBZELDA"   ":THE MIN"   "ISH CAP:"
+mGBA :  41 44 4C 45 5A 42 47 41   "ADLEZBGA"   "NIM EHT:"   ":PAC HSI"
+```
+
+Every 8-byte group is reversed, and it holds at every offset checked. The mGBA
+side is not a guess: deleting the save and letting the real game initialise a
+fresh one produces that layout, so it is what hardware and every emulator write.
+
+**Why it happens.** EEPROM is a serial device — the game shifts 64 bits out
+MSB-first, and what lands in a `.sav` is that wire order. `port_save.c` skips
+the serial protocol entirely and implements the four BIOS entry points over a
+flat `sEeprom[8192]`, copying the game's 8 bytes straight in. The game's
+in-memory order is the reverse of the wire order, so the file comes out
+mirrored per block.
+
+**How it presents.** The game reads block 0, gets its signature back scrambled,
+decides the cartridge holds no valid file, and offers a new one — exactly the
+"booted to an empty save file" the maintainer saw. It is symmetric: a save from
+mGBA or a real cartridge will not load in the port either.
+
+**Confirmed by the fix working.** `tools/mgba/savconv.py` reverses each block;
+with the converted save, mGBA's EEPROM reads return `AGBZELDA`, the file select
+shows the file, and replaying the maintainer's recording reaches Castor Wilds
+gameplay (`BG2CNT = 0x1C42`) — which is how B45's hardware comparison became
+possible at all.
+
+**Not fixed in the port yet, on purpose.** Changing `port_save.c` to store the
+wire order makes every existing `tmc.sav` unreadable, including the maintainer's
+own and the seven `.script.sav` files the recordings depend on. It needs a
+migration: detect the old layout on load (block 0 reading `AGBZELDA` rather than
+`ADLEZBGA` is an unambiguous tell), convert in place, and keep writing the new
+one. Worth doing — save interchange with mGBA is what made this class of bug
+answerable — but it is a separate change with its own risk, and the converter
+covers the immediate need.
 
 ## D3 addendum: three scenes override their border colour
 

@@ -7,8 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty-two of the forty-four tracked bugs
-are closed; B41 and B42 are open.**
+complete — every spike landed and forty-three of the forty-seven tracked bugs
+are closed; B41, B42, B46 and B47 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -79,6 +79,36 @@ consecutive reports hit this. B43 was reclassified from "unknown" to "not a
 viewport bug" the moment the maintainer recorded the same cutscene on the
 240x160 build. That is a minute of their time and unreachable by any amount of
 inference.
+
+**There is a hardware oracle on this machine now — use it before arguing.**
+mGBA 0.10.2 runs headless under `SDL_VIDEODRIVER=dummy`, and its `-d` CLI
+debugger takes commands on stdin, so the real game can be replayed and read by
+script: `tools/mgba/README.md`. The game reads `REG_KEYINPUT` once per frame at
+`0x0801D6C4`, so `watch/r 0x04000130` is a per-frame breakpoint and `w/r r0`
+injects input — our capture scripts already hold GBA key masks, so one replays
+directly. OAM, DISPCNT/BGxCNT and OBJ VRAM are all at fixed addresses, so no
+game symbols are needed. Align the two runs on an *event* (B45 used "the frame
+the mask's twelve OAM entries appear"), not on a frame number, and watch for
+animation phase: the same scene frame with the walk cycle one frame apart
+changes the player's whole sprite decomposition. **A save must be converted
+first — see B47.** Three passes of inference on B45 reached a confident wrong
+answer; one replay settled it.
+
+**Two scenes with the same shape and opposite answers beat either alone
+(B45).** A blank sprite over the player lends its priority in the Castor Wilds
+swamp and must not in the name-entry glyph; only holding both at once gives the
+rule — the OBJ layer composites at the priority of the *last covering sprite in
+OAM order*, opaque or not, which neither scene implies by itself. The
+regression that looked like a setback was the second data point, and the
+cheapest way to get it was to ship the wrong rule at a 173-frame route diff and
+read what it broke.
+
+**And "every register matches" is not "the same picture" (B45).** Six passes
+compared OAM, BGCNT, maps, tilesets and object data against hardware, found
+them identical every time, and concluded the port was faithful — while the
+screen plainly differed. The mismatch was a compositing *rule*, which no state
+comparison can see. Get the picture before concluding from the state; an mGBA
+savestate carries both in one file.
 
 **A recording also ends where the bug did, and the fixed build runs past that
 point.** The B43 recording's input stops at frame 4033 because the screen had
