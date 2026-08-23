@@ -104,7 +104,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B42 | Table behind Vaati disappears when he warps out | **Open, no lead.** Elemental Sanctuary flashback. `vaatiAppearingManager.c` drives the same window/BG3 machinery as B41's suspect (`sub_0801E104`, `DISPCNT_BG3_ON`), which is suggestive and not evidence. Needs a recording |
 | B43 | Vaati takeover cutscene ends on a permanent black screen | **Fixed. NOT a viewport bug** — reproduced on the 240x160 play build from a recording made there, and on the pre-session baseline. `CreateVaatiApparateManager`'s `DeleteManager` call is a documented no-op on hardware (its argument is a ROM function pointer); a port commit re-pointed it at `gArea.transitionManager`, which during the takeover is a stale entity at the head of list 6, so `UnlinkEntity` writes `gEntityLists[6].first` back onto the overworld chain and the takeover orchestrator — never deleted, never unlinked — stops being reached. Restoring the hardware no-op fixes this, #93, and the missing fade-in; the #93 watchdog is removed |
 | B44 | Closing the window skips every SDL teardown step | **Fixed** 2026-08-20 — **not a viewport bug.** Window close sets `gQuitRequested` and `VBlankIntrWait` calls `exit(0)` from inside the frame loop, so `AgbMain` never returns and main()'s five teardown calls never run: the window, its renderer and textures, and the audio device stream stayed live, with the SDL audio callback thread running while atexit handlers and static destructors went off. Routed through one idempotent `Port_Shutdown()` |
-| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and that tile is a **red herring** — the mask it draws is blank on hardware too. **mGBA screenshots from the maintainer show the player clearly visible in the mud and clipped from the bottom**, while hardware OAM shows his sprite never clipped (32 px, two pieces, all sink) and at priority 3 throughout. He is therefore seen *through a pit in the priority-2 ground*, and the port's BG2 has no such pit — `TMC_MASK_BG2` leaves 24 non-magenta pixels around him, all sprites. Open: which tiles the bottom map holds under him on hardware, and why the port's are opaque |
+| B45 | Link vanishes entirely on entering Castor Wilds mud | **Open, diagnosed. NOT a viewport bug** — the decisive state is byte-identical at 240x160. `OBJECT_70` puts the player at OAM priority 3 (behind BG2's opaque ground, which is correct and matches the ARM), so what stays visible must be `OBJECT_70` itself; it emits twelve OAM entries a frame and every one points at OBJ VRAM **tile 133, which is all zeros**. Its definition carries `gfx_type` 2 — *load nothing, use fixed tile 133* — and that tile is blank on hardware too — because **OBJECT_70 is a priority window, not a mask**. A savestate (state and picture in one file) shows the player at priority 3 over opaque priority-2 ground, drawn where the twelve blank priority-2 sprites cover him and hidden where they do not: a transparent OBJ pixel still claims the pixel's OBJ priority, so the OBJ layer composites at 2, ties with the ground and wins. VirtuaPPU drops transparent OBJ pixels outright (`if (color_index == 0u) continue;`). Fixing that renders the sink correctly and passes 11/11, but the dense route diff moves 2 px of the file-select letter, so the leak rule is not yet exact |
 | B46 | The wading overlay never draws in shallow water | **Open, found by inspection while ruling it out of B45.** `ProcessEntityForDraw`'s feet overlay (ROM table `0xB2B58`) uses `(spriteSettings & 0x30) >> 2` plus `frame << 1` where the ARM uses `(ss & 0x30)` as a *byte* offset plus `frame * 2`, i.e. `row + frame/2`. Shallow water's frames are 32..38, so the port's index is 64..76 against an `idx < 16` guard and it never draws; tall grass draws the wrong entry. The ROM table has 36 pointers, the port copies 16 |
 | B47 | The port's `tmc.sav` will not load in mGBA or on hardware | **Open, diagnosed.** `port_save.c` skips the EEPROM serial protocol and stores each 8-byte block in the game's in-memory order; hardware stores the wire order, which is the reverse. Confirmed against a save the real game initialised under mGBA. The game reads its signature back scrambled and offers a new file — symmetric, so emulator saves do not load in the port either. `tools/mgba/savconv.py` converts either way; fixing `port_save.c` needs a migration for existing saves |
 | B32 | MinishPaths parallax grass pops in instead of scrolling | **Fixed** 2026-08-20 — the manager re-bases its layers' 32-tile screenblock every 64 px, and `yOffset + 240` runs past the block's 256 px. Re-based on 16 px instead; both layers now scroll with zero residual on every frame pair |
@@ -3553,7 +3553,7 @@ the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
 
-## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — every layer matches hardware and the pictures still differ)*
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(root cause found: a transparent OBJ pixel claims its priority; fix not yet clean)*
 
 Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
 Walking west into the swamp should clip the bottom of Link's sprite gradually
@@ -3944,6 +3944,77 @@ Shift+F1 as `<rom>.ss1`.
 **Still standing from earlier passes, and unaffected:** the ripple palette
 defect (hardware 9, port 12, at identical positions with identical tiles), and
 B47's save byte order.
+
+**Seventh pass — root cause found, from a savestate.** The maintainer's mGBA
+savestate is a PNG with the state in `gbAs`/`gbAx` chunks, so it carries the
+frame's **picture and its state together** — which is exactly what every
+previous pass lacked. Decompressed, the block layout is
+`[header 0x800][PRAM 0x800][OAM 0xC00][VRAM 0x1000][IWRAM 0x19000][WRAM 0x21000]`.
+
+Reading a column through the player at x=118 in that frame, against the
+screenshot decoded from the same file:
+
+| rows | BG0 | BG1 | BG2 | OBJs covering (entry, priority) | what the screen shows |
+|---|---|---|---|---|---|
+| 60–62 | 0 | 0 | **6** | — | mud |
+| 63–78 | 0 | 0 | **6** | (7, prio 3) | **the player** |
+| 79–82 | 0 | 0 | **6** | (9, prio 3) | mud |
+| 83–89 | 0 | 0 | **6** | (23, prio 3) | mud |
+
+BG2 is opaque at **every** row, and every one of the player's pieces is at
+priority 3 — yet entry 7 is drawn over the ground and entries 9 and 23 are not.
+The only thing that distinguishes them is the twelve blank priority-2 sprites,
+which span y 56..79.
+
+**So OBJECT_70 is not a mask. It is a priority window.** Its twelve pieces are
+blank on hardware, and their whole function is that **a transparent OBJ pixel
+still claims the pixel's OBJ priority**. Inside that rectangle the OBJ layer
+composites at priority 2 rather than 3, ties with the priority-2 ground, and an
+OBJ beats a BG on a tie — so the player is drawn over the mud. As he sinks he
+slides out of the rectangle, loses the borrowed priority, and is clipped from
+the bottom up. That is the entire sinking effect, and it is why every previous
+pass found identical state and different pictures: the difference was never in
+the state, it was in a compositing rule.
+
+The port drops it in one line, in `virtuappu_mode1_render_obj_line`:
+
+```c
+if (color_index == 0u) {
+    continue;              /* transparent OBJ pixel contributes nothing at all */
+}
+```
+
+**A first fix works and is not yet correct.** Recording the claimed priority
+(the best priority any covering sprite asks for, transparent or not) and
+compositing the OBJ layer at that instead of the colour's own priority makes
+the mud render exactly like hardware — the player visible on entering and
+clipped progressively to the top of his head. The canonical route is 11/11 with
+it in.
+
+But the dense 173-frame route diff is **not** clean: four frames differ, in all
+of them the same two pixels, `(27,52)` and `(27,53)` — part of the file-select
+letter glyph, which goes from white to the orange of the disc behind it.
+Disabling OBJ and disabling BG0 both leave those pixels white, so the letter is
+on BG1 or BG2 and the change has pulled a sprite in front of a background it
+belongs behind. The claim rule as written is therefore too broad: it is right
+for the swamp's priority-2 window over priority-2 ground and wrong here.
+
+Two attempts, both rejected by that diff: letting the claim lower the priority
+buffer directly (which also loses colours, because the same buffer resolves
+sprites against each other), and keeping a separate claim buffer folded in at
+the end of the line (which keeps the colours but still moves the sprite in
+front of the letter).
+
+**What is needed:** the exact rule by which a transparent sprite's priority
+leaks. A savestate of the **file select** answers it in one step — it says
+whether hardware draws that pixel white or orange, i.e. whether the sprite
+belongs in front of the letter there or not. If orange, the rule above is right
+and the port has been wrong on that glyph all along; if white, the leak is
+conditional and the condition is whatever distinguishes the two scenes.
+
+**Not merged.** The change lives in the `libs/ViruaPPU` submodule, which is
+where B38's OBJ fix went too, and it is not ready to bump until that diff is
+clean.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
