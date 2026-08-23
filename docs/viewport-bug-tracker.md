@@ -3553,7 +3553,7 @@ the leak has nothing to leak. The gate is green across this fix in both
 directions and always would have been. Exit paths are worth reading rather than
 testing here.
 
-## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — the port's ground layer has no mud pit; hardware shows him through it)*
+## B45 — Link vanishes entirely on entering Castor Wilds mud *(open — every layer matches hardware and the pictures still differ)*
 
 Reported 2026-08-22 with a recording (`mud_sink_visual_glitch.script`, 320x240).
 Walking west into the swamp should clip the bottom of Link's sprite gradually
@@ -3889,6 +3889,61 @@ sprites, priorities and object data against the ROM and agreed with hardware
 every time, because the layer that was actually wrong was never in the
 comparison. One look at the real screen refuted the whole chain in a second.
 Ask for the picture before concluding from the state.
+
+**Sixth pass: the port put at 240x160, which makes the layers comparable — and
+every layer matches.** The earlier passes compared a 320x240 port against
+240x160 hardware, which is unsound for anything scroll-dependent. Rebuilt at
+240x160 and replayed the same recording: it reaches the same sink, and the
+alignment is exact — the twelve mask entries and the four ripple entries are at
+**identical screen positions** in both (mask x 109/117/125/133, y 56/64/72;
+ripple 80/116, 80/126, 85/119, 85/123). So the two runs are on the same frame
+of the same scene and the backgrounds can be diffed directly.
+
+They agree, everywhere it matters:
+
+| compared | result |
+|---|---|
+| BG2 screenblock (`0x0600E000`, 1024 entries) | **0 differ** |
+| BG1 screenblock (`0x0600E800`, 1024 entries) | **0 differ** |
+| BG2 char base (`0x06000000`, 8192 halfwords) | 254 differ, in tiles 356–381 |
+| …transparency of those tiles | **identical**: 21 tiles hold transparent pixels, 705 pixels, and **no tile differs** in its transparent-pixel count |
+| every tile under the player (screen x 104–144, y 48–96) | **fully opaque, 0 transparent pixels, in both** |
+
+The 26 differing tiles are all fully opaque on both sides — a background
+tile-animation phase difference, not a pit.
+
+**And the hardware OAM is unambiguous, read raw rather than decoded:**
+
+```
+ 7  attr0=8036 attr1=8075 attr2=6D60   OBJ mode 0 (normal)  priority 3  tile 352  pal 6
+ 8  attr0=803E attr1=0085 attr2=6D68   OBJ mode 0 (normal)  priority 3  tile 360  pal 6
+13  attr0=0038 attr1=006D attr2=0885   OBJ mode 0 (normal)  priority 2  tile 133  pal 0
+```
+
+`DISPCNT = 0x1740` — no windows, BG3 off. No OBJ is in window or
+semi-transparent mode.
+
+**So this is now a contradiction, stated plainly.** By the hardware rule an OBJ
+at priority 3 is behind a BG at priority 2, and every BG2 tile over the player
+is opaque in both emulators, from identical maps and identical transparency. He
+therefore cannot be drawn — and mGBA draws him. The port renders him hidden at
+240x160 through **both** paths, the map-source one and `--no-map-sampling`'s
+screenblock one, so it is not the port's map sampling either.
+
+One of the premises is false and the measurements above do not say which. The
+port shares whatever the false premise is, which is why it produces the wrong
+picture from state that matches.
+
+**What resolves it in one step:** a savestate taken at the moment of one of
+those screenshots, so the exact state behind a *known picture* can be read.
+Every dump above is from a replay whose picture cannot be seen from here;
+pairing one frame's state with one frame's image is the only way to find which
+layer is actually producing the visible pixels. mGBA writes savestates with
+Shift+F1 as `<rom>.ss1`.
+
+**Still standing from earlier passes, and unaffected:** the ripple palette
+defect (hardware 9, port 12, at identical positions with identical tiles), and
+B47's save byte order.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,

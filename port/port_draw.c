@@ -1318,6 +1318,38 @@ static void ProcessDeferredList(void) {
  * can be diffed entry for entry. Printed on the 1st, 21st and 61st frame of a
  * sink so the comparison is against a matched point in the scene rather than a
  * matched frame number (the two emulators' clocks differ by a constant). */
+/* BG2's screenblock and BG1's, so the two emulators' ground layers can be
+ * diffed. Only meaningful with the port at 240x160: the screenblock is written
+ * from the camera, so a different viewport gives a different scroll and the
+ * two maps do not correspond. */
+static void SinkDumpMaps(void) {
+    struct { const char* name; u32 addr; } bl[] = {
+        { "bg2map", 0x0600E000u }, { "bg1map", 0x0600E800u },
+    };
+    int b, i;
+    fprintf(stderr, "[sink-scroll] bg1=(%d,%d) bg2=(%d,%d) bg3=(%d,%d)\n",
+            (int)gScreen.bg1.xOffset, (int)gScreen.bg1.yOffset,
+            (int)gScreen.bg2.xOffset, (int)gScreen.bg2.yOffset,
+            (int)gScreen.bg3.xOffset, (int)gScreen.bg3.yOffset);
+    {   /* BG2's char base (0) — the pixels the map entries point at. */
+        const u16* c = (const u16*)gba_TryMemPtr(0x06000000u);
+        int i;
+        if (c)
+            for (i = 0; i < 8192; i += 8)
+                fprintf(stderr, "[sink-bg2chr] %5d: %04X %04X %04X %04X %04X %04X %04X %04X\n",
+                        i, c[i], c[i+1], c[i+2], c[i+3], c[i+4], c[i+5], c[i+6], c[i+7]);
+    }
+    for (b = 0; b < 2; b++) {
+        const u16* m = (const u16*)gba_TryMemPtr(bl[b].addr);
+        if (!m) continue;
+        for (i = 0; i < 1024; i += 8) {
+            fprintf(stderr, "[sink-%s] %4d: %04X %04X %04X %04X %04X %04X %04X %04X\n",
+                    bl[b].name, i, m[i], m[i+1], m[i+2], m[i+3],
+                    m[i+4], m[i+5], m[i+6], m[i+7]);
+        }
+    }
+}
+
 static void SinkDumpOam(void) {
     int i;
     fprintf(stderr, "[sink-oam] frame %u (sink frame %d)\n",
@@ -1371,6 +1403,8 @@ void ram_DrawEntities(void) {
         if (lastDumped != sSinkOamArm) {
             lastDumped = sSinkOamArm;
             SinkDumpOam();
+            if (sSinkOamArm == 1)
+                SinkDumpMaps();
         }
     }
 
