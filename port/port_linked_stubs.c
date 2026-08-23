@@ -86,7 +86,10 @@ u8 gUnk_02022830[0x1800] __attribute__((aligned(4))); /* u16[0xc00] on GBA; also
 u8 gUnk_02024048 = 0;                                 /* pending sound count (used by DrawEntity) */
 u8 gUnk_020246B0[0x1800] __attribute__((aligned(4))); /* u16[0xc00] scroll tilemap buffer */
 u8 gUnk_02033290[0x1000] __attribute__((aligned(8))); /* Manager pool: 32 Temp structs (128 bytes each on 64-bit) */
-u8 gUnk_020342F8[0x100] __attribute__((aligned(4)));  /* delayedEntityLoad array */
+/* gUnk_020342F8 is aliased to gArea.filler6 (its real home on GBA:
+ * 0x02033A90 + 0x868) by a macro in each user — see npc.c. It must not
+ * have storage of its own, or the delayed-entity bitfield is written in
+ * one object and read in another. */
 u8 gUnk_02034330[0x20] __attribute__((aligned(4)));   /* struct_gUnk_02034330 (24 bytes) */
 struct_02034480 gUnk_02034480;
 u8 gUnk_02034492[0x10] __attribute__((aligned(4))); /* u8 array (pauseMenu) */

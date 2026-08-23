@@ -35,8 +35,12 @@ struct RomFingerprint {
  * 1: room-property blobs rejoined across the four-byte pointer holes the
  *    asset index leaves between fragments of one decomp symbol (house-door
  *    lists in Hyrule Town and Lon Lon Ranch were truncated at their first
- *    embedded script pointer). */
-constexpr int kExtractorFormatVersion = 1;
+ *    embedded script pointer).
+ * 2: entity and tile-entity list blobs extended to the terminator record the
+ *    engine's walk actually reads. Twelve symbols have no terminator of their
+ *    own and borrow the next symbol's on hardware, which a per-symbol heap
+ *    buffer cannot supply — every beanstalk room crashed on entry. */
+constexpr int kExtractorFormatVersion = 2;
 
 RomFingerprint ComputeRomFingerprint(const std::filesystem::path& rom_path)
 {

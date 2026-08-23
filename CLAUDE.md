@@ -59,7 +59,7 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Seven of this milestone's defects were live in the shipping 240×160 build or
+**Nine of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
 them, B23 and B25 only because it made the rolling barrel worth playing, and
 B43 only because the maintainer recorded the cutscene at 240x160 on request. The regression gate proves the shipping build did not *move*; it cannot
@@ -363,6 +363,30 @@ the fragments; **a change there reaches nobody who is past first run** unless
 fingerprints the ROM. Scan `data/map/entity_headers.s` for symbols whose body
 mixes `.incbin` with `.4byte` to enumerate the rest — there are five.
 
+**A symbol's length is not its extent, and a list may borrow the next symbol's
+terminator (B48).** `LoadRoomEntityList` walks 16-byte records until
+`kind == 0xFF`; twelve room-property lists contain no such record at all —
+every beanstalk room, Temple of Droplets 51, Dark Hyrule Castle 2. On hardware
+the walk steps past the symbol and stops on the *next* one's
+`entity_list_end`, which contiguous ROM makes a defined read. Per-symbol heap
+buffers have no next symbol, so the walk hit allocator slack and reached
+`AppendEntityToList(ent, dat->flags & 0xF)` with a garbage nibble — out of
+bounds on a 9-element `gEntityLists`, and a **crash in every beanstalk in the
+game, at both sizes**. `extend_room_property_to_terminator` grows such a blob
+to the terminator hardware would find. Ask of extracted data not *is this
+symbol complete* but *does it contain everything the consumer will read* — and
+sweep the whole population by mechanism: the report named one room and the
+mechanism named twelve. Note the extractor's `scan_pointer_table_count(…, 64)`
+invents rooms past each area's real table, so an exhaustive sweep must be
+filtered against the decomp's declared room lists or it reports ten times the
+real population.
+
+**When the crash site moves between identical runs, stop reading it (B48).**
+Three replays of one script faulted in three places, because the segfault is
+downstream of a memory corruption rather than being the defect. Break on the
+first operation that is already wrong — a conditional breakpoint on the
+out-of-range index, not on the fault — and the backtrace stops moving.
+
 **A decompiled symbol may be a window onto a bigger contiguous block, and
 the port only allocates what the symbol declares (B36).** Mt Crenel's weather
 manager cross-fades the summit against `gPalette_549 + 0xD0` — 13 palettes
@@ -381,6 +405,31 @@ afterwards. `TMC_MASK_BG<n>` kills the first in one run (it bypasses palette
 *and* blend), `TMC_BLEND_TRACE` kills the third by reading BLDCNT rather than
 inferring it, and per-row palette counts localise what is left. **And when the
 writer is still unaccounted for, a watchpoint costs one run** — B36's took one.
+
+**A symbol named for an address and a struct field can be the same bytes, and
+the port gives each its own storage (B50).** `gUnk_020342F8` *is*
+`gArea.filler6` on GBA — `gArea` at `0x02033A90`, `filler6` at offset `0x868`
+— and the decomp spells it both ways by file. `port_linked_stubs.c` allocated
+a separate `u8[0x100]`, so `delayedEntityLoadManager.c` set the delayed-entity
+bits in one object while `whirlwind.c` and `cutsceneMiscObject.c` read another
+that nothing ever wrote, and every gated entity deleted itself before its Init:
+all 44 conditional whirlwinds in the game plus Cloud Tops' 10 clouds. Nothing
+warns — both halves compile, link and work on their own object. **The ROM's
+literal pool settles it in seconds**: `0x02033A90` appears 196 times and
+`0x020342F8` five, and the two spellings' bit arithmetic lands on the same
+byte and bit. Alias such a symbol (`#define` onto the field, as `common.c`
+already does for `gUnk_02035542` → `gzHeap + 2`) rather than giving it storage.
+Same family as B36 and B29. **A `gUnk_0203xxxx` array in
+`port_linked_stubs.c` whose address falls inside another object's range is the
+thing to grep for.**
+
+**A report that arrives with its own working control is worth answering in the
+order it hands you (B50).** "Mt Crenel's tornados are visible, Lon Lon Ranch's
+are not" ruled out the object, its sprite, palette and animation before any
+code was read: same object, two spawn paths, and only the *conditional* one
+was broken — Mt Crenel's are plain `object_raw` with `health == 0`, so the gate
+never runs. Ask what differs between the working and broken instance before
+asking what the broken one does.
 
 **A grep over source cannot see an address that only exists as data.** Spike 6
 relocated `gBG0Buffer` out of `gEwram[0x34CB0]`, searched the tree for code
@@ -568,3 +617,9 @@ that altered what the shipping build renders. 240x160 is the shipping build.
   black. This has produced false results before.
 - When a fix makes a measurement jump to its theoretical best, confirm the code
   you think produced it actually ran. That has produced false results too.
+- **A `warp` needs a save in the harness.** It retries until `TASK_GAME`, and a
+  temp dir with no `tmc.sav` never gets there — the run sits on the name-entry
+  screen and every `dump` after the warp photographs *that*. Two such runs at
+  two viewport sizes agree perfectly and mean nothing; B48's first cross-size
+  A/B scored 0.00% that way. Copy a save in, and `dump` the frame before the
+  warp so the comparison has a witness that it reached the room.
