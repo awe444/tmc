@@ -59,7 +59,7 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Seven of this milestone's defects were live in the shipping 240×160 build or
+**Eight of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
 them, B23 and B25 only because it made the rolling barrel worth playing, and
 B43 only because the maintainer recorded the cutscene at 240x160 on request. The regression gate proves the shipping build did not *move*; it cannot
@@ -363,6 +363,30 @@ the fragments; **a change there reaches nobody who is past first run** unless
 fingerprints the ROM. Scan `data/map/entity_headers.s` for symbols whose body
 mixes `.incbin` with `.4byte` to enumerate the rest — there are five.
 
+**A symbol's length is not its extent, and a list may borrow the next symbol's
+terminator (B48).** `LoadRoomEntityList` walks 16-byte records until
+`kind == 0xFF`; twelve room-property lists contain no such record at all —
+every beanstalk room, Temple of Droplets 51, Dark Hyrule Castle 2. On hardware
+the walk steps past the symbol and stops on the *next* one's
+`entity_list_end`, which contiguous ROM makes a defined read. Per-symbol heap
+buffers have no next symbol, so the walk hit allocator slack and reached
+`AppendEntityToList(ent, dat->flags & 0xF)` with a garbage nibble — out of
+bounds on a 9-element `gEntityLists`, and a **crash in every beanstalk in the
+game, at both sizes**. `extend_room_property_to_terminator` grows such a blob
+to the terminator hardware would find. Ask of extracted data not *is this
+symbol complete* but *does it contain everything the consumer will read* — and
+sweep the whole population by mechanism: the report named one room and the
+mechanism named twelve. Note the extractor's `scan_pointer_table_count(…, 64)`
+invents rooms past each area's real table, so an exhaustive sweep must be
+filtered against the decomp's declared room lists or it reports ten times the
+real population.
+
+**When the crash site moves between identical runs, stop reading it (B48).**
+Three replays of one script faulted in three places, because the segfault is
+downstream of a memory corruption rather than being the defect. Break on the
+first operation that is already wrong — a conditional breakpoint on the
+out-of-range index, not on the fault — and the backtrace stops moving.
+
 **A decompiled symbol may be a window onto a bigger contiguous block, and
 the port only allocates what the symbol declares (B36).** Mt Crenel's weather
 manager cross-fades the summit against `gPalette_549 + 0xD0` — 13 palettes
@@ -568,3 +592,9 @@ that altered what the shipping build renders. 240x160 is the shipping build.
   black. This has produced false results before.
 - When a fix makes a measurement jump to its theoretical best, confirm the code
   you think produced it actually ran. That has produced false results too.
+- **A `warp` needs a save in the harness.** It retries until `TASK_GAME`, and a
+  temp dir with no `tmc.sav` never gets there — the run sits on the name-entry
+  screen and every `dump` after the warp photographs *that*. Two such runs at
+  two viewport sizes agree perfectly and mean nothing; B48's first cross-size
+  A/B scored 0.00% that way. Copy a save in, and `dump` the frame before the
+  warp so the comparison has a witness that it reached the room.

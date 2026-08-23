@@ -2,24 +2,27 @@
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
 playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
-from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B34 is the only one found by instrument rather than by report. B16 and B17 were
+from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B34, B46 and B49 were found by instrument rather than by report. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-three of the forty-seven
-bugs are closed: forty-one fixed with a root cause and evidence, and B4 closed
+complete — see `docs/milestone2-status.md`.** Forty-four of the forty-nine
+bugs are closed: forty-two fixed with a root cause and evidence, and B4 closed
 as **no longer observed** rather than diagnosed. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
 state and picture together; `tools/mgba/README.md` is the technique, and B45
-and B47 are what it produced. **B41, B42, B46 and B47 are
+and B47 are what it produced. **B41, B42, B46, B47 and B49 are
 open.** B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
 **closed 2026-08-22** against mGBA, which turned out to run headless here and
 to write savestates carrying a frame's state and picture together. **B46**
 was found by inspection while ruling a mechanism out of B45 — the second bug in
-the tracker found by instrument rather than by report, after B34. **B43 closed 2026-08-22**, once the maintainer's 240x160
+the tracker found by instrument rather than by report, after B34; **B49** is
+the third, found 2026-08-23 while A/B-ing B48's fix against the shipping size.
+**B48** arrived 2026-08-22 as "the game hangs climbing the beanstalk" and was a
+SIGSEGV in every beanstalk in the game, at both sizes. **B43 closed 2026-08-22**, once the maintainer's 240x160
 recording made it reproducible on the shipping build: it was one port-only line
 in `CreateVaatiApparateManager`, and it owned #93 as well. **B36 is not a viewport bug at all** — it
 reproduces at 240x160 and was live in the shipping build; it arrived as a
@@ -30,10 +33,10 @@ layer *reach* further, and the fix was to stop it wrapping and pin it to the
 edge it belongs to. B34 was found the same day, in the same layer, by the
 instrument built to look at it.
 
-**Seven of these were live in the shipping 240×160 build or through all of
+**Eight of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
-veto, B23's angle-gate bypass, B25's post-menu buffer copy and B28's truncated
-room properties. The expansion exposed them; it did not cause them, and B23 and
+veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
+room properties and B48's unterminated ones. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
 playing. This document stays the authoritative record of what the expansion
 actually did to the engine — which includes distinguishing that from what it
@@ -44,6 +47,11 @@ It is a port data bug: the same picture and the same walk-through door at both
 sizes, reported only because someone was playing the 320×240 build. Kept here
 because this is where the port's bugs are tracked, not because it is a
 viewport defect.
+
+**B48 is the same again and the worst of them** — a crash rather than a
+picture, in every beanstalk in the game, at both sizes. Like B28 it is
+extracted data disagreeing with ROM, and like B28 it was reported only because
+someone was playing the 320×240 build.
 
 **B29 looks identical from the outside and is the opposite.** It too reproduces
 at 240×160, but it is a Milestone 1 regression: Spike 6 relocated `gBG0Buffer`
@@ -115,6 +123,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B31 | Every Hyrule Town tileset slot is undeclared from room entry until its first camera swap | **Fixed** 2026-08-20 — the manager's init reset ran a frame *after* OnEnterRoom had declared the room's slots and wiped all three. Only a group change re-declares, so the periphery drew from the centred screen's group until the camera crossed a threshold |
 | B30 | Scenery in the outer 40 px drawn from the previous room's tileset until the camera moves | **Fixed** 2026-08-18 — the residual B27 case. A slot whose regions the centred 240x160 never touches is never loaded, and `LoadGfxGroup` is the only thing that declares a slot, so it had no per-tile answer at all. Declared now with no resident group |
 | B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
+| B48 | Climbing any beanstalk crashes the port | **Fixed** 2026-08-23 — **not a viewport bug: a SIGSEGV, not the reported hang, and size-independent.** Twelve room-property entity lists carry no `entity_list_end` of their own and borrow the *next symbol's* on hardware, which contiguous ROM makes a defined read. Each extracted into its own heap buffer, the walk ran into allocator slack and appended entities to `gEntityLists[11..14]` of 9. All ten beanstalk rooms, plus Temple of Droplets 51 and Dark Hyrule Castle 2. The extractor now extends such a blob to the terminator hardware would find; `kExtractorFormatVersion` 2 |
+| B49 | Beanstalk-top rooms' sky renders differently at 320x240 | **Open, measured, undiagnosed.** Found by instrument while A/B-ing B48's fix. `Area_Beanstalks` room 0 differs from the centred 240x160 sub-rect by 1352 BG-only px (3.52%) in the sky rows 0-46 and 120-159; the climb room next door is 0. Static layer, same figure on all twelve candidate frames, so not animation phase. Suspects are B32/B34's screenblock height and B21/B37's BG3 clip; neither tested. Cosmetic |
 
 ---
 
@@ -4146,6 +4156,173 @@ migration: detect the old layout on load (block 0 reading `AGBZELDA` rather than
 one. Worth doing — save interchange with mGBA is what made this class of bug
 answerable — but it is a separate change with its own risk, and the converter
 covers the immediate need.
+
+## B48 — climbing any beanstalk crashes the port *(fixed)*
+
+Reported 2026-08-22 with a recording and a save, as a hang at the top of Mt
+Crenel. It is not a hang: the process takes **SIGSEGV**, and it is not a
+viewport bug — the crash is size-independent and the crashing data is the same
+at 240x160.
+
+**It is every beanstalk in the game, not this one.** All ten `Area_Beanstalks`
+rooms carry the defect, plus Temple of Droplets' lantern/scissors room and Dark
+Hyrule Castle's northwest outside.
+
+**Symptom is a moving target, which is the first thing worth recording.** Three
+replays of the same script crashed in three different places — twice in
+`AppendEntityToList`, once in `UpdateEntities` a good while later. The fault
+address moves with the heap, because the crash is downstream of a memory
+corruption rather than being the defect itself. Breaking on the *first*
+out-of-range list index instead of on the segfault is what made it a fixed
+point:
+
+```
+#0  AppendEntityToList (entity=…, listIndex=11) at src/entity.c:616
+#1  RegisterRoomEntity (ent=…, dat=…)           at src/room.c:124
+#2  LoadRoomEntity (dat=…)                      at src/room.c:82
+#3  LoadRoomEntityList (listPtr=…)              at src/room.c:60
+#4  LoadRoom ()                                 at src/room.c:315
+```
+
+`gEntityLists` has nine elements. `listIndex` arrives as 11, 13 or 14 depending
+on the run, out of `dat->flags & 0xF` — so the entity record being read is not
+an entity record at all.
+
+**Root cause.** `Entities_Beanstalks_MountCrenelClimb_1` is sixteen bytes long
+and holds exactly one `object_raw`. It has **no `entity_list_end`**:
+
+```
+Entities_Beanstalks_MountCrenelClimb_1:: @ 080F6D4C
+	object_raw subtype=0x2c, x=0x78, y=0xb8, paramA=0x7
+                                          @ ← no terminator
+Enemies_Beanstalks_MountCrenelClimb::   @ 080F6D5C
+	entity_list_end
+```
+
+`LoadRoomEntityList` walks records until `kind == 0xFF`. On hardware it reads
+the one real record, steps to `0x080F6D5C`, and stops on the `0xFF` that
+belongs to **the next symbol**. ROM is contiguous, so that read is defined and
+the list ends where the author meant it to — the terminator is simply
+borrowed. Verified in the ROM: the sixteen bytes after each of the twelve
+blobs are `ff 00 00 …`.
+
+The port gives each symbol its own heap allocation, where there is no next
+symbol. The walk runs into allocator slack — the buffer at the crash was a
+16-byte chunk followed by glibc's chunk header, then a host pointer, then the
+string `room_properties/offset_f6d4c.bin` — reads a pointer's low nibble as a
+list index, and appends an entity to `gEntityLists[11]`. Everything after that
+is corruption.
+
+**This is B16's class, not B28's.** B28 was extraction *truncating* a blob
+below its symbol; here the blob is exactly its symbol's size and the symbol is
+genuinely unterminated. Both land on the same sentence: *an out-of-range read
+is defined on hardware because ROM is contiguous, and undefined once every
+symbol is its own allocation.*
+
+**Fix.** `extend_room_property_to_terminator` in the extractor. An entity list
+(properties 0-2, 16-byte records, `kind == 0xFF`) or a tile-entity list
+(property 3, 8-byte records, `type == 0`) that contains no terminator of its
+own is extended, from the ROM, to the terminator the hardware walk would find —
+so the extracted bytes are the bytes hardware reads and no engine code needs a
+port-only bound. `kExtractorFormatVersion` is bumped to **2**; without that the
+fix reaches nobody past first run, which is B28's own lesson.
+
+**Swept by mechanism, not by report.** Every room-property blob the port ships
+was checked against its consumer's terminator convention rather than only the
+reported room. Twelve unterminated blobs sit in real rooms; all twelve need
+exactly one extra record, and after the fix **0** remain:
+
+| Area | Rooms | Property |
+|---|---|---|
+| 13 `Beanstalks` | 0-4 (tops), 16-20 (climbs) | 1 |
+| 96 `TempleOfDroplets` | 51 `LanternScissors` | 0 |
+| 137 `DarkHyruleCastleOutside` | 2 `OutsideNorthwest` | 0 |
+
+A first pass counted 127 rather than 12, because the extractor's
+`scan_pointer_table_count(…, 64)` over-reads every area table into its
+neighbour and invents rooms — `Area_GreatFairies` declares 8 entries and the
+sweep reported defects in its "rooms" 38 to 63. Filtering against the decomp's
+declared room lists is what reduced it to a population worth acting on. The
+phantom blobs are extended too (harmlessly, they are never loaded); 24 remain
+unterminated past the 64-record guard and every one is a phantom.
+
+**Evidence.** Against the same area tables, unterminated list entries drop from
+**696 to 169**, and none of the 169 is reachable. All 131 changed blobs were
+checked to be strictly additive: prefix byte-identical, longer, and equal to
+the ROM at their own offset — so nothing that already terminated could lose its
+terminator, and none did. 2,045 real-room lists now terminate.
+
+**Verification.** The maintainer's recording replays to completion through the
+installed play build (exit 0 where it previously took SIGSEGV around frame
+5600), and the climb finishes: `area=13 room=0`, Link on the cloud tops. Gate
+11/11 and `fetches=265497600 mismatched=0`.
+
+**Reproduced at 240x160, which is how "not a viewport bug" is known.** The
+pre-fix 240x160 play binary, extracting with the pre-fix extractor (blob 16
+bytes), warped into `Area_Beanstalks` room 16 and took SIGSEGV through the same
+call chain — `AppendEntityToList(…, listIndex=10)` from `RegisterRoomEntity`.
+The fixed 240x160 build walks the same script clean.
+
+**The rooms are 240x160, so the climb wears a 40 px border at 320x240**, and
+its single-colour column runs 0-39 and 280-319 are the room ending rather than
+a clip. With OBJ and BG0 off, the climb room's layers are **0 differing pixels**
+against the centred sub-rect of the 240x160 build. The *top* room is not — see
+**B49**, which this fix made reachable and did not cause.
+
+**A first attempt at that comparison scored 0.00% on both rooms and was
+worthless**: the harness had no `tmc.sav`, so the warp — which retries until
+`TASK_GAME` — never fired, and both builds were photographed sitting on the
+name-entry screen. Two identical wrong pictures. The repo's own rule caught
+it late: *when a measurement jumps to its theoretical best, confirm the code
+you think produced it actually ran.* A `dump` of the frame before the warp is
+the cheap guard and is now in the script.
+
+**Lesson (40).** *When the crash site moves between identical runs, stop
+reading it.* It is a report about the heap, not about the defect. Find the
+first operation that is already wrong — here, the first out-of-range list
+index — and break there instead; it sat four frames below the segfault and
+never moved.
+
+**Lesson (41).** *A decomp symbol's length is not its extent.* Any list the
+engine walks to a sentinel may be relying on the next symbol to supply it,
+which is free on contiguous ROM and unavailable to a per-symbol allocation.
+The question to ask of extracted data is not "is this symbol complete" but
+"does it contain everything the consumer will read".
+
+## B49 — beanstalk-top rooms' sky renders differently at 320x240 *(open, measured, undiagnosed)*
+
+Found 2026-08-23 by instrument, while checking B48's fix against the 240x160
+build. The third bug in the tracker found that way, after B34 and B46. **B48
+made these rooms reachable; it did not cause this** — the fix only extends an
+entity list, and the difference is in a background layer.
+
+`Area_Beanstalks` room 0, `Room_Beanstalks_MountCrenel`, the cloud tops Link
+arrives at. Warped to from the maintainer's save at both sizes, with
+`TMC_DISABLE_OBJ=1 TMC_DISABLE_BG0=1` so sprites and HUD cannot contribute:
+
+| Room | BG-only difference vs centred 240x160 sub-rect |
+|---|---|
+| 16 `MountCrenelClimb` | **0 px** |
+| 0 `MountCrenel` | **1352 px of 38400 (3.52%)** |
+
+**It is not animation phase and not a one-frame offset.** The layer is static —
+consecutive frames at 240x160 differ by 0 px — and all twelve candidate frames
+of the 320x240 run score the *same* 1352, so no alignment exists that removes
+it. The difference sits in row runs **0-46 and 120-159**, i.e. the sky above
+and below the cloud mass, with the cloud bank itself matching; there is a
+vertical band at the right edge too.
+
+**Undiagnosed, and the shape is familiar rather than known.** Sky above and
+below a matching middle, in a 240x160 room shown on a 240-row screen, is what
+a tiled overlay does when its screenblock cannot cover the taller viewport —
+the B32/B34 question, *is `yOffset + VIEWPORT_HEIGHT <= 256`*. It is equally
+what a BG3 world-view overlay does when the centring clip is skipped (B21,
+B37). Both are guesses; neither has been tested. `TMC_BG3_TRACE=2` and
+`TMC_MASK_BG<n>` are the two runs that would separate them, and neither was
+made.
+
+**Cosmetic, and the room is now reachable, so it is playtestable.** Nothing
+about it blocks the climb.
 
 ## D3 addendum: three scenes override their border colour
 

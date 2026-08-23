@@ -1493,6 +1493,62 @@ inline uint32_t infer_room_property_size(uint32_t offset,
     return end > offset ? end - offset : infer_asset_size(offset, lookup, boundaries, 4);
 }
 
+/* The engine walks a room's three entity lists (properties 0..2) and its
+ * tile-entity list (property 3) record by record until it reads a terminator:
+ * kind == 0xFF for an entity record, type == 0 for a tile-entity one.
+ *
+ * Twelve of those symbols carry no terminator of their own — all ten beanstalk
+ * rooms, Temple of Droplets' lantern/scissors room and Dark Hyrule Castle's
+ * northwest outside. On hardware the walk simply runs off the end of the
+ * symbol and stops on the *next* symbol's first record, which happens to be a
+ * terminator in every one of the twelve; ROM is contiguous, so that read is
+ * defined and the list ends where the author meant it to.
+ *
+ * A per-symbol heap buffer has no next symbol. The port's walk continues into
+ * whatever the allocator left behind and eventually reaches
+ * AppendEntityToList(ent, dat->flags & 0xF) with a garbage nibble, indexing a
+ * nine-element gEntityLists out of bounds and corrupting memory until it
+ * faults. Same class as the out-of-range table reads in B16: defined on
+ * hardware because ROM is contiguous, undefined once each symbol is its own
+ * allocation.
+ *
+ * So extend such a blob to the terminator the hardware walk would find. The
+ * extracted bytes are then exactly the bytes hardware reads, and the engine
+ * code needs no port-only bound. */
+inline uint32_t extend_room_property_to_terminator(uint32_t offset, uint32_t size, uint32_t idx)
+{
+    if (idx > 3) {
+        return size;
+    }
+
+    const uint32_t record = idx == 3 ? 8u : 16u;
+    const auto is_terminator = [idx](uint32_t at) {
+        return idx == 3 ? Rom[at] == 0x00 : Rom[at] == 0xFF;
+    };
+
+    for (uint32_t at = offset; at + record <= offset + size; at += record) {
+        if (is_terminator(at)) {
+            return size;
+        }
+    }
+
+    /* No terminator inside the symbol: keep walking as the engine does, and
+     * include the terminating record itself. */
+    uint32_t end = offset + size;
+    for (int guard = 0; guard < 64; ++guard) {
+        if (end + record > Rom.size()) {
+            break;
+        }
+        const bool terminator = is_terminator(end);
+        end += record;
+        if (terminator) {
+            return end - offset;
+        }
+    }
+
+    return size;
+}
+
 inline std::filesystem::path extract_asset_or_raw(uint32_t rom_offset, uint32_t size,
                                                   const std::unordered_map<uint32_t, IndexedAssetInfo>& lookup,
                                                   const std::filesystem::path& output_root,
@@ -1773,7 +1829,10 @@ inline bool extract_area_tables(const Config& config, const std::unordered_map<u
                             }
                         }
 
-                        const uint32_t data_size = infer_room_property_size(data_offset, lookup, boundaries);
+                        const uint32_t inferred_size =
+                            infer_room_property_size(data_offset, lookup, boundaries);
+                        const uint32_t data_size =
+                            extend_room_property_to_terminator(data_offset, inferred_size, idx);
                         const auto indexed = lookup.find(data_offset);
                         const bool rejoined =
                             indexed == lookup.end() || indexed->second.size != data_size;
