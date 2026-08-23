@@ -9,7 +9,10 @@ and neither turned out to be a platform bug.
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
 complete — see `docs/milestone2-status.md`.** Forty-three of the forty-seven
 bugs are closed: forty-one fixed with a root cause and evidence, and B4 closed
-as **no longer observed** rather than diagnosed. **B41, B42, B46 and B47 are
+as **no longer observed** rather than diagnosed. **There is a hardware oracle
+now** — mGBA runs headless on this machine and its savestates carry a frame's
+state and picture together; `tools/mgba/README.md` is the technique, and B45
+and B47 are what it produced. **B41, B42, B46 and B47 are
 open.** B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
@@ -4024,8 +4027,17 @@ point, and the cheapest way to get it was to ship the wrong rule at a
 173-frame diff and read what it broke.
 
 **Where the change lives.** `libs/ViruaPPU`, the same submodule as B38's OBJ
-fix, on branch `b45-obj-priority-claim`. The submodule pointer needs bumping in
-this repo once that branch is pushed.
+fix; merged as its PR #7 and carried here by the pointer at `53c7cc4`.
+
+**It took two goes to land, and the near-miss is the lesson.** PR #44 merged
+the superproject with the pointer at `500b20f`, and the very next commit,
+`6230be1a "bump submodule"`, moved it back to `d523d7f` — the pre-B45 commit —
+while the submodule's own `main` had not yet been fast-forwarded onto the
+branch. For a while the tracker said fixed and the shipping tree did not have
+it, with nothing in this repo's diff to show the code that had left. **A
+submodule pointer can move backwards in an ordinary-looking commit**: after any
+merge that touches one, check `git ls-tree HEAD libs/ViruaPPU` against the
+commit you expect, and grep the checkout for something the fix introduced.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
