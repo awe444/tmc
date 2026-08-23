@@ -4005,16 +4005,29 @@ sprites against each other), and keeping a separate claim buffer folded in at
 the end of the line (which keeps the colours but still moves the sprite in
 front of the letter).
 
-**What is needed:** the exact rule by which a transparent sprite's priority
-leaks. A savestate of the **file select** answers it in one step — it says
-whether hardware draws that pixel white or orange, i.e. whether the sprite
-belongs in front of the letter there or not. If orange, the rule above is right
-and the port has been wrong on that glyph all along; if white, the leak is
-conditional and the condition is whatever distinguishes the two scenes.
+**The file-select savestate cannot adjudicate, which is itself the result.**
+Both candidate rules were run over every pixel of that frame against the
+picture in the same file: **0 pixels differ between them**. No transparent
+sprite in that frame claims a priority better than the sprite that supplied the
+colour, so the scene never exercises the leak. The route's frame 1250 is a
+different moment of the file select — a file being created rather than an
+existing one listed — and that is the moment the two pixels move.
+
+Running the same test on the *swamp* savestate, where the leak is exercised, is
+also not conclusive on its own: rule B corrects 51 pixels (Link's visible body)
+and breaks 46 (the top row of his sprite), against a reference compositor of
+mine that does not implement BLDCNT and so carries ~200 mismatches of its own.
+It is enough to confirm the mechanism and not enough to pin the condition.
+
+**What is needed:** either a savestate at the moment the route reaches — the
+file-select *name entry*, where the glyph is drawn — or a reference compositor
+faithful enough (blending included) that the swamp frame alone settles it. The
+second is the better investment: it turns any savestate into an oracle for
+every rule question of this kind, rather than one scene at a time.
 
 **Not merged.** The change lives in the `libs/ViruaPPU` submodule, which is
-where B38's OBJ fix went too, and it is not ready to bump until that diff is
-clean.
+where B38's OBJ fix went too, on branch `b45-obj-priority-claim`; the pointer
+is deliberately not bumped while that diff is dirty.
 
 **The sibling port reached the same wrong theory and shipped two workarounds
 for it.** `999sian/tmc`'s `object70.c` forces `flipY = 2` under `PC_PORT`,
