@@ -59,7 +59,7 @@ Read in this order:
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
 
-**Eight of this milestone's defects were live in the shipping 240×160 build or
+**Nine of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
 them, B23 and B25 only because it made the rolling barrel worth playing, and
 B43 only because the maintainer recorded the cutscene at 240x160 on request. The regression gate proves the shipping build did not *move*; it cannot
@@ -405,6 +405,31 @@ afterwards. `TMC_MASK_BG<n>` kills the first in one run (it bypasses palette
 *and* blend), `TMC_BLEND_TRACE` kills the third by reading BLDCNT rather than
 inferring it, and per-row palette counts localise what is left. **And when the
 writer is still unaccounted for, a watchpoint costs one run** — B36's took one.
+
+**A symbol named for an address and a struct field can be the same bytes, and
+the port gives each its own storage (B50).** `gUnk_020342F8` *is*
+`gArea.filler6` on GBA — `gArea` at `0x02033A90`, `filler6` at offset `0x868`
+— and the decomp spells it both ways by file. `port_linked_stubs.c` allocated
+a separate `u8[0x100]`, so `delayedEntityLoadManager.c` set the delayed-entity
+bits in one object while `whirlwind.c` and `cutsceneMiscObject.c` read another
+that nothing ever wrote, and every gated entity deleted itself before its Init:
+all 44 conditional whirlwinds in the game plus Cloud Tops' 10 clouds. Nothing
+warns — both halves compile, link and work on their own object. **The ROM's
+literal pool settles it in seconds**: `0x02033A90` appears 196 times and
+`0x020342F8` five, and the two spellings' bit arithmetic lands on the same
+byte and bit. Alias such a symbol (`#define` onto the field, as `common.c`
+already does for `gUnk_02035542` → `gzHeap + 2`) rather than giving it storage.
+Same family as B36 and B29. **A `gUnk_0203xxxx` array in
+`port_linked_stubs.c` whose address falls inside another object's range is the
+thing to grep for.**
+
+**A report that arrives with its own working control is worth answering in the
+order it hands you (B50).** "Mt Crenel's tornados are visible, Lon Lon Ranch's
+are not" ruled out the object, its sprite, palette and animation before any
+code was read: same object, two spawn paths, and only the *conditional* one
+was broken — Mt Crenel's are plain `object_raw` with `health == 0`, so the gate
+never runs. Ask what differs between the working and broken instance before
+asking what the broken one does.
 
 **A grep over source cannot see an address that only exists as data.** Spike 6
 relocated `gBG0Buffer` out of `gEwram[0x34CB0]`, searched the tree for code

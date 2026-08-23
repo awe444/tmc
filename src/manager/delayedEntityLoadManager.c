@@ -23,7 +23,17 @@ typedef struct {
     u8 spawnedCount; /**< Count of entities spawned by this manager */
 } DelayedEntityLoadManager;
 
+#ifdef PC_PORT
+/* On GBA this is gArea.filler6: gArea is at 0x02033A90 and filler6 sits at
+ * offset 0x868, i.e. exactly 0x020342F8. The decomp spells the same bytes two
+ * ways — delayedEntityLoadManager/npc/pinwheel by address, whirlwind/
+ * cutsceneMiscObject/physics as gArea.filler6 — which costs nothing on
+ * hardware and split the bitfield into two objects here. Alias it, the way
+ * gUnk_02035542 is aliased to gzHeap+2 in common.c. */
+#define gUnk_020342F8 (gArea.filler6)
+#else
 extern u8 gUnk_020342F8[];
+#endif
 
 void DelayedEntityLoadManager_Main(DelayedEntityLoadManager* this) {
     NPCStruct* properties;

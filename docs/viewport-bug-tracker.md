@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-four of the forty-nine
-bugs are closed: forty-two fixed with a root cause and evidence, and B4 closed
+complete — see `docs/milestone2-status.md`.** Forty-five of the fifty
+bugs are closed: forty-three fixed with a root cause and evidence, and B4 closed
 as **no longer observed** rather than diagnosed. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
 state and picture together; `tools/mgba/README.md` is the technique, and B45
@@ -125,6 +125,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B29 | The stylized area-name banner never appears on entering a new area | **Fixed** 2026-08-18 — a Spike 6 regression the gate cannot see. Relocating `gBG0Buffer` out of `gEwram` left ROM `Font` blobs, whose `dest` is a raw GBA address, drawing the banner into dead memory. The canonical route spawns five banners per run and samples none of them |
 | B48 | Climbing any beanstalk crashes the port | **Fixed** 2026-08-23 — **not a viewport bug: a SIGSEGV, not the reported hang, and size-independent.** Twelve room-property entity lists carry no `entity_list_end` of their own and borrow the *next symbol's* on hardware, which contiguous ROM makes a defined read. Each extracted into its own heap buffer, the walk ran into allocator slack and appended entities to `gEntityLists[11..14]` of 9. All ten beanstalk rooms, plus Temple of Droplets 51 and Dark Hyrule Castle 2. The extractor now extends such a blob to the terminator hardware would find; `kExtractorFormatVersion` 2 |
 | B49 | Beanstalk-top rooms' sky renders differently at 320x240 | **Open, measured, undiagnosed.** Found by instrument while A/B-ing B48's fix. `Area_Beanstalks` room 0 differs from the centred 240x160 sub-rect by 1352 BG-only px (3.52%) in the sky rows 0-46 and 120-159; the climb room next door is 0. Static layer, same figure on all twelve candidate frames, so not animation phase. Suspects are B32/B34's screenblock height and B21/B37's BG3 clip; neither tested. Cosmetic |
+| B50 | Every conditional whirlwind is invisible and inert | **Fixed** 2026-08-23 — **not a viewport bug: reproduces at 240x160.** `gUnk_020342F8` *is* `gArea.filler6` on GBA (`0x02033A90 + 0x868`), but the port gave it separate storage, so the delayed-entity manager set bits in one object and `whirlwind.c` / `cutsceneMiscObject.c` read another that was always zero — every gated entity self-deleted before its Init. 44 whirlwinds and 10 Cloud Tops clouds, including all 40 of Cloud Tops'. Aliased with a macro, as `gUnk_02035542` already is |
 
 ---
 
@@ -4323,6 +4324,113 @@ made.
 
 **Cosmetic, and the room is now reachable, so it is playtestable.** Nothing
 about it blocks the climb.
+
+## B50 — every conditional whirlwind is invisible and inert *(fixed)*
+
+Reported 2026-08-23 with a recording and a save: the ledge near Lon Lon Ranch
+that should loft Link has no tornado, and no effect either — fully absent. The
+report came with its own control, which is what made this quick: **Mt Crenel's
+tornados are visible in the same recording.** Not a viewport bug; it reproduces
+at 240x160.
+
+**Two spellings of one address, given two allocations.** On GBA the delayed
+entity bitfield lives at `0x020342F8`. That is `gArea.filler6`: `gArea` is at
+`0x02033A90` and `filler6` sits at offset `0x868` (`0x894` struct, less twelve
+bytes of trailing pointers, less `0x20`). The decomp spells the same bytes both
+ways, by file:
+
+| File | Spelling | Role |
+|---|---|---|
+| `manager/delayedEntityLoadManager.c` | `gUnk_020342F8` | **writes** the bits |
+| `npc.c`, `object/pinwheel.c` | `gUnk_020342F8` | read |
+| `object/whirlwind.c`, `object/cutsceneMiscObject.c` | `gArea.filler6` | read |
+| `physics.c` | `gArea.filler6` | clears on the room-change toggle |
+
+Free on hardware, where both resolve to the same EWRAM. In the port
+`port_linked_stubs.c` gave `gUnk_020342F8` its own `u8[0x100]`, so the manager
+set bits in one object and the whirlwind read another that nothing ever wrote.
+`ReadBit` therefore always returned 0, and
+
+```c
+if (((tmp & 0x7f) != 0) && (ReadBit(gArea.filler6, tmp - 1) == 0))
+    DeleteThisEntity();
+```
+
+deleted the entity on its first frame — before `Whirlwind_Init`, which is why
+nothing drew and nothing collided.
+
+**Confirmed rather than argued, and no emulator was needed.** The ROM's own
+literal pools carry the two addresses: `0x02033A90` appears 196 times (`gArea`,
+heavily referenced) and `0x020342F8` five times, and
+`0x02033A90 + 0x868 == 0x020342F8`. The bit arithmetic then coincides exactly —
+the manager's `WriteBit(base + 16, 10)` is byte 17 bit 2, and the whirlwind's
+`ReadBit(base, 138)` is byte 17 bit 2. **The same bit, reached from both
+spellings.** Two objects cannot produce that agreement by accident.
+
+**Why it looked like a tornado bug specifically.** Of the five readers, the two
+that used the *written* spelling — delayed NPCs and Cloud Tops' pinwheels —
+worked perfectly, so the failure was invisible outside the two objects that
+used the other one. And Mt Crenel's tornados are plain `object_raw` in property
+0, so their `health` is 0, `(health & 0x7f)` is 0 and the gate never runs. Same
+object, different spawn path, opposite outcome: the maintainer's control was
+the thing that pointed at the *conditional* path rather than at whirlwinds.
+
+**A second effect, quieter.** `physics.c`'s `sub_0806F364` was clearing the
+dead buffer, so the live bitfield was never cleared when the room-change
+toggle flipped halves. That is now restored too.
+
+**Population — 54 entities, and Cloud Tops is the serious one:**
+
+| List | Entity | Count |
+|---|---|---|
+| `gUnk_additional_8_CloudTops_Bottom` | whirlwind | 26 |
+| `gUnk_additional_8_CloudTops_Middle` | whirlwind | 14 |
+| `gUnk_additional_e_HyruleField_LonLonRanch` | whirlwind | 4 |
+| `gUnk_additional_8_CloudTops_Bottom` | `CutsceneMiscObject` type 18 (`MysteriousCloud`) | 10 |
+
+Cloud Tops is the area built around riding tornados between floating islands.
+All 40 of its whirlwinds and all 10 clouds were absent.
+
+**Fix.** Alias the symbol instead of allocating it, exactly as `common.c`
+already does for `gUnk_02035542` → `gzHeap + 2`: a `#ifdef PC_PORT` macro in
+each of the three users mapping `gUnk_020342F8` onto `gArea.filler6`, and the
+storage deleted from `port_linked_stubs.c`. The GBA path is untouched. Note
+`filler6` is `0x20` and the old stub was `0x100`; `0x20` is exactly right —
+the manager's highest reachable byte is 31 for both halves of the toggle
+(`unk_20 = 0` → `index2 <= 255`; `unk_20 = 0x80` → `index2 <= 127`).
+
+**Verification.** Same script, same 240x160 build, whirlwind entities counted
+by breakpoint:
+
+| Scene | Before | After |
+|---|---|---|
+| Hyrule Field / Lon Lon Ranch | 0 inits, 1 self-delete | **1 init, 0 self-deletes** |
+| Cloud Tops Bottom | 0 inits, 1 self-delete | **2 inits, 0 self-deletes** |
+
+The maintainer's recording shows the tornado on the ledge at frame 12200 where
+it was missing before, and Mt Crenel's frames are byte-identical across the
+change (0 px at 3300 and 3450) — the control stayed put. Gate 11/11 and
+`fetches=265497600 mismatched=0`.
+
+**The gate covers this one, and that was checked rather than assumed.** Both
+halves of the change run on the canonical route: `DelayedEntityLoadManager_Main`
+executes in area 21 and `sub_0806F364` fires, so 11/11 pixel-identical is
+evidence about this mechanism and not merely silence about it.
+
+**Lesson (42).** *A decompiled symbol named for an address and a struct field
+can be the same bytes, and the port gives each its own storage without a
+word.* Nothing warns: both compile, both link, each half of the code works on
+its own object. The tell is a bitfield with writers in one file and readers in
+another that never agree. B36 was the same family — a symbol that was a window
+onto a larger block — and B29 the same again with `gBG0Buffer`; the general
+question is *does this name alias something else on hardware*, and the ROM's
+literal pool answers it in seconds.
+
+**Lesson (43).** *A report that comes with its own working control is worth
+answering in the order it hands you.* "Mt Crenel's tornados are visible, Lon
+Lon Ranch's are not" excluded the object, its sprite, its palette and its
+animation before any code was read, and left only what differs between the two
+spawn paths.
 
 ## D3 addendum: three scenes override their border colour
 
