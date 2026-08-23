@@ -1,10 +1,33 @@
-# Milestone 2 — status at session close, 2026-08-10
+# Milestone 2 — status at session close, 2026-08-22
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
 the items the plan did not anticipate, and **forty-three of the forty-seven
-tracked bugs are closed** (B41, B42, B46 and B47 remain open), B27 included — Hyrule
-Town, festival town and Minish Village, playtested and confirmed 2026-08-11. **One thing is still open and it is a
-judgement rather than work: frame time.**
+tracked bugs are closed** (B41, B42, B46 and B47 remain open), B27 included —
+Hyrule Town, festival town and Minish Village, playtested and confirmed
+2026-08-11. **One thing is still open and it is a judgement rather than work:
+frame time.**
+
+**B45 closed 2026-08-22 with a hardware oracle, and it is the session's other
+result.** mGBA turned out to run headless on this machine, with a stdin-driven
+debugger and savestates that carry a frame's state *and* its picture — so "is
+this the port or is this the game?" became a measurement. The Castor Wilds mud
+was the port dropping transparent OBJ pixels: the game draws twelve *blank*
+priority-2 sprites over the player and the OBJ layer composites at the priority
+of the **last covering sprite in OAM order**, opaque or not, so those blanks
+lend the player a tie against the ground and he shows through the mud, clipped
+from the bottom as he sinks out of the rectangle. Six passes had compared every
+register, OAM entry, map and tileset against hardware, matched on all of them,
+and concluded the port was faithful — the difference was a compositing rule,
+which no state comparison can see. `tools/mgba/README.md` is the technique.
+**The fix is in the `libs/ViruaPPU` submodule and is currently *not* in master
+— see B45's caution in the tracker.**
+
+**B46 and B47 came out of the same work and are open.** B46: the wading overlay
+never draws in shallow water, provable by inspection. B47: the port's `tmc.sav`
+is byte-reversed per 8-byte EEPROM block against hardware, so saves do not
+interchange with mGBA or a cartridge in either direction — `tools/mgba/savconv.py`
+converts, and fixing `port_save.c` needs a migration for the existing
+recordings' saves.
 
 **B43 closed 2026-08-22, and it was never a viewport bug.** The western-wood
 takeover cutscene ended on a permanent black screen at 240x160 as well as at

@@ -32,6 +32,9 @@ tools/binutils
 *.py
 !tools/extract_include_enum.py
 !tools/generate_sounds_embed.py
+# The mGBA comparison harness. These are the technique, not scratch scripts:
+# tools/mgba/README.md documents them and is useless without them.
+!tools/mgba/*.py
 *.pl
 
 # graphics

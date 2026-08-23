@@ -42,13 +42,18 @@ Read in this order:
    six reports from guesswork into measurement. `TMC_MASK_BG*` is the newest
    and answers a different question — *where is this layer* rather than *what
    did it contribute* — by painting it flat magenta in the frame itself.
-4. `android/README.md` — the Android build, and how to drive the same
+4. `tools/mgba/README.md` — the hardware oracle. mGBA runs headless here, and
+   its savestates carry a frame's **state and its picture together**, which is
+   the only way some questions get answered at all. Also how to replay our own
+   capture scripts into it, and the save conversion that has to happen first
+   (B47).
+5. `android/README.md` — the Android build, and how to drive the same
    capture/replay tooling on a device.
-5. `docs/town-tileset-residency.md` — the plan B27 was built from, kept as the
+6. `docs/town-tileset-residency.md` — the plan B27 was built from, kept as the
    record of what it measured and its do-not-retry list. **B27 itself is
    closed**; the residency mechanism it created is still where B30, B31 and B33
    live.
-6. `docs/viewport-expansion-research-plan.md` — the original plan and the
+7. `docs/viewport-expansion-research-plan.md` — the original plan and the
    per-spike write-ups, a historical record.
 
 The tracker wins wherever the plan disagrees with it; several spike write-ups
@@ -88,11 +93,21 @@ script: `tools/mgba/README.md`. The game reads `REG_KEYINPUT` once per frame at
 injects input — our capture scripts already hold GBA key masks, so one replays
 directly. OAM, DISPCNT/BGxCNT and OBJ VRAM are all at fixed addresses, so no
 game symbols are needed. Align the two runs on an *event* (B45 used "the frame
-the mask's twelve OAM entries appear"), not on a frame number, and watch for
-animation phase: the same scene frame with the walk cycle one frame apart
-changes the player's whole sprite decomposition. **A save must be converted
-first — see B47.** Three passes of inference on B45 reached a confident wrong
-answer; one replay settled it.
+the mask's twelve OAM entries appear"), not on a frame number, and put the port
+at the **same viewport** before comparing anything scroll-dependent — four B45
+passes were spent on 320x240-against-240x160 comparisons that could not have
+been valid. Watch for animation phase too: the same scene frame with the walk
+cycle one frame apart changes the player's whole sprite decomposition. **A save
+must be converted first — see B47.**
+
+**And ask for a savestate, not just a replay.** A replay gives state and never
+pixels; an mGBA savestate is a PNG carrying the frame's state *and* the picture
+it produced, which is the only artefact that can answer "why is this pixel this
+colour". `tools/mgba/ssextract.py` and `readstate.py` do the rest. Six passes on
+B45 compared registers, OAM, maps and tilesets against hardware, matched on
+every one, and concluded the port was faithful while the screen plainly
+differed — the mismatch was a compositing *rule*, which no state comparison can
+see.
 
 **Two scenes with the same shape and opposite answers beat either alone
 (B45).** A blank sprite over the player lends its priority in the Castor Wilds
