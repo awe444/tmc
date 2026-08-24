@@ -173,7 +173,18 @@ port :  "AGBZELDA"  ":THE MIN"  "ISH CAP:"
 mGBA :  "ADLEZBGA"  "NIM EHT:"  ":PAC HSI"
 ```
 
-`savconv.py` converts either way and is its own inverse:
+**Byte order was only half of it (B51).** The port's `SaveFile` struct also
+puts `flags[0x200]` and the three `dungeon*` arrays **one byte earlier** than
+the real game reads them: `KinstoneSave`'s members sum to 327 bytes where the
+GBA layout `include/save.h` documents (`kinstones` 0x114 → `flags` 0x25C)
+leaves 328. Everything before `flags` is at the right offset, so a
+byte-order-only conversion loads with correct hearts, elements and name and
+*every story flag shifted a bit* — Link without Ezlo, world events un-done.
+That cost most of a session to find precisely because it looks like a working
+save. `savconv.py` now realigns the region and recomputes each slot's
+checksum with the game's own algorithm.
+
+`savconv.py` converts either way, taking the direction from block 0:
 
 ```bash
 tools/mgba/savconv.py build/play-320x240/foo.script.sav ~/mgba-tmc/baserom.sav
@@ -181,6 +192,11 @@ tools/mgba/savconv.py build/play-320x240/foo.script.sav ~/mgba-tmc/baserom.sav
 
 Two things to watch:
 
+- **Converting *into* the port's layout loses one byte** — the GBA's
+  `SaveFile+603`, which the port's short `KinstoneSave` has no field for. It
+  is reported on stderr and returns as 0. That is the port bug showing
+  through; when the struct is fixed, flip `LAYOUT_FIXED_IN_PORT` in the tool
+  and delete `relayout()`, or it will corrupt every save it touches.
 - **mGBA writes the save back on exit**, in hardware order — so re-convert
   before each run if you want a clean start from a recording's save.
 - mGBA keeps the save as `<rom-basename>.sav` next to the ROM. Work in a

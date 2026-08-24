@@ -7,13 +7,13 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-five of the fifty
-bugs are closed: forty-three fixed with a root cause and evidence, and B4 closed
+complete — see `docs/milestone2-status.md`.** Forty-six of the fifty-two
+bugs are closed: forty-four fixed with a root cause and evidence, and B4 closed
 as **no longer observed** rather than diagnosed. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
 state and picture together; `tools/mgba/README.md` is the technique, and B45
-and B47 are what it produced. **B41, B42, B46, B47 and B49 are
-open.** B41 and B42
+and B47 are what it produced. **B41, B42, B46, B47, B49 and B52 are
+open**, and B51's port-side struct fix is deferred behind a save migration. B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
 **closed 2026-08-22** against mGBA, which turned out to run headless here and
@@ -126,6 +126,8 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B48 | Climbing any beanstalk crashes the port | **Fixed** 2026-08-23 — **not a viewport bug: a SIGSEGV, not the reported hang, and size-independent.** Twelve room-property entity lists carry no `entity_list_end` of their own and borrow the *next symbol's* on hardware, which contiguous ROM makes a defined read. Each extracted into its own heap buffer, the walk ran into allocator slack and appended entities to `gEntityLists[11..14]` of 9. All ten beanstalk rooms, plus Temple of Droplets 51 and Dark Hyrule Castle 2. The extractor now extends such a blob to the terminator hardware would find; `kExtractorFormatVersion` 2 |
 | B49 | Beanstalk-top rooms' sky renders differently at 320x240 | **Open, measured, undiagnosed.** Found by instrument while A/B-ing B48's fix. `Area_Beanstalks` room 0 differs from the centred 240x160 sub-rect by 1352 BG-only px (3.52%) in the sky rows 0-46 and 120-159; the climb room next door is 0. Static layer, same figure on all twelve candidate frames, so not animation phase. Suspects are B32/B34's screenblock height and B21/B37's BG3 clip; neither tested. Cosmetic |
 | B50 | Every conditional whirlwind is invisible and inert | **Fixed** 2026-08-23 — **not a viewport bug: reproduces at 240x160.** `gUnk_020342F8` *is* `gArea.filler6` on GBA (`0x02033A90 + 0x868`), but the port gave it separate storage, so the delayed-entity manager set bits in one object and `whirlwind.c` / `cutsceneMiscObject.c` read another that was always zero — every gated entity self-deleted before its Init. 44 whirlwinds and 10 Cloud Tops clouds, including all 40 of Cloud Tops'. Aliased with a macro, as `gUnk_02035542` already is |
+| B51 | Every port save is one byte out of layout for `flags` onward | **Tool fixed** 2026-08-23; **port struct still open.** `KinstoneSave` sums to 327 bytes where the GBA layout documented in `include/save.h` leaves 328, so the port writes `flags[0x200]` and the `dungeon*` arrays one byte early. Name/stats/inventory/kinstones read correctly and every story flag is shifted — on hardware Link loses Ezlo and world events un-do. Hidden by a `u32` alignment hole that makes `sizeof` coincidentally right. `savconv.py` realigns and re-checksums; fixing the struct needs a save migration |
+| B52 | Beanstalk base draws solid magenta | **Open — not a faithfulness bug.** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). Suppressing the copy yields the wanted dirt/rock, but that is a deliberate divergence and wants a decision |
 
 ---
 
@@ -4431,6 +4433,128 @@ answering in the order it hands you.* "Mt Crenel's tornados are visible, Lon
 Lon Ranch's are not" excluded the object, its sprite, its palette and its
 animation before any code was read, and left only what differs between the two
 spawn paths.
+
+## B51 — every port save is one byte out of layout for `flags` onward *(tool fixed; port struct open)*
+
+Found 2026-08-23 while trying to get an mGBA savestate for B52. The maintainer
+converted a play save with `savconv.py`, and it loaded in mGBA at the right
+place with the right hearts and elements — but Link had no Ezlo and the
+beanstalk was gone, "like before the kinstone event".
+
+**Not the conversion.** Two independent checks say the bytes arrive intact:
+the save mGBA wrote back on exit, reversed, is **byte-identical** to the
+port's original (0 of 8192 differ), and the 1204-byte `SaveFile` block in the
+file is **byte-identical** to what the real game had in memory at
+`0x02002A40` in the savestate. Hardware got exactly the right bytes.
+
+**The port's `SaveFile` disagrees with the GBA layout `include/save.h`
+documents in its own comments**, from `flags` onward:
+
+| Field | Header comment (GBA) | Port actual |
+|---|---|---|
+| `inventory` | `0x0F2` = 242 | 242 |
+| `kinstones` | `0x114` = 276 | 276 |
+| **`flags[0x200]`** | **`0x25C` = 604** | **603** |
+| `dungeonKeys` | `0x45C` = 1116 | 1115 |
+| `dungeonItems` | `0x46C` = 1132 | 1131 |
+| `dungeonWarps` | `0x47C` = 1148 | 1147 |
+| `darknut_timer` | `0x48C` = 1164 | 1164 |
+
+`KinstoneSave`'s members sum to **327** bytes; the documented gap is **328**.
+It is all `u8` arrays, so no padding makes it up. Everything before `flags` is
+at the correct offset — which is why name, stats, inventory and the kinstone
+bag all read perfectly — and everything from `flags` on is a byte early, so
+every story flag lands on the wrong bit.
+
+**Two things hid this for the life of the port.** `darknut_timer` realigns
+because the compiler inserts a 1-byte hole before it for `u32` alignment, so
+`sizeof(SaveFile)` is *coincidentally* 1204 either way and no size assertion
+would have caught it — and there is no size assertion on `SaveFile` anyway.
+And the port is self-consistent: it writes and reads at 603, so its own saves
+work, and nothing is visibly wrong until the file meets the real game.
+
+**The symptom is the diagnosis.** "Hearts and elements right, hat wrong" puts
+the boundary exactly at `flags`, which is the one field whose offset the two
+layouts disagree about. The maintainer's own framing — *the file select is the
+earliest evidence* — is what localised it to a single byte.
+
+**Fix (tool).** `savconv.py` now does more than reverse blocks: it takes its
+direction from the signature in block 0, shifts `flags..dungeonWarps` between
+the two layouts, and recomputes each affected slot's checksum with the game's
+own `CalculateChecksum` (verified by reproducing both stored checksums of an
+existing save exactly, `0x3DA7` and `0xE591`). Only slots whose stored
+checksum already verified are touched, so an empty or deleted slot is not
+blessed into looking real. Confirmed by the maintainer: hat back, beanstalk
+back, all flags correct.
+
+**Not fixed: the struct itself.** `KinstoneSave` is still 327 bytes, so the
+port still writes the wrong layout and the tool is compensating for it. Fixing
+it needs a migration for every existing port save, which is a decision that
+has not been taken. **`LAYOUT_FIXED_IN_PORT` in `savconv.py` is the switch**;
+leaving the compensation in after the struct is fixed would corrupt every save
+the tool touched.
+
+**One byte is unrecoverable in the mGBA→port direction** — the GBA's
+`SaveFile+603` (`0x0C` in a real save) is `KinstoneSave` data the port's short
+struct cannot hold. The tool reports it on stderr rather than dropping it
+silently. Going port→mGBA is lossless and round-trips exactly.
+
+**Lesson (44).** *A struct whose field offsets are documented in comments is
+asserting something testable, and nothing was testing it.* Every offset in
+`SaveFile` is written down and one of them is wrong; a single
+`PORT_STATIC_ASSERT_OFFSET` per documented field would have failed at compile
+time on the day the struct was written. The size assert that would normally
+catch this could not: the alignment hole made the total right.
+
+**Lesson (45).** *"Most of it is correct" localises a layout bug better than
+"none of it is".* A wholly wrong byte order fails at the signature and tells
+you nothing about where; a one-byte shift lets every field before it read
+perfectly and names the boundary precisely.
+
+## B52 — beanstalk base draws solid magenta *(open; not a faithfulness bug — a decision)*
+
+Reported 2026-08-23 with a recording: the base of the Mt Crenel beanstalk is a
+solid magenta blob, wanted as the dirt/rock of the room below. **Settled
+against hardware, and the port is faithful** — this is the periphery again.
+
+**Measured in the port.** The pixels are exactly `#F800F8` = GBA `0x7C1F`, real
+palette data and *not* the `0xFF00FF` the `TMC_MASK_BG` diagnostic paints. It
+is an OBJ: `TMC_DISABLE_OBJ` removes all 859 px. The base sprites are OAM
+26-30 on **OBJ palette slot 5**, which holds Mt Crenel's rock colours until the
+beanstalk room loads and then goes 12/16 magenta. A watchpoint named the writer
+in one run: `LoadRoomTileSet` (`playerUtils.c:4199`),
+`MemCopy(&pal[0x30], &pal[0x150], 0x20)` — BG palette 3 → OBJ palette 5, with
+`gUsedPalettes |= 0x200000` confirming slot 21. Faithful to the decomp; the
+byte offsets are identical on GBA. The room's BG palette 3 is `gPalette_667`,
+an all-`7C1F` placeholder, and the palettes are contiguous in ROM so hardware
+reads the same bytes. `LoadObjPaletteAtIndex` deliberately loads nothing for
+palette ids ≤ 5 — those slots are meant to already hold what the room put
+there — so a sprite with id 5 wearing the room's terrain palette is the
+intended mechanism.
+
+**Hardware agrees exactly.** An mGBA savestate of the same room:
+`OBJ palette 5 = 12/16 magenta`, `BG palette 3 = 12/16 magenta` — identical to
+the port. The real game has the same placeholder in that slot.
+
+**So why is it invisible on hardware?** Because the base is not on screen. The
+magenta occupies **y = 208..237**, and the GBA's screen is the centred
+`y = 40..199`. The whole blob sits in the 80 rows the expansion added. The
+authors left OBJ palette 5 as a placeholder in this room because nothing
+visible uses it — the same shape as B26, B27, B30, B31 and B33: *the periphery
+shows world the authored data never expected anyone to see.*
+
+**What the fix would be, and why it is not committed.** Suppressing that one
+copy so the slot keeps the previous room's terrain palette renders the base as
+dirt and rock — measured, 0 magenta px — which is exactly what was asked for.
+But the copy is how every other room colours these sprites, and "skip it when
+the source looks like a placeholder" is precisely the invented selection rule
+B26 was burned by twice. This is therefore a **deliberate divergence from
+hardware for the periphery's sake**, in the same class as B22's rim sprites,
+and wants to be taken as a costed decision rather than slipped in as a bug fix.
+
+**If taken, the narrow version is**: in the beanstalk rooms only, do not let
+`LoadRoomTileSet`'s BG3→OBJ5 copy install a palette the room's own tiles never
+use. All ten `Area_Beanstalks` rooms share tileset 0, so they all have it.
 
 ## D3 addendum: three scenes override their border colour
 
