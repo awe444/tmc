@@ -1,6 +1,9 @@
 #include "area.h"
 #include "fade.h"
 #include "viewport.h"
+#ifdef PC_PORT
+#include "port_divergences.h"
+#endif
 #include "asm.h"
 #include "beanstalkSubtask.h"
 #include "collision.h"
@@ -4198,6 +4201,12 @@ void LoadRoomTileSet(void) {
     paletteBuffer = gPaletteBuffer;
     MemCopy(&paletteBuffer[0x30], &paletteBuffer[0x150], 0x20);
     gUsedPalettes |= 0x200000;
+#ifdef PC_PORT
+    /* The mirror above hands OBJ palette 5 whatever BG palette 3 holds, which
+     * in area 13 is an all-magenta placeholder the GBA never shows. Deliberate
+     * divergence, expanded viewport only — see docs/hardware-divergences.md. */
+    Port_Divergence_BeanstalkGroundPalette();
+#endif
 
     if ((gArea.pCurrentRoomInfo)->bg_anim != NULL) {
         LoadBgAnimations((gArea.pCurrentRoomInfo)->bg_anim);

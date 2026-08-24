@@ -7,13 +7,17 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-six of the fifty-two
-bugs are closed: forty-four fixed with a root cause and evidence, and B4 closed
-as **no longer observed** rather than diagnosed. **There is a hardware oracle
+complete — see `docs/milestone2-status.md`.** Forty-seven of the fifty-two
+bugs are closed: forty-four fixed with a root cause and evidence, B4 closed as
+**no longer observed** rather than diagnosed, and B52 closed as a deliberate
+divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
 state and picture together; `tools/mgba/README.md` is the technique, and B45
-and B47 are what it produced. **B41, B42, B46, B47, B49 and B52 are
-open**, and B51's port-side struct fix is deferred behind a save migration. B41 and B42
+and B47 are what it produced. **B41, B42, B46, B47 and B49 are
+open**; B51's port-side struct fix is deferred behind a save migration, and
+B52 is closed as the first **intentional divergence** from hardware — see
+`docs/hardware-divergences.md`, which is where that class is recorded from now
+on. B41 and B42
 were reported 2026-08-20 without recordings, both in story-gated cutscenes the
 scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
 **closed 2026-08-22** against mGBA, which turned out to run headless here and
@@ -127,7 +131,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B49 | Beanstalk-top rooms' sky renders differently at 320x240 | **Open, measured, undiagnosed.** Found by instrument while A/B-ing B48's fix. `Area_Beanstalks` room 0 differs from the centred 240x160 sub-rect by 1352 BG-only px (3.52%) in the sky rows 0-46 and 120-159; the climb room next door is 0. Static layer, same figure on all twelve candidate frames, so not animation phase. Suspects are B32/B34's screenblock height and B21/B37's BG3 clip; neither tested. Cosmetic |
 | B50 | Every conditional whirlwind is invisible and inert | **Fixed** 2026-08-23 — **not a viewport bug: reproduces at 240x160.** `gUnk_020342F8` *is* `gArea.filler6` on GBA (`0x02033A90 + 0x868`), but the port gave it separate storage, so the delayed-entity manager set bits in one object and `whirlwind.c` / `cutsceneMiscObject.c` read another that was always zero — every gated entity self-deleted before its Init. 44 whirlwinds and 10 Cloud Tops clouds, including all 40 of Cloud Tops'. Aliased with a macro, as `gUnk_02035542` already is |
 | B51 | Every port save is one byte out of layout for `flags` onward | **Tool fixed** 2026-08-23; **port struct still open.** `KinstoneSave` sums to 327 bytes where the GBA layout documented in `include/save.h` leaves 328, so the port writes `flags[0x200]` and the `dungeon*` arrays one byte early. Name/stats/inventory/kinstones read correctly and every story flag is shifted — on hardware Link loses Ezlo and world events un-do. Hidden by a `u32` alignment hole that makes `sizeof` coincidentally right. `savconv.py` realigns and re-checksums; fixing the struct needs a save migration |
-| B52 | Beanstalk base draws solid magenta | **Open — not a faithfulness bug.** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). Suppressing the copy yields the wanted dirt/rock, but that is a deliberate divergence and wants a decision |
+| B52 | Beanstalk base draws solid magenta | **Closed 2026-08-23 as an intentional divergence** (`docs/hardware-divergences.md` D-1). **Not a faithfulness bug:** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). OBJ palette 5 is now loaded explicitly from each beanstalk's source-room ground palette (via `gUnk_080B4410`), deterministic on any entry path, expanded viewport only |
 
 ---
 
@@ -4511,7 +4515,7 @@ catch this could not: the alignment hole made the total right.
 you nothing about where; a one-byte shift lets every field before it read
 perfectly and names the boundary precisely.
 
-## B52 — beanstalk base draws solid magenta *(open; not a faithfulness bug — a decision)*
+## B52 — beanstalk base draws solid magenta *(closed as an intentional divergence)*
 
 Reported 2026-08-23 with a recording: the base of the Mt Crenel beanstalk is a
 solid magenta blob, wanted as the dirt/rock of the room below. **Settled
@@ -4552,9 +4556,32 @@ B26 was burned by twice. This is therefore a **deliberate divergence from
 hardware for the periphery's sake**, in the same class as B22's rim sprites,
 and wants to be taken as a costed decision rather than slipped in as a bug fix.
 
-**If taken, the narrow version is**: in the beanstalk rooms only, do not let
-`LoadRoomTileSet`'s BG3→OBJ5 copy install a palette the room's own tiles never
-use. All ten `Area_Beanstalks` rooms share tileset 0, so they all have it.
+**Taken 2026-08-23, as a divergence rather than a fix** — and deliberately
+*not* by suppressing the mirror. The port now loads, into OBJ palette 5, the BG
+palette 3 of the overworld room each beanstalk grows out of, mapped through
+`gUnk_080B4410`'s five source rooms — the same table the beanstalk subtask
+reads, so the mapping is the game's rather than invented. `gPalette_550` /
+`381` / `537` / `446` / `446`, applied to all ten area-13 rooms, gated to the
+expanded viewport, in `port/port_divergences.c`. 859 magenta px → 0, and the
+base draws the ground it is planted in.
+
+**Setting the palette rather than inheriting one is the whole point.**
+Suppressing the mirror gives an identical picture when you climb up from the
+source area and was how this was first prototyped, but it is not
+deterministic: measured, the slot holds `0000 0000 0000 0000` on a first room
+load after boot, so the base would render **black**, and descending from a
+beanstalk top would re-inherit the placeholder. Verified deterministic — a cold
+warp straight into the room now yields `7E16 290D 3593 3E5A`, Mt Crenel's
+ground palette.
+
+**The 240x160 build contains none of it**: the function compiles to an empty
+stub there, checked in the disassembly. Gate 11/11 and
+`fetches=265497600 mismatched=0`.
+
+**This is the first entry in `docs/hardware-divergences.md`**, which exists
+because the project settles arguments by asking the hardware and that method
+assumes every difference is a bug. It is not one here, and a future session
+diffing this room against mGBA needs to be able to find that out.
 
 ## D3 addendum: three scenes override their border colour
 

@@ -53,11 +53,26 @@ Read in this order:
    record of what it measured and its do-not-retry list. **B27 itself is
    closed**; the residency mechanism it created is still where B30, B31 and B33
    live.
-7. `docs/viewport-expansion-research-plan.md` — the original plan and the
+7. `docs/hardware-divergences.md` — the places the port renders something the
+   real game does not, **on purpose**, and the rules for adding one. Short, and
+   worth reading before concluding that a difference from mGBA is a bug: the
+   whole hardware-oracle method assumes it is, and this is the list of
+   exceptions. Prove faithfulness first, gate to the expanded viewport, set the
+   value rather than inherit it, and keep the code in
+   `port/port_divergences.c`.
+8. `docs/viewport-expansion-research-plan.md` — the original plan and the
    per-spike write-ups, a historical record.
 
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
+
+**Not every difference from hardware is a defect any more (B52).** The
+beanstalk base draws magenta on real hardware too — the palette slot it uses is
+an authored placeholder, because the sprite sits below the GBA's 160 rows and
+is never on screen. The expanded viewport shows it, so the port now diverges
+deliberately. That is the first such case; `docs/hardware-divergences.md` is
+the list, and it must be consulted before "the port disagrees with mGBA" is
+treated as a bug.
 
 **Nine of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
