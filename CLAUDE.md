@@ -131,6 +131,20 @@ field. `savconv.py` compensates and re-checksums; the struct is still wrong and
 fixing it needs a save migration, so `LAYOUT_FIXED_IN_PORT` must be flipped in
 the same change or the tool will corrupt what it touches.
 
+**A raw GBA byte offset into a struct that holds a pointer is wrong here, and
+only from the pointer onward (B53).** `itemForSale.c` read the player's
+interaction target as `*(u8*)(ptr + 1)` and `*(int*)(ptr + 8)` —
+`InteractableObject.type` and `.entity`. 64-bit pointers leave `type` at 1 and
+move `entity` from 8 to 16, so the port read `customHitbox` instead, which is
+NULL for nearly every interactable: every A press while carrying a shop item
+took the cancel branch, and Syrup's mushroom (an `ItemForSale`,
+`ITEM_QST_MUSHROOM` 0x38) snapped back to its stand while she gave her generic
+line. **The fields before the first pointer read correctly and the ones at or
+after it do not** — the same split that localised B51, and the signature to
+look for. Fix with typed field access under `#ifdef PC_PORT`, keeping the
+original expression for the GBA build, as `rupeeLike.c` and `talon.c` already
+do. `grep` for `*(u32*)&` and `*(int*)(ptr +` to see the rest of the class.
+
 **And ask for a savestate, not just a replay.** A replay gives state and never
 pixels; an mGBA savestate is a PNG carrying the frame's state *and* the picture
 it produced, which is the only artefact that can answer "why is this pixel this
@@ -648,6 +662,11 @@ that altered what the shipping build renders. 240x160 is the shipping build.
   black. This has produced false results before.
 - When a fix makes a measurement jump to its theoretical best, confirm the code
   you think produced it actually ran. That has produced false results too.
+- **A capture harness is single-use.** The game rewrites `tmc.sav` as it
+  plays, so a second run in the same directory starts from the first run's
+  mutated save and goes somewhere else. B53 lost a round to a SIGSEGV that
+  reproduced once and never again for exactly this reason — neither run was
+  meaningful. Copy the save in fresh for every run, not once per directory.
 - **A `warp` needs a save in the harness.** It retries until `TASK_GAME`, and a
   temp dir with no `tmc.sav` never gets there — the run sits on the name-entry
   screen and every `dump` after the warp photographs *that*. Two such runs at

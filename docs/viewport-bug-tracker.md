@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-seven of the fifty-two
-bugs are closed: forty-four fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Forty-eight of the fifty-three
+bugs are closed: forty-five fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -132,6 +132,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B50 | Every conditional whirlwind is invisible and inert | **Fixed** 2026-08-23 — **not a viewport bug: reproduces at 240x160.** `gUnk_020342F8` *is* `gArea.filler6` on GBA (`0x02033A90 + 0x868`), but the port gave it separate storage, so the delayed-entity manager set bits in one object and `whirlwind.c` / `cutsceneMiscObject.c` read another that was always zero — every gated entity self-deleted before its Init. 44 whirlwinds and 10 Cloud Tops clouds, including all 40 of Cloud Tops'. Aliased with a macro, as `gUnk_02035542` already is |
 | B51 | Every port save is one byte out of layout for `flags` onward | **Tool fixed** 2026-08-23; **port struct still open.** `KinstoneSave` sums to 327 bytes where the GBA layout documented in `include/save.h` leaves 328, so the port writes `flags[0x200]` and the `dungeon*` arrays one byte early. Name/stats/inventory/kinstones read correctly and every story flag is shifted — on hardware Link loses Ezlo and world events un-do. Hidden by a `u32` alignment hole that makes `sizeof` coincidentally right. `savconv.py` realigns and re-checksums; fixing the struct needs a save migration |
 | B52 | Beanstalk base draws solid magenta | **Closed 2026-08-23 as an intentional divergence** (`docs/hardware-divergences.md` D-1). **Not a faithfulness bug:** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). OBJ palette 5 is now loaded explicitly from each beanstalk's source-room ground palette (via `gUnk_080B4410`), deterministic on any entry path, expanded viewport only |
+| B53 | Syrup never reacts to the mushroom; it snaps back and she offers potion | **Fixed** 2026-08-24 — **not a viewport bug: identical at 240x160.** Syrup's mushroom is an `ItemForSale` (`ITEM_QST_MUSHROOM` 0x38) and `ItemForSale_Action2` reads the interaction target with raw GBA offsets: `*(int*)(ptr+8)` is `InteractableObject.entity` on GBA but `customHitbox` in the port, where 64-bit pointers push `entity` to 16. `customHitbox` is NULL for nearly every interactable, so every A press while carrying a shop item took the cancel branch. Typed access under `PC_PORT` |
 
 ---
 
@@ -4582,6 +4583,72 @@ stub there, checked in the disassembly. Gate 11/11 and
 because the project settles arguments by asking the hardware and that method
 assumes every difference is a bug. It is not one here, and a future session
 diffing this room against mGBA needs to be able to find that out.
+
+## B53 — Syrup never reacts to the mushroom; it snaps back and she offers potion *(fixed)*
+
+Reported 2026-08-24 with a recording. Carrying the mushroom to the witch and
+pressing A put it straight back on its stand and produced her generic greeting
+(`TEXT_SYRUP/message_01`) instead of the quest line. **Not a viewport bug** —
+measured identical at 240x160.
+
+**The mushroom is a shop item.** Syrup's mushroom is an `ItemForSale` object of
+type `0x38` = `ITEM_QST_MUSHROOM` (56), carried through the shop mechanic:
+`ItemForSale_Action1` sets `gPlayerState.heldObject = 4` and
+`gPlayerEntity.carriedEntity = super`, and `ItemForSale_Action2` then runs
+every frame deciding, on each A press, between *cancel and put it back* and
+*let the shopkeeper have it*. That decision reads the player's current
+interaction target:
+
+```c
+ptr = sub_080784E4();
+if (((*(int*)(ptr + 8) == 0) || ((*(u8*)(ptr + 1) != 1 || ...
+```
+
+**Raw GBA offsets into a struct the port lays out differently.** `ptr` is an
+`InteractableObject*`; `+1` is `type` and `+8` is `entity`. On x86-64 the
+64-bit pointers move things:
+
+| Field | GBA | Port |
+|---|---|---|
+| `type` | 0x01 | 1 |
+| `customHitbox` | 0x04 | 8 |
+| `entity` | **0x08** | **16** |
+
+So `type` still read correctly — it sits before the first pointer — and
+`*(int*)(ptr + 8)` read the low half of `customHitbox`, which is the *optional*
+custom rectangle and NULL for nearly every interactable. The port therefore
+concluded "there is nothing to interact with" whenever there was, and every A
+press while carrying a shop item took the cancel branch.
+
+**"Most of it is correct" localised it again**, exactly as in B51: the field
+before the first pointer was fine and the field at it was not, which points at
+a layout difference rather than at logic. The two symptoms are one cause — the
+item returning to its stand and the generic line are both `sub_080819B4`.
+
+**Fix.** Typed field access under `#ifdef PC_PORT`, keeping the original
+expression for the GBA build — the pattern `rupeeLike.c` and `talon.c` already
+use for this class.
+
+**Swept: the population was exactly one.** `sub_080784E4`'s other two callers
+(`playerUtils.c:1162` and `:1264`) already go through the named fields, so no
+other consumer of `InteractableObject` was reading it by offset. The wider
+class — raw byte offsets into structs containing pointers — has two prior
+fixes (`rupeeLike.c`, `talon.c`, both already guarded and commented) and a few
+remaining candidates that are *not* this bug but are worth a look someday:
+`staffroll.c:231`, `beanstalkSubtask.c:1289`, `titleScreenObject.c:47`.
+
+**Verification.** Same recording, same 240x160 build, before and after:
+`TEXT_SYRUP/message_01` → `TEXT_SYRUP/message_07`. The conversation now runs
+the quest dialogue — *"Ah, yes! A ..."*, then *"One whiff, and you're
+wide-awake! That is why it's called a wake..."* — and the mushroom stays in
+Link's hands. Gate 11/11 and `fetches=265497600 mismatched=0`.
+
+**A false crash cost a round, and it was the harness.** The first replay
+SIGSEGV'd and a second run of the same input did not. The runs were sharing a
+directory, and **the game rewrites `tmc.sav` as it plays** — so the second run
+started from the first's mutated save and went somewhere else entirely. Neither
+run meant anything. A fresh copy of the save per run is not optional, and two
+clean runs then agreed and neither crashed.
 
 ## D3 addendum: three scenes override their border colour
 
