@@ -111,12 +111,31 @@ void ItemForSale_Action2(ItemForSaleEntity* this) {
         sub_080819B4(this);
     } else {
         ptr = sub_080784E4();
+#ifdef PC_PORT
+        /* `ptr + 8` and `ptr + 1` are raw GBA offsets into InteractableObject:
+         * `entity` at 0x08 and `type` at 0x01. Only `type` survives the port —
+         * 64-bit pointers push `entity` to offset 16 and put `customHitbox`
+         * at 8, which is NULL for almost every interactable. So the port read
+         * "no entity to interact with" whenever there was one, and pressing A
+         * while carrying a shop item always took the cancel branch: the item
+         * went straight back to its stand and the shopkeeper gave their
+         * generic line. Syrup's mushroom is such an item (ITEM_QST_MUSHROOM,
+         * type 0x38), so she never saw Link holding it. Use the fields. */
+        if ((((InteractableObject*)ptr)->entity == NULL ||
+             (((InteractableObject*)ptr)->type != INTERACTION_TALK ||
+              (gHUD.rActionPlayerState = R_ACTION_SPEAK,
+               (gPlayerState.playerInput.newInput & (INPUT_ACTION | INPUT_INTERACT)) == 0))) &&
+            ((gPlayerState.playerInput.newInput & (INPUT_ACTION | INPUT_CANCEL | INPUT_INTERACT)) != 0)) {
+            sub_080819B4(this);
+        }
+#else
         if (((*(int*)(ptr + 8) == 0) || ((*(u8*)(ptr + 1) != 1 || (gHUD.rActionPlayerState = R_ACTION_SPEAK,
                                                                    (gPlayerState.playerInput.newInput &
                                                                     (INPUT_ACTION | INPUT_INTERACT)) == 0)))) &&
             ((gPlayerState.playerInput.newInput & (INPUT_ACTION | INPUT_CANCEL | INPUT_INTERACT)) != 0)) {
             sub_080819B4(this);
         }
+#endif
     }
 }
 
