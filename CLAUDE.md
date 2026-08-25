@@ -53,11 +53,26 @@ Read in this order:
    record of what it measured and its do-not-retry list. **B27 itself is
    closed**; the residency mechanism it created is still where B30, B31 and B33
    live.
-7. `docs/viewport-expansion-research-plan.md` — the original plan and the
+7. `docs/hardware-divergences.md` — the places the port renders something the
+   real game does not, **on purpose**, and the rules for adding one. Short, and
+   worth reading before concluding that a difference from mGBA is a bug: the
+   whole hardware-oracle method assumes it is, and this is the list of
+   exceptions. Prove faithfulness first, gate to the expanded viewport, set the
+   value rather than inherit it, and keep the code in
+   `port/port_divergences.c`.
+8. `docs/viewport-expansion-research-plan.md` — the original plan and the
    per-spike write-ups, a historical record.
 
 The tracker wins wherever the plan disagrees with it; several spike write-ups
 carry inline "superseded" notes pointing at later work.
+
+**Not every difference from hardware is a defect any more (B52).** The
+beanstalk base draws magenta on real hardware too — the palette slot it uses is
+an authored placeholder, because the sprite sits below the GBA's 160 rows and
+is never on screen. The expanded viewport shows it, so the port now diverges
+deliberately. That is the first such case; `docs/hardware-divergences.md` is
+the list, and it must be consulted before "the port disagrees with mGBA" is
+treated as a bug.
 
 **Nine of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
@@ -99,6 +114,22 @@ passes were spent on 320x240-against-240x160 comparisons that could not have
 been valid. Watch for animation phase too: the same scene frame with the walk
 cycle one frame apart changes the player's whole sprite decomposition. **A save
 must be converted first — see B47.**
+
+**A struct whose offsets are written in comments is asserting something, and
+nothing was checking it (B51).** `SaveFile`'s every field carries its GBA
+offset in `include/save.h`, and one is wrong: `KinstoneSave` sums to 327 bytes
+where `kinstones` 0x114 → `flags` 0x25C leaves 328, so the port writes
+`flags[0x200]` and the three `dungeon*` arrays a byte early. Nothing caught it
+because a `u32` alignment hole before `darknut_timer` makes `sizeof(SaveFile)`
+coincidentally right, and because **the port is self-consistent** — it writes
+and reads 603, so its own saves work and the fault is invisible until a file
+meets the real game. On hardware every story flag is then shifted a bit: Link
+loses Ezlo and world events un-do, while name, stats, inventory and kinstones
+read perfectly because they sit before the boundary. **"Most of it is correct"
+localises a layout bug far better than "none of it is"** — the split names the
+field. `savconv.py` compensates and re-checksums; the struct is still wrong and
+fixing it needs a save migration, so `LAYOUT_FIXED_IN_PORT` must be flipped in
+the same change or the tool will corrupt what it touches.
 
 **And ask for a savestate, not just a replay.** A replay gives state and never
 pixels; an mGBA savestate is a PNG carrying the frame's state *and* the picture
