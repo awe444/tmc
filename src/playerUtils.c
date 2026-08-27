@@ -3984,6 +3984,23 @@ static u8 sScrollFadeDirection;
  * had at the commit point. */
 static u8 sScrollFadePlayerDirection;
 
+/* The player's position at the moment he crossed, for the same reason.
+ *
+ * The third thing the deferral loses, after his facing (above) and the camera
+ * target (B24) — and the one that strands him. Sliding, the room change lands
+ * on the frame he crosses the boundary. Fading, it lands 32 frames later, and
+ * he is still walking for all of them: reverse in that window and he commits
+ * from wherever he has got back to. The nudge Scroll2Step then gives him is
+ * measured from *there*, so he arrives outside the room he is entering, past
+ * an edge whose transition only fires from inside — free to walk, camera
+ * pinned, nothing to walk back into. That is the softlock.
+ *
+ * Restoring the crossing position makes the commit see exactly what the
+ * sliding path saw. It is invisible: the apply only runs once the fade has
+ * reached black. */
+static s32 sScrollFadePlayerX;
+static s32 sScrollFadePlayerY;
+
 void ScrollTransitionApplyWhenBlack(void) {
     if (sScrollFadePending && !gFadeControl.active) {
         /* The camera target the *caller* left behind, which the apply resets to
@@ -4010,6 +4027,15 @@ void ScrollTransitionApplyWhenBlack(void) {
         /* Before the apply, so the room change lands on a player who is still
          * facing the way he was walking. See sScrollFadePlayerDirection. */
         gPlayerEntity.base.direction = sScrollFadePlayerDirection;
+        /* ...and standing where he was when he crossed. Only when he is
+         * walking: if a vehicle claimed the camera it is moving him under its
+         * own speed for every frame of the fade, which is travel it is
+         * supposed to keep (B24), not drift to undo. See
+         * sScrollFadePlayerX. */
+        if (target == NULL || target == &gPlayerEntity.base) {
+            gPlayerEntity.base.x.WORD = sScrollFadePlayerX;
+            gPlayerEntity.base.y.WORD = sScrollFadePlayerY;
+        }
         ScrollTransitionApply(sScrollFadeRoom, sScrollFadeDirection);
         if (target != NULL) {
             gRoomControls.camera_target = target;
@@ -4055,6 +4081,8 @@ bool32 sub_0807BD14(Entity* this, u32 scrollDirection) {
             sScrollFadeRoom = room;
             sScrollFadeDirection = scrollDirection;
             sScrollFadePlayerDirection = gPlayerEntity.base.direction;
+            sScrollFadePlayerX = gPlayerEntity.base.x.WORD;
+            sScrollFadePlayerY = gPlayerEntity.base.y.WORD;
             SetFade(FADE_IN_OUT | FADE_INSTANT, VIEWPORT_SCROLL_FADE_SPEED);
         }
         return TRUE;

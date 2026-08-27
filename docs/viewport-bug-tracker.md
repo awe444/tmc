@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-nine of the fifty-four
-bugs are closed: forty-six fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty of the fifty-five
+bugs are closed: forty-seven fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -134,6 +134,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B52 | Beanstalk base draws solid magenta | **Closed 2026-08-23 as an intentional divergence** (`docs/hardware-divergences.md` D-1). **Not a faithfulness bug:** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). OBJ palette 5 is now loaded explicitly from each beanstalk's source-room ground palette (via `gUnk_080B4410`), deterministic on any entry path, expanded viewport only |
 | B53 | Syrup never reacts to the mushroom; it snaps back and she offers potion | **Fixed** 2026-08-24 — **not a viewport bug: identical at 240x160.** Syrup's mushroom is an `ItemForSale` (`ITEM_QST_MUSHROOM` 0x38) and `ItemForSale_Action2` reads the interaction target with raw GBA offsets: `*(int*)(ptr+8)` is `InteractableObject.entity` on GBA but `customHitbox` in the port, where 64-bit pointers push `entity` to 16. `customHitbox` is NULL for nearly every interactable, so every A press while carrying a shop item took the cancel branch. Typed access under `PC_PORT` |
 | B54 | The darknut fight crashes | **Fixed** 2026-08-26 — **not a viewport bug: the 240x160 build segfaults on the same recording.** `EnemyDetachFX` NULLs a dying darknut's child, so a sword slash that outlives its owner reaches its first update with `parent == NULL` — and `DarkNutSwordSlash` dereferences it twice *before* the `parent == NULL` check two statements later. On GBA address 0 is BIOS and returns open bus; here it is unmapped. Deleted before the init block under `PC_PORT`, as `rupeeLike.c` already does. Swept: population of one |
+| B55 | Reversing during a room scroll strands the player outside the new room | **Fixed** 2026-08-26 — **320x240 only**, the mechanism is `VIEWPORT_SCROLL_FADE`. The faded transition is queued and applied 32 frames later, and Link keeps walking: reverse in that window and the commit runs from where he got back to (measured, x=2501 at queue → 2531 at commit), so `Scroll2Step`'s nudge lands him *outside* the room he is entering, where no edge transition fires. The third thing the deferral loses after his facing (B16) and the camera target (B24); his position is now carried across too, skipped when a vehicle owns the camera |
 
 ---
 
@@ -4720,6 +4721,81 @@ immediately deletes the entity is correct on hardware by accident. The tell is
 a `parent == NULL` (or `child`, `contactedEntity`) test that sits *below* a use
 of the same pointer in the same function — grep for that shape rather than for
 the crash.
+
+## B55 — reversing during a room scroll strands the player outside the new room *(fixed)*
+
+Reported 2026-08-26 with a recording: walk into a room transition, press the
+opposite direction, and Link is stuck. **A 320x240-only bug** — the whole
+mechanism is `VIEWPORT_SCROLL_FADE`, which is 0 at the shipping size.
+
+**The stuck-player instrument was silent, and that was informative.**
+`TMC_STUCK_TRACE` watches `PLAYER_ROOMTRANSITION`; here the player is in
+`PLAYER_NORMAL` and perfectly free to walk. He is simply *outside the room*:
+
+```
+[f3100] room=6  bounds x=[1488..2496]  player x=2587  scrollAction=1  scroll_x=2176 (clamped)
+```
+
+91 px past the room's right edge, camera pinned at its clamp, and the edge
+transition that would take him anywhere only fires from inside. Nothing is
+hung; there is just nowhere to go.
+
+**The deferral commits from a stale position.** At 320x240 a room scroll is
+queued and applied 32 frames later when the screen is black
+(`sub_0807BD14` → `ScrollTransitionApplyWhenBlack`). Link keeps walking for
+those 32 frames — `sub_0807BD14`'s own comment says so. Measured:
+
+| | frame | player x |
+|---|---|---|
+| queued, crossing left into room 6 | 1720 | **2501** |
+| committed | 1752 | **2531** |
+
+He had reversed and walked 30 px back into room 5. `Scroll2Step` then nudges
+him 0.25 px per step from wherever he *is*: 20 px, landing him at 2511 —
+outside room 6, which ends at 2496. From the crossing position it would have
+been 2481, comfortably inside.
+
+**This is the third thing the deferral loses**, and the first that strands the
+player: his facing was the first (B16), the camera target the second (B24).
+Both are already carried across the deferral; his position was not.
+
+**Fix.** Capture `x.WORD`/`y.WORD` when the transition is queued and restore
+them at the commit, so the room change lands on exactly the state the sliding
+path had. Invisible — the apply only runs once the fade has reached black.
+Guarded on the camera target: if a vehicle claimed it, the vehicle is moving
+the player under its own speed for every frame of the fade, and that travel is
+what B24 exists to preserve, so it is left alone.
+
+**Verification.**
+
+| | room | bounds | player x | |
+|---|---|---|---|---|
+| before | 6 | 1488..2496 | 2587 | **outside** |
+| after | 5 | 2496..3216 | 2510 | inside |
+
+**Vehicles proved untouched rather than argued.** The B24 and B40 recordings —
+`lily_pad_softlock`, `lily_pad_softlock_2`, `minecart_softlock` — were replayed
+before and after at 320x240 and dumped at three frames past the end of each:
+**nine of nine pixel-identical.**
+
+240x160 is untouched by construction (`sScrollFadePlayerX` is absent from the
+binary) and gate is 11/11 with `fetches=265497600 mismatched=0` — but note
+that gate is *silence* here, not coverage, because the mechanism compiles out
+at that size. The vehicle diffs are the coverage.
+
+**A 60-frame `TMC_STUCK_TRACE` threshold cried wolf.** Run at `=60`, the
+240x160 build reported repeated `PLAYER_ROOMTRANSITION` stalls and looked like
+a second bug; at the real 180-frame threshold it reports none. Mashing left
+and right in a doorway dithers there for a while quite legitimately — the
+instrument's own docs say `=5` fires on every ordinary doorway.
+
+**Lesson (47).** *"Stuck" is not one state, and the instrument that names one
+of them will stay silent for the others.* `TMC_STUCK_TRACE` was built for a
+player held in `PLAYER_ROOMTRANSITION` (B16); this player was in
+`PLAYER_NORMAL` with full control, outside the room's bounds, with no
+transition to re-enter through. Ask *where is he* as well as *what state is
+he in* — comparing his position against `origin_x..origin_x+width` is one
+line and answers it outright.
 
 ## D3 addendum: three scenes override their border colour
 
