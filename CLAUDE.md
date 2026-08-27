@@ -131,6 +131,18 @@ field. `savconv.py` compensates and re-checksums; the struct is still wrong and
 fixing it needs a save migration, so `LAYOUT_FIXED_IN_PORT` must be flipped in
 the same change or the tool will corrupt what it touches.
 
+**A NULL pointer is readable on the GBA and fatal here, so a check that sits a
+couple of statements too late is a crash rather than a smell (B54).** Address 0
+is BIOS: the read returns open bus, so code that dereferences a NULL `parent`
+and then deletes the entity on the very next line is correct on hardware by
+accident. `DarkNutSwordSlash` does exactly that — `EnemyDetachFX` NULLs a dying
+darknut's child, and the slash's first update reads `parent->type` two
+statements above its own `parent == NULL` test — and the darknut fight
+crashed at both viewport sizes. The tell is a `parent`/`child`/
+`contactedEntity` NULL test *below* a use of the same pointer in the same
+function; grep for that shape rather than for the crash. `rupeeLike.c` and
+`acroBandits.c` are the same family, already guarded.
+
 **A raw GBA byte offset into a struct that holds a pointer is wrong here, and
 only from the pointer onward (B53).** `itemForSale.c` read the player's
 interaction target as `*(u8*)(ptr + 1)` and `*(int*)(ptr + 8)` —
