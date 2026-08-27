@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-one of the fifty-six
-bugs are closed: forty-eight fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-two of the fifty-seven
+bugs are closed: forty-nine fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -40,7 +40,9 @@ instrument built to look at it.
 **Nine of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
-room properties, B48's unterminated ones and B56's stale HBlank DMA channel. The expansion exposed them; it did not cause them, and B23 and
+room properties, B48's unterminated ones and B56's stale HBlank DMA channel.
+**B57 is the first regression this tracker caused itself** — B45's OBJ priority
+rule, right on the two savestates it was pinned on and wrong on a third. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
 playing. This document stays the authoritative record of what the expansion
 actually did to the engine — which includes distinguishing that from what it
@@ -4915,6 +4917,106 @@ scrolled behind it. Anything genuinely driven by the running scene changes
 between frames; a picture that does not is being fed by something that stopped.
 That test cost one `cmp` of two mask dumps and it pointed straight at a table
 nobody was writing, which is a much smaller search than "what bends a ray".
+
+## B57 — Link is invisible over most of the rolling barrel's floor *(fixed)*
+
+Reported 2026-08-27 with a recording (`barrel_room_regression.script`), as a
+regression: inside Deepwood Shrine's `InsideBarrel` (area `0x48`, room `0x20`)
+Link is hidden or half-hidden depending where he stands, and completely gone
+where the recording leaves him. **It is a regression, and it is B45's** — the
+OBJ priority rule, live since 2026-08-22 at both viewport sizes.
+
+**Two rounds were spent ruling out the wrong things, and one of them was
+ruled out wrongly.** B55 and B56 were the only engine changes since the
+maintainer's previous binary, so both were A/B'd against the recording: 0 of 77
+frames differ for each. Then `754d70ee` (2026-08-08) was built and scored
+*identically* to master, which was read as "older than the tracker" — and was
+an artefact. **`libs/ViruaPPU` is a submodule and `git checkout` does not move
+it**, so every historical build in that pass ran today's renderer. Redone with
+`git submodule update`, the bisect is unambiguous:
+
+| engine | ViruaPPU | Link-visible px over the walk |
+|---|---|---|
+| 754d70ee (08-08) | e58d43a | **4041** |
+| 0c7848d6 (08-21, B38) | ecd29a4 | **4041** |
+| e7f70dc9 (08-22, **B45**) | 500b20f | **1228** |
+| master | 53c7cc4 | **1228** |
+
+**The metric.** Link's tunic greens are the only strongly-green thing in a room
+of wood and stone, so `count(g > r+25 and g > b+25)` below the HUD is a
+per-frame "is he drawn" with no thresholding judgement in it: ~92-112 when he
+is, 0 when he is not. Summed over 45 frames of the walk it separates the two
+renderers by more than 3x.
+
+**The room is the whole reason it shows here.** `InsideBarrel` is mode 1 with
+**BG1, BG2 and the player all at priority 2** (`BG1CNT=5E86`, `BG2CNT=BC82`,
+`attr2prio=2`), and a sprite beats a BG on a tie — so the player's visibility
+rests entirely on the OBJ layer being composited at 2. The barrel also draws
+much of itself with **priority-3 sprites**, some at higher OAM indices than
+Link. Under B45's rule those claimed the layer's priority and it lost to both
+BGs. `TMC_MASK_BG1` states it without inference: BG1 is what you see at
+**651/651** of his pixels where he vanishes and ~57% where he does not — he was
+only ever visible through BG1's transparent gaps.
+
+**The oracle settled it, and needed a third savestate to do so.** B45's rule
+was pinned on two, which cannot separate it from a narrower rule: in both, the
+last covering sprite in OAM order *is* the sprite the narrower rule picks.
+`baserom.ss1` in the barrel separates them.
+
+| scene | covering OBJs, OAM order | BG below | hardware | "last covering" | fixed rule |
+|---|---|---|---|---|---|
+| swamp `(118,70)` | OAM[7] p3 opaque, OAM[14] p2 **transparent** | BG2 p2 | player drawn | 2 ✓ | 2 ✓ |
+| name entry `(27,52)` | OAM[27] p1 **transparent**, OAM[33] p2 opaque | BG1 p1 | white — BG wins | 2 ✓ | 2 ✓ |
+| barrel `(90,66)` | OAM[9] p2 opaque, OAM[26] p3, OAM[34] p3 opaque | BG1+BG2 p2 | **Link drawn** | 3 ✗ | 2 ✓ |
+
+Every display register in that savestate is identical to the port's
+(`DISPCNT=1741 BLDCNT=3456 BG1CNT=5E86 BG2CNT=BC82`) — the third time in this
+tracker that hardware and the port agree on all the state and disagree on the
+picture, because the difference is a compositing rule.
+
+**Fix.** An opaque sprite that loses the colour lends nothing. The claim is the
+**colour sprite's own priority, lowered only by transparent covering sprites
+later in OAM order**. The loop already walks OAM backwards, so "later in OAM
+order" is "already seen": a transparent pixel records its priority in
+`mode1_obj_trans`, and every colour write takes `min(own, trans)`. Taking the
+*best* priority over all covering sprites is the third candidate, and these
+three pixels reject it — it renders swamp and barrel correctly and eats two
+pixels of the name entry's apex.
+
+**Verification.**
+
+- Barrel: **4041**, exactly the pre-B45 figure, and Link visible on all 45
+  sampled frames (68-112 px) rather than 0 on nineteen of them.
+- Gate: 11/11 waypoints, `fetches=265497600 mismatched=0`. The `fileselect`
+  waypoint *is* B45's name-entry scene, so the gate covers that data point.
+- **Dense 176-frame route diff: 2 frames differ**, and both are a *correction* —
+  the HUD's third heart had a notch bitten out of its white outline where a
+  neighbouring sprite overlapped it, and the outline is now whole.
+- **B45's own recording (`mud_sink_visual_glitch`): 42 of 44 frames identical**,
+  and the 2 that differ were probed rather than eyeballed. At `(200,124)` the
+  covering set is OAM[32] p3 opaque, OAM[18] p2 **transparent** (OBJECT_70's
+  mask, still lending), OAM[13] p2 opaque, OAM[9] p3 opaque — the same shape as
+  the barrel, with a higher-index *opaque* sprite claiming 3 under the old rule.
+  The sink itself is untouched: the mask still lends its priority exactly as
+  B45 requires.
+
+**Lesson (50).** *A rule pinned on two data points is pinned on two data points,
+and the third is the one that costs you.* B45's own write-up says to look for
+the scene that would refute a rule before believing it. Both of its savestates
+had the same accidental property — the last covering sprite was also the colour
+sprite — so neither could see the difference between "last covering" and "the
+colour's own". Five days and a room where the player disappears is what the
+missing third scene cost. When a rule is derived from examples, enumerate what
+the examples have in *common* that the rule does not require.
+
+**Lesson (51).** *`git checkout` does not move a submodule, so a bisect across
+one silently tests the wrong tree.* The first history pass built four revisions
+and got byte-identical results from all of them — which read as "this predates
+the tracker" and is exactly what a renderer that never changed would produce.
+`git submodule update` after each checkout is the fix; `git submodule status`
+before believing a bisect result is the check. The tell was the *identical*
+score, not a plausible one: two builds three weeks apart agreeing to the pixel
+on a metric this sensitive is a fact about the harness, not the code.
 
 ## D3 addendum: three scenes override their border colour
 
