@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-one of the fifty-six tracked bugs
+complete — every spike landed and fifty-two of the fifty-seven tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -189,6 +189,24 @@ B45 compared registers, OAM, maps and tilesets against hardware, matched on
 every one, and concluded the port was faithful while the screen plainly
 differed — the mismatch was a compositing *rule*, which no state comparison can
 see.
+
+**A rule pinned on two data points is pinned on two data points, and a
+submodule bisect that never moved the submodule proves nothing (B57).** B45's
+OBJ-priority rule — *the layer composites at the priority of the last covering
+sprite in OAM order* — was right on both savestates it was taken from and
+wrong in general: in both of them the last covering sprite was also the sprite
+supplying the colour, so neither could see the difference. A third savestate
+(the Deepwood barrel, `baserom.ss1`) separates them, and there the rule hides
+the player over most of the room, at both sizes, for five days. **An opaque
+sprite that loses the colour lends nothing**; the claim is the colour sprite's
+own priority lowered only by *transparent* covering sprites later in OAM order.
+When a rule comes from examples, enumerate what the examples have in *common*
+that the rule does not require. And **`git checkout` does not move
+`libs/ViruaPPU`** — the first bisect built four revisions three weeks apart and
+got byte-identical scores from all of them, which reads as "this predates the
+tracker" and is exactly what an unchanged renderer produces. `git submodule
+update` after each checkout; `git submodule status` before believing the
+result. The tell was the score being *identical*, not merely similar.
 
 **Two scenes with the same shape and opposite answers beat either alone
 (B45).** A blank sprite over the player lends its priority in the Castor Wilds
