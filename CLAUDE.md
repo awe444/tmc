@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-two of the fifty-seven tracked bugs
+complete — every spike landed and fifty-three of the fifty-eight tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -166,6 +166,20 @@ crashed at both viewport sizes. The tell is a `parent`/`child`/
 `contactedEntity` NULL test *below* a use of the same pointer in the same
 function; grep for that shape rather than for the crash. `rupeeLike.c` and
 `acroBandits.c` are the same family, already guarded.
+
+**A multi-return modelled as a `u64` is a 32-bit-pointer idiom, and survives
+translation only where something narrows it (B58).** `GetFuserId` returns the
+fuser id in the low word and the fuser text id in the high one — the ARM
+function really does return two values, so `asm.h` declaring it `u64` is right.
+On the GBA every use of it as an index is truncated for free by 32-bit address
+arithmetic; here the high word survives and
+`gSave.kinstones.fuserProgress[GetFuserId(this)]` reads 2.7 TB past the array.
+**One instruction names it** — `movzbl (%rax,%rdx,1)` with `rax` holding a
+value like `0x2850000003b` is a 64-bit quantity being used as an index. It is
+the only `u64`-returning function in any header, which bounds the class exactly:
+twelve callers, eight narrow to a `u32` local and are fine, four index directly
+and crash — the Tingle siblings and all three Great Fairies. **Grep for the
+return type, not for the symptom.**
 
 **A raw GBA byte offset into a struct that holds a pointer is wrong here, and
 only from the pointer onward (B53).** `itemForSale.c` read the player's

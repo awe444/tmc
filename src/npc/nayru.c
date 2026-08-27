@@ -47,7 +47,14 @@ void Nayru(NayruEntity* this) {
 
 void Nayru_MakeInteractable(Entity* this) {
     u32 kinstoneId = GetFusionToOffer(this);
+#ifdef PC_PORT
+    /* GetFuserId returns the id and the fuser text id packed into a `u64`;
+     * indexing with all 64 bits only works where pointer arithmetic is 32-bit
+     * and drops the high word. See tingleSiblings.c (B58). */
+    if ((gSave.kinstones.fuserProgress[(u32)GetFuserId(this)] != 0) && (gSave.global_progress < 7)) {
+#else
     if ((gSave.kinstones.fuserProgress[GetFuserId(this)] != 0) && (gSave.global_progress < 7)) {
+#endif
         kinstoneId = KINSTONE_NONE;
     }
     AddInteractableWhenBigFuser(this, kinstoneId);
