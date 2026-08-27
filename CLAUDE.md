@@ -7,8 +7,8 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and forty-three of the forty-seven tracked bugs
-are closed; B41, B42, B46 and B47 are open.**
+complete — every spike landed and fifty-one of the fifty-six tracked bugs
+are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
 recorded. B21, open for nearly two weeks as "unfixable", closed 2026-08-20 once
@@ -74,13 +74,17 @@ deliberately. That is the first such case; `docs/hardware-divergences.md` is
 the list, and it must be consulted before "the port disagrees with mGBA" is
 treated as a bug.
 
-**Nine of this milestone's defects were live in the shipping 240×160 build or
+**Ten of this milestone's defects were live in the shipping 240×160 build or
 through all of Milestone 1** — the expansion exposed them rather than causing
 them, B23 and B25 only because it made the rolling barrel worth playing, and
 B43 only because the maintainer recorded the cutscene at 240x160 on request. The regression gate proves the shipping build did not *move*; it cannot
 prove it was right. When a change alters a mechanism rather than a surface,
 count the frames that exercise the mechanism instead of reading a gate pass as
 coverage. B16 and B17 both lived in code the canonical route never executes.
+B56 is the counting done right: a change to when *every* HBlank DMA stops, and
+the route runs that mechanism 4312 times — all with the window disabled, which
+is why 11/11 survived a change that broad, and the 111 frames where it was
+enabled had to be diffed separately to show live channels were untouched.
 
 **When a bug needs a human at the controls, ask for a recording early.**
 `record-bug.sh` found B13, B5, B15 and B16 in one pass each, after rounds of
@@ -130,6 +134,26 @@ localises a layout bug far better than "none of it is"** — the split names the
 field. `savconv.py` compensates and re-checksums; the struct is still wrong and
 fixing it needs a save migration, so `LAYOUT_FIXED_IN_PORT` must be flipped in
 the same change or the tool will corrupt what it touches.
+
+**A no-op stub is a claim that the hardware operation did nothing, and
+teardown is where that claim is usually wrong (B56).** `DmaStop` was
+`((void)0)` in the port, which is right for every copy and fill in the game and
+wrong for the one mode where a DMA is a *standing registration*: on hardware
+`VBlankIntr` calls `DmaStop(0)` every frame and `PerformVBlankDMA` re-arms the
+HBlank channel only while `gVBlankDMA.ready`, so that stub is the only teardown
+an HBlank DMA ever gets. Code ending an effect with a bare
+`gScreen.vBlankDMA.ready = FALSE` — `LightRayManager_Action3` does, never
+touching `DisableVBlankDMA` — is therefore correct there and leaked here, and
+`port_hdma_vblank_reset`'s rewind made the leak permanent by design. Minish
+Woods' light shaft came back **bent** by the sine table the parallax rays left
+in BG3HOFS, at both sizes. **Frozen geometry beside a live camera names a stale
+producer**: eighty consecutive masked frames were byte-identical while the
+world scrolled, and anything the running scene drives changes between frames.
+That is one `cmp` of two dumps, and a much smaller search than "what bends a
+ray". `TMC_HDMA_TRACE=2` names it outright (`active, not re-armed this
+frame`); `TMC_HDMA_KEEPSTALE=1` is the A/B from one binary. **The tell to grep
+for is a stub whose real counterpart is called unconditionally every frame** —
+nobody writes that unless it does something.
 
 **A NULL pointer is readable on the GBA and fatal here, so a check that sits a
 couple of statements too late is a crash rather than a smell (B54).** Address 0
@@ -620,6 +644,15 @@ whole files if you need to prove two builds are the same code.
 Neither play directory ships a `tmc.sav`. Do not create one: let the maintainer
 copy their own in. Saves are viewport-independent, so the same file works in
 both and moving one across is the fastest way to compare a scene at both sizes.
+
+**Do the copy after the commit, and check the binary's own stamp against it.**
+The 320x240 play build handed over on 2026-08-26 was compiled at 22:17 and
+copied at 22:42, while the B55 commit it was supposed to carry landed at 22:46
+— so the maintainer played a binary without that cycle's fix, and an A/B
+against it during B56 disagreed with a fresh build for reasons that had nothing
+to do with the change under test. The startup line prints `__DATE__`/`__TIME__`;
+compare it with `git log -1 --date=iso` before believing any measurement taken
+against an installed play binary.
 
 Confirm what you installed rather than assuming the copy was the right binary:
 `cmp` each against `build/pc/tmc_pc` at the time you copy it, and replay a

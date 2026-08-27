@@ -26,6 +26,10 @@ int port_hdma_has_active_channels(void);
  * across lines when it is — see virtuappu_mode1_set_bg2_ref_per_line. */
 int port_hdma_drives_bg2_reference(void);
 void port_hdma_unregister(int channel);
+/* The DmaStop path: what VBlankIntr does to channel 0 every frame on hardware.
+ * Separate from port_hdma_unregister only so TMC_HDMA_KEEPSTALE can restore the
+ * pre-B56 behaviour without also disarming DisableVBlankDMA. */
+void port_hdma_stop_channel(int channel);
 void port_hdma_step_line(int line);
 void port_hdma_vblank_reset(void);
 

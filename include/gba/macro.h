@@ -88,7 +88,21 @@ static inline void port_DmaTransfer(const void* src_raw, uintptr_t dest_raw, u32
 #define DmaCopy16(dmaNum, src, dest, size) DMA_COPY(dmaNum, src, dest, size, 16)
 #define DmaCopy32(dmaNum, src, dest, size) DMA_COPY(dmaNum, src, dest, size, 32)
 
-#define DmaStop(dmaNum) ((void)0)
+/* On hardware DmaStop clears DMA_ENABLE and DMA_START_MASK, which for an
+ * HBlank-triggered channel is the *only* thing that ever tears it down again:
+ * VBlankIntr calls DmaStop(0) every frame and PerformVBlankDMA re-arms it only
+ * while gVBlankDMA.ready. Code that ends an effect by clearing that flag —
+ * LightRayManager_Action3 does, without going near DisableVBlankDMA — is
+ * therefore correct there.
+ *
+ * Ported as a no-op it was not, and port_hdma_vblank_reset's rewind turned the
+ * omission into a permanent one: the channel stayed armed and replayed its last
+ * per-scanline table for the rest of the room. B56 is that — Minish Woods'
+ * light shaft coming back bent by the sine table the parallax rays left in
+ * BG3HOFS, frozen, at both viewport sizes. Every HBlank DMA in the tree is
+ * registered through SetVBlankDMA, so a live effect is re-armed inside the same
+ * VBlankIntr this runs in and never sees the teardown. */
+#define DmaStop(dmaNum) port_hdma_stop_channel(dmaNum)
 #define DmaWait(dmaNum) ((void)0)
 
 #define DMA_CLEAR(dmaNum, dest, size, bit)     \

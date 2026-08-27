@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty of the fifty-five
-bugs are closed: forty-seven fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-one of the fifty-six
+bugs are closed: forty-eight fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -37,10 +37,10 @@ layer *reach* further, and the fix was to stop it wrapping and pin it to the
 edge it belongs to. B34 was found the same day, in the same layer, by the
 instrument built to look at it.
 
-**Eight of these were live in the shipping 240×160 build or through all of
+**Nine of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
-room properties and B48's unterminated ones. The expansion exposed them; it did not cause them, and B23 and
+room properties, B48's unterminated ones and B56's stale HBlank DMA channel. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
 playing. This document stays the authoritative record of what the expansion
 actually did to the engine — which includes distinguishing that from what it
@@ -4796,6 +4796,125 @@ player held in `PLAYER_ROOMTRANSITION` (B16); this player was in
 transition to re-enter through. Ask *where is he* as well as *what state is
 he in* — comparing his position against `origin_x..origin_x+width` is one
 line and answers it outright.
+
+## B56 — light rays come back bent after fading out and returning *(fixed)*
+
+Reported 2026-08-27 with a recording (`light_ray_deformation.script`): walk east
+through Minish Woods past the light shaft until it fades out, come back, and the
+shaft returns *warped* — bent into an S and shoved left of where it belongs.
+**Not a viewport bug.** It reproduces at 240x160 and was live in the shipping
+build.
+
+**The picture said it before any code did.** `sub_08057450` — the light shaft's
+handler — writes exactly one horizontal quantity, the constant
+`gScreen.bg3.xOffset = 0x10`. It has no per-scanline mechanism of any kind, so
+nothing it does can bend a straight ray. Something else was writing BG3HOFS per
+line, and in this room only one thing ever does: `sub_0805732C`, which the
+*other* light state registers as an HBlank DMA to drive the parallax rays'
+sine wobble.
+
+**Measured with `TMC_MASK_BG3=1`, sprites and HUD off:**
+
+| | 240x160 | 320x240 |
+|---|---|---|
+| first visit | `cols=115..239` spread 116 | `cols=195..319` spread 116 |
+| after the round trip | `cols=14..159` spread 118 | `cols=138..283` spread 122 |
+| fixed | `cols=115..239` spread 116 | `cols=195..319` spread 116 |
+
+The band's pixel count is identical before and after at every sampled frame
+(9724, 9770, 9771 at 320x240) — it was never gaining or losing content, only
+being displaced per scanline.
+
+**The warp is frozen, and that is the whole diagnosis.** Eighty consecutive
+frames of the masked band are **byte-identical** while the camera is still, and
+the sine phase of a *live* `sub_0805732C` advances every frame with
+`gRoomTransition.frameCount`. So the table driving BG3HOFS was one nobody was
+writing any more: a stale HDMA channel replaying a dead effect's last table.
+
+**`DmaStop` was `((void)0)` in the port.** On hardware it clears `DMA_ENABLE`
+and `DMA_START_MASK`, and for an HBlank-triggered channel that is the *only*
+teardown there is: `VBlankIntr` calls `DmaStop(0)` every frame and
+`PerformVBlankDMA` re-arms it only while `gVBlankDMA.ready`. So
+`LightRayManager_Action3` ending the rays' fade with a bare
+`gScreen.vBlankDMA.ready = FALSE` — never going near `DisableVBlankDMA`, which
+is the one site that *did* unregister in the port — is correct on hardware and
+was a leak here. `port_hdma_vblank_reset`'s rewind then made the leak
+permanent by design: it exists so a channel that outlives its frame replays its
+table rather than walking off the end of it, which is exactly what kept the
+dead sine wobble running for the rest of the room.
+
+**Fix.** `DmaStop(dmaNum)` unregisters the HDMA channel, which is what the
+hardware macro it replaces does. Every HBlank DMA in the tree is registered
+through `SetVBlankDMA`, so a live effect is re-armed by `PerformVBlankDMA`
+inside the same `VBlankIntr` and never sees the teardown — verified rather than
+assumed, below.
+
+**`TMC_HDMA_TRACE=2` reports it in one run.** Per frame, any channel that drove
+the raster without having been re-armed since the last VBlank:
+
+```
+[hdma] frame=2466 ch0 STALE io_off=0x1C count=1 (active, not re-armed this frame)
+```
+
+At 240x160 that begins on the frame after `Action3` clears `ready` and never
+stops — 1018 frames of it before the shaft is even redrawn, then 304 more with
+it on screen. After the fix, zero. `TMC_HDMA_KEEPSTALE=1` restores the old
+behaviour from the same binary, which is how the before/after above was taken.
+
+**The fix's blast radius was measured, not argued.** It changes when *any*
+HBlank channel stops, so the question is which frames that reaches:
+
+- **The canonical route runs the mechanism 4312 times.** Pre-fix, a single
+  unbroken stretch of frames 5990–10301 had a stale WIN0H channel — a third of
+  the route. All 4312 have DISPCNT's window bits **off**, so nothing rendered
+  differently, which is why the gate can be 11/11 across a change this broad.
+- **The live channels are untouched.** The 111 frames where a window is
+  actually enabled, and the 64 of them the trace calls `PER-LINE` — the real
+  iris transitions — produce byte-identical reports before and after.
+- **On the report's own recording**, replaying the same binary with and without
+  `TMC_HDMA_KEEPSTALE`, 7 of 11 dumped frames are pixel-identical and the 4
+  that differ are the four the maintainer complained about. The frames where
+  the dead rays' layer was still being warped are among the identical ones:
+  `Action3` has faded it to nothing by then, so the stale wobble was invisible
+  there. `TMC_MASK_BG3` still shows it, because the mask bypasses the blend —
+  worth remembering when reading that instrument.
+
+**Swept by mechanism, not by report.** Six existing recordings plus the
+canonical route were replayed with `TMC_HDMA_KEEPSTALE=1`, which is the old
+behaviour, and censused for stale channels:
+
+| recording | stale frames | registers |
+|---|---|---|
+| canonical route | 4312 | WIN0H |
+| `western_wood_softlock` | 1672 | WIN0H, BG3HOFS |
+| `light_ray_deformation` | 1324 | BG3HOFS |
+| `barrel_middle_exit`, `post-pause-glitch` | 0 | BG2PA registered, never stale |
+| `mt_crenel_layers`, `minecart_softlock`, `minish_village_glitch_aug20` | 0 | — |
+
+So three scenes leaked a channel and only one of them showed it. The western
+wood cutscene leaked for 1672 frames across both registers and renders
+**pixel-identical** at seven sampled frames with and without the fix; the
+rolling barrel's affine channel — the one that would be most obvious if it
+stuck — is torn down correctly and was never stale at all. The light shaft is
+the visible case because it is the only one where a *live* layer was still being
+drawn through a register a dead effect owned.
+
+Gate: 11/11 waypoints, `fetches=265497600 mismatched=0`.
+
+**Lesson (48).** *A no-op stub is a claim that the hardware operation did
+nothing, and teardown is where that claim is usually wrong.* `DmaStop` was
+stubbed out because the port performs DMA immediately and has no channel to
+stop — true for every copy and fill in the game, and false for the one mode
+where a DMA is a *standing registration*. The tell is a stub whose real
+counterpart is called unconditionally every frame: nobody writes that unless it
+does something.
+
+**Lesson (49).** *Frozen geometry beside a live camera names a stale
+producer.* The shaft was bent identically for eighty frames while the world
+scrolled behind it. Anything genuinely driven by the running scene changes
+between frames; a picture that does not is being fed by something that stopped.
+That test cost one `cmp` of two mask dumps and it pointed straight at a table
+nobody was writing, which is a much smaller search than "what bends a ray".
 
 ## D3 addendum: three scenes override their border colour
 
