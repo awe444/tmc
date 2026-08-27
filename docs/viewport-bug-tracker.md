@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Forty-eight of the fifty-three
-bugs are closed: forty-five fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Forty-nine of the fifty-four
+bugs are closed: forty-six fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -133,6 +133,7 @@ GBA-native. Builds are named WxH throughout: 240x160 (shipping), 320x160
 | B51 | Every port save is one byte out of layout for `flags` onward | **Tool fixed** 2026-08-23; **port struct still open.** `KinstoneSave` sums to 327 bytes where the GBA layout documented in `include/save.h` leaves 328, so the port writes `flags[0x200]` and the `dungeon*` arrays one byte early. Name/stats/inventory/kinstones read correctly and every story flag is shifted — on hardware Link loses Ezlo and world events un-do. Hidden by a `u32` alignment hole that makes `sizeof` coincidentally right. `savconv.py` realigns and re-checksums; fixing the struct needs a save migration |
 | B52 | Beanstalk base draws solid magenta | **Closed 2026-08-23 as an intentional divergence** (`docs/hardware-divergences.md` D-1). **Not a faithfulness bug:** Hardware has the same placeholder: OBJ palette 5 and BG palette 3 are both 12/16 `0x7C1F` in an mGBA savestate of the same room, and `LoadRoomTileSet`'s BG3→OBJ5 copy is faithful. The base sits at y=208..237, outside the GBA's centred y=40..199, so it is never on screen on hardware — the periphery again (B26/B27/B30/B31/B33). OBJ palette 5 is now loaded explicitly from each beanstalk's source-room ground palette (via `gUnk_080B4410`), deterministic on any entry path, expanded viewport only |
 | B53 | Syrup never reacts to the mushroom; it snaps back and she offers potion | **Fixed** 2026-08-24 — **not a viewport bug: identical at 240x160.** Syrup's mushroom is an `ItemForSale` (`ITEM_QST_MUSHROOM` 0x38) and `ItemForSale_Action2` reads the interaction target with raw GBA offsets: `*(int*)(ptr+8)` is `InteractableObject.entity` on GBA but `customHitbox` in the port, where 64-bit pointers push `entity` to 16. `customHitbox` is NULL for nearly every interactable, so every A press while carrying a shop item took the cancel branch. Typed access under `PC_PORT` |
+| B54 | The darknut fight crashes | **Fixed** 2026-08-26 — **not a viewport bug: the 240x160 build segfaults on the same recording.** `EnemyDetachFX` NULLs a dying darknut's child, so a sword slash that outlives its owner reaches its first update with `parent == NULL` — and `DarkNutSwordSlash` dereferences it twice *before* the `parent == NULL` check two statements later. On GBA address 0 is BIOS and returns open bus; here it is unmapped. Deleted before the init block under `PC_PORT`, as `rupeeLike.c` already does. Swept: population of one |
 
 ---
 
@@ -4649,6 +4650,76 @@ directory, and **the game rewrites `tmc.sav` as it plays** — so the second run
 started from the first's mutated save and went somewhere else entirely. Neither
 run meant anything. A fresh copy of the save per run is not optional, and two
 clean runs then agreed and neither crashed.
+
+## B54 — the darknut fight crashes *(fixed)*
+
+Reported 2026-08-26 with a recording: SIGSEGV in `Area_CastorDarknut`.
+**Not a viewport bug** — the pre-fix 240x160 play build segfaults on the same
+recording and the fixed one does not.
+
+**Reproduced twice and the crash site did not move**, which is what says it is
+the defect rather than fallout from an earlier corruption (B48 was the
+opposite):
+
+```
+#0  DarkNutSwordSlash_Init (this=…) at src/projectile/darkNutSwordSlash.c:46
+#1  DarkNutSwordSlash (this=…)      at src/projectile/darkNutSwordSlash.c:25
+#2  ProjectileUpdate …
+```
+
+with `this->parent = (nil)` and `this->type = 0`.
+
+**The array was innocent, which was worth checking first.**
+`DarkNutSwordSlash_hitTypes` is an `extern const u8[]` — exactly the shape of
+the missing-data stubs behind B36 and B50 — but it holds real ROM data
+(`4c 4c 4e 4d 53 …`). The NULL is the parent.
+
+**Root cause: a NULL dereference the GBA tolerates.** The darknut sets
+`slash->parent = super` at all five creation sites, and clears it again when it
+dies: `EnemyDetachFX` does `this->child->parent = NULL`. So a slash that
+outlives its owner by a frame reaches its *first* update with a NULL parent —
+a state the code anticipates:
+
+```c
+if (this->action == 0) {
+    this->action = 1;
+    DarkNutSwordSlash_Init(this);                 /* reads parent->type      */
+    if (this->type == 3) {
+        InitAnimationForceUpdate(this, this->parent->animationState + 0x18);
+    }
+}
+if ((this->parent == NULL) || (this->parent->health == 0)) {
+    DeleteThisEntity();                           /* …the check is here      */
+}
+```
+
+The check is two statements *after* the dereferences. On GBA address 0 is BIOS:
+the reads return open bus rather than faulting, the garbage `hitType` is
+written to an entity that the very next statement deletes, and nothing ever
+observes it. On x86-64 address 0 is unmapped, so the fight crashes.
+
+**Fix.** Under `#ifdef PC_PORT`, delete the entity before the init block —
+which is where hardware ends up one line later anyway. Same class and same
+remedy as `rupeeLike.c`'s "lick lick" fountain crash.
+
+**Swept: the population is exactly one.** Every function in `src/projectile/`,
+`src/enemy/` and `src/object/` was checked for a `parent->` dereference
+preceding its own `parent == NULL` check. Three matched; two are false
+positives — `acroBandits.c` already carries a guarded PC_PORT self-heal for a
+stale parent, and `ambientClouds.c` tests `this->parent != NULL` before
+dereferencing — and the third is this file.
+
+**Verification.** Recording replays clean twice at 320x240 and once at
+240x160, exit 0, running past the recording's end to frame 5199. Gate 11/11
+and `fetches=265497600 mismatched=0`.
+
+**Lesson (46).** *A NULL pointer is readable on the GBA and fatal here, so
+"the check is a couple of statements late" is a crash rather than a smell.*
+Address 0 is BIOS: the read returns open bus, and code that dereferences then
+immediately deletes the entity is correct on hardware by accident. The tell is
+a `parent == NULL` (or `child`, `contactedEntity`) test that sits *below* a use
+of the same pointer in the same function — grep for that shape rather than for
+the crash.
 
 ## D3 addendum: three scenes override their border colour
 

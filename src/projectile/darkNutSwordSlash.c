@@ -20,6 +20,21 @@ void DarkNutSwordSlash_Init(Entity*);
 void DarkNutSwordSlash_OnTick(Entity*);
 
 void DarkNutSwordSlash(Entity* this) {
+#ifdef PC_PORT
+    /* The darknut NULLs its child's parent when it dies (EnemyDetachFX), and a
+     * slash can outlive its owner by a frame — so `parent` is already NULL on
+     * the slash's very first update. The init block below dereferences it
+     * twice, in DarkNutSwordSlash_Init (`parent->type`) and for type 3
+     * (`parent->animationState`), *before* the NULL check two statements
+     * later. On GBA those reads land at address 0, which is BIOS: they return
+     * open bus instead of faulting, the resulting garbage hitType is written
+     * to an entity that the very next statement deletes, and nothing ever
+     * observes it. Here address 0 is unmapped, so the darknut fight crashes.
+     * Delete now — that is where hardware ends up a line later anyway. */
+    if (this->parent == NULL) {
+        DeleteThisEntity();
+    }
+#endif
     if (this->action == 0) {
         this->action = 1;
         DarkNutSwordSlash_Init(this);
