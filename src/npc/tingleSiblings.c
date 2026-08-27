@@ -152,7 +152,20 @@ void sub_08064F28(Entity* this, ScriptExecutionContext* context) {
     context->condition = 0;
     roomFlag = gUnk_0810FC50[this->type];
     if (CheckRoomFlag(roomFlag) == 0) {
+#ifdef PC_PORT
+        /* GetFuserId is a multi-return: the fuser id in the low word and the
+         * fuser text id in the high one, which `asm.h` models by declaring it
+         * `u64`. Indexing with the whole thing is only safe where a pointer is
+         * 32 bits — the GBA discards the high word in the address arithmetic
+         * and lands on `fuserProgress[id]`. Here it does not: the text id
+         * survives, `fuserProgress + 0x2850000003b` is 2.7 TB out of range,
+         * and talking to a Tingle sibling is a SIGSEGV at both viewport sizes.
+         * Every other caller assigns to a `u32` first; these four index
+         * directly. (B58 — the three Great Fairies are the same line.) */
+        bVar2 = gSave.kinstones.fuserProgress[(u32)GetFuserId(this)];
+#else
         bVar2 = gSave.kinstones.fuserProgress[GetFuserId(this)];
+#endif
         if (bVar2 >= 2) {
             uVar5 = 3;
         } else {

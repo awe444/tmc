@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-two of the fifty-seven
-bugs are closed: forty-nine fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-three of the fifty-eight
+bugs are closed: fifty fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -40,7 +40,8 @@ instrument built to look at it.
 **Nine of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
-room properties, B48's unterminated ones and B56's stale HBlank DMA channel.
+room properties, B48's unterminated ones, B56's stale HBlank DMA channel and
+B58's untruncated `u64` fuser id.
 **B57 is the first regression this tracker caused itself** — B45's OBJ priority
 rule, right on the two savestates it was pinned on and wrong on a third. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
@@ -5017,6 +5018,83 @@ the tracker" and is exactly what a renderer that never changed would produce.
 before believing a bisect result is the check. The tell was the *identical*
 score, not a plausible one: two builds three weeks apart agreeing to the pixel
 on a metric this sensitive is a fact about the harness, not the code.
+
+## B58 — talking to a Tingle sibling crashes the port *(fixed)*
+
+Reported 2026-08-27 with a recording (`tingle_crash.script`) whose last input is
+the A press that starts the conversation. **Not a viewport bug** — the same
+SIGSEGV, same file, same line, same stack, at 240x160.
+
+**One instruction names it.**
+
+```
+=> movzbl (%rax,%rdx,1),%eax     rax = 0x2850000003b   rdx = &gSave.kinstones.fuserProgress
+```
+
+`rdx` is the array. `rax` is the *whole 64-bit return* of `GetFuserId`, which is
+a multi-return: the fuser id in the low word and the fuser text id in the high
+one, which `include/asm.h` models by declaring it `u64` and
+`GetFuserIdAndFuserTextId` unpacks with a union. So the index is
+`0x2850000003b` and the address lands 2.7 TB past the array.
+
+```c
+bVar2 = gSave.kinstones.fuserProgress[GetFuserId(this)];   /* tingleSiblings.c:155 */
+```
+
+**It works on the GBA because pointers are 32 bits there.** The address
+arithmetic is done in the pointer's width, so the text id in the high word
+falls off the end and the expression reads `fuserProgress[0x3b]` — the fuser id,
+which is what was meant. Nothing truncates it here.
+
+**The population is four sites, and the sweep is exact rather than approximate:**
+`GetFuserId` is the *only* `u64`-returning function declared in any header, so
+the class is "call sites that use its result without narrowing it". Twelve
+callers, eight of which assign to a `u32` local first and are fine; four index
+`fuserProgress` directly:
+
+| site | who |
+|---|---|
+| `npc/tingleSiblings.c:155` | the Tingle siblings — the report |
+| `npc/din.c:49` | Great Fairy (Royal Valley) |
+| `npc/nayru.c:50` | Great Fairy (Minish Woods) |
+| `npc/farore.c:50` | Great Fairy (Mt Crenel) |
+
+**Fix.** `(u32)` at each of the four, under `#ifdef PC_PORT` with the original
+expression kept for the GBA build — the same shape as `itemForSale.c` (B53) and
+`rupeeLike.c`. The cast is a no-op on a 32-bit target, but the guard makes that
+a fact about the source rather than an argument about codegen.
+
+**Verification.**
+
+- Tingle: the recording replays to the end at **both sizes** and the whole
+  conversation runs — four text boxes ending on *"Actually, Tingle has some
+  Kinstones, you know!"*, which is the branch that reads `fuserProgress`, so the
+  narrowed index is also producing the right value and not merely a safe one.
+- The three fairies are **verified by disassembly, not at runtime**, and that
+  distinction is worth recording. All four now emit `mov %eax,%edx` — the low
+  word — where the crash site emitted `(%rax,%rdx,1)`. `Din_MakeInteractable`
+  has no C caller: it is dispatched from the NPC script table when Link
+  *interacts* with the fairy, so warping into all three fountains does not
+  execute it — confirmed by the pre-fix build not crashing there either. The
+  cheap scene test would have been a false negative in both directions.
+- Gate: 11/11 waypoints, `fetches=265497600 mismatched=0`.
+
+**Two warps that proved nothing, and the tell for both.** The first attempt at
+the fairy check truncated the recording at frame 760 and warped; all three
+"fountain" dumps were the **pause menu**, because the recording is mid-menu
+there and `warp` retries until `TASK_GAME`, which a pause satisfies. The second
+added START presses and stayed in the menu anyway. Only truncating at frame
+1290 — inside ordinary walking — reached the rooms. **Dump the frame before the
+warp**, which is already the rule for this reason; three identical dumps of a
+menu are the signature.
+
+**Lesson (52).** *A multi-return modelled as a `u64` is a 32-bit-pointer idiom,
+and it only survives translation where something narrows it.* The decomp is
+right to declare it that way — the ARM function really does return two values —
+but on the GBA every use of it as an index is silently truncated by the address
+arithmetic, and eight of the twelve callers here happen to narrow it explicitly
+anyway. The four that did not are the bug. `grep` for the return type rather
+than for the symptom: one declaration bounded the whole class.
 
 ## D3 addendum: three scenes override their border colour
 
