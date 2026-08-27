@@ -41,11 +41,27 @@ typedef struct {
     uint8_t  unit;      // 2 or 4 bytes
     uint8_t  src_fixed;
     uint8_t  dest_mode; // HdmaDestMode
+    uint8_t  armed;     // re-registered since the last VBlank reset
 } HdmaChannel;
 
 static HdmaChannel s_channels[HDMA_CHANNELS];
 
 static long hdma_io_offset(const uint8_t* dest);
+
+/* TMC_HDMA_TRACE: 1 = registrations and the per-frame WIN0H report,
+ * 2 = also the per-frame stale-channel report (see port_hdma_vblank_reset). */
+static int trace_level(void)
+{
+    static int level = -1;
+    if (level < 0) {
+        const char* v = getenv("TMC_HDMA_TRACE");
+        level = (v == NULL) ? 0 : (v[0] == '\0' ? 1 : atoi(v));
+        if (v != NULL && level < 1) {
+            level = 1;
+        }
+    }
+    return level;
+}
 
 /* TMC_HDMA_TRACE=1 — one line per distinct (dest, count) pair registered.
  * Spike 9's registration inventory, taken at runtime rather than by grep:
@@ -59,7 +75,7 @@ static void hdma_trace_register(void* dest, uint16_t count, uint16_t cnt_h)
     static int seen_n = 0;
     int i;
 
-    if (getenv("TMC_HDMA_TRACE") == NULL) {
+    if (trace_level() == 0) {
         return;
     }
     for (i = 0; i < seen_n; ++i) {
@@ -100,6 +116,7 @@ void port_hdma_register(int channel, const void* src, void* dest,
     hdma_trace_register(dest, count, cnt_h);
     c = &s_channels[channel];
     c->active = 1;
+    c->armed = 1;
     c->src_orig = c->src = (const uint8_t*)src;
     c->dest_orig = c->dest = (uint8_t*)dest;
     c->count = count ? count : 1;
@@ -121,6 +138,23 @@ void port_hdma_unregister(int channel)
         return;
     }
     s_channels[channel].active = 0;
+}
+
+/* TMC_HDMA_KEEPSTALE=1 restores the pre-B56 behaviour — DmaStop stays the
+ * no-op it was, so a channel nobody re-arms keeps replaying its last table.
+ * The A/B for anything that suspects a stale channel, and the reason this is a
+ * separate entry point from port_hdma_unregister: DisableVBlankDMA tore its
+ * channel down before the fix too, and the switch must not reach that. */
+void port_hdma_stop_channel(int channel)
+{
+    static int keep = -1;
+    if (keep < 0) {
+        keep = getenv("TMC_HDMA_KEEPSTALE") != NULL;
+    }
+    if (keep) {
+        return;
+    }
+    port_hdma_unregister(channel);
 }
 
 int port_hdma_has_active_channels(void)
@@ -264,7 +298,7 @@ void port_hdma_vblank_reset(void)
     static uint32_t frame = 0;
 
     frame++;
-    if (s_win_lines_this_frame > 0 && getenv("TMC_HDMA_TRACE") != NULL) {
+    if (s_win_lines_this_frame > 0 && trace_level() >= 1) {
         /* A right edge that varies between lines is a genuinely per-scanline
          * window — the circular iris. A frame where every line agrees is a
          * whole-frame window the static commit would have produced anyway. */
@@ -283,12 +317,41 @@ void port_hdma_vblank_reset(void)
     s_win_right_min = 0x7FFF;
 
     /*
-     * TMC re-arms its HBlank DMA via SetVBlankDMA each frame, so registers
-     * are typically refreshed during VBlank. If a channel happens to outlive
-     * the frame, rewind src/dest so the same per-scanline table replays.
+     * A channel that drove this frame without having been re-armed since the
+     * last reset is a stale one: on hardware VBlankIntr's DmaStop(0) tears
+     * channel 0 down every frame and PerformVBlankDMA re-arms it only while
+     * gVBlankDMA.ready, so "active but not armed" cannot happen there.
+     *
+     * TMC_HDMA_TRACE=2 reports it because the picture will not. A stale
+     * channel replays a table nobody is writing any more, which looks like a
+     * *frozen* version of whatever effect registered it — B56's light shaft
+     * came back bent by the sine table the parallax rays had left behind, and
+     * held that exact bend for as long as the room lasted. Frozen geometry
+     * beside a live camera is the signature, and it is one line here.
+     */
+    if (trace_level() >= 2) {
+        for (ch = 0; ch < HDMA_CHANNELS; ++ch) {
+            HdmaChannel* c = &s_channels[ch];
+            if (c->active && !c->armed) {
+                fprintf(stderr,
+                        "[hdma] frame=%u ch%d STALE io_off=0x%02lX count=%u "
+                        "(active, not re-armed this frame)\n",
+                        frame, ch, hdma_io_offset(c->dest_orig),
+                        (unsigned)c->count);
+            }
+        }
+    }
+
+    /*
+     * TMC re-arms its HBlank DMA via SetVBlankDMA each frame, and with
+     * DmaStop(0) tearing channel 0 down every VBlank nothing should reach the
+     * next frame unarmed. Rewind src/dest anyway: a channel that did outlive
+     * a frame would otherwise resume mid-table and walk off the end of it,
+     * and replaying the same table is the lesser wrong of the two.
      */
     for (ch = 0; ch < HDMA_CHANNELS; ++ch) {
         HdmaChannel* c = &s_channels[ch];
+        c->armed = 0;
         if (!c->active) {
             continue;
         }
