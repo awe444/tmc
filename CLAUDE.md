@@ -227,6 +227,26 @@ cart; it arrived as a Cave of Flames softlock (B40).** When a fix's
 investigation turns up a sibling, guard it then — the reasoning is already
 loaded, and the alternative is waiting for the expensive report.
 
+**The deferral loses whatever is read at the commit rather than the crossing,
+and that is now three things (B55).** `VIEWPORT_SCROLL_FADE` queues a room
+scroll and applies it 32 frames later; Link keeps walking for all of them, as
+`sub_0807BD14`'s own comment says. His facing was the first casualty (B16) and
+the camera target the second (B24) — both are carried across the deferral —
+and his **position** was the third: reverse during the fade and the commit runs
+from where he got back to, so `Scroll2Step`'s nudge lands him *outside* the
+room he is entering, where no edge transition fires. Free to walk, camera
+pinned, nowhere to go. Anything the apply reads must be captured at the
+crossing, not sampled at the commit — and the guard is the camera target,
+because a vehicle legitimately moves him throughout the fade.
+
+**"Stuck" is not one state, and `TMC_STUCK_TRACE` only names one of them
+(B55).** It watches `PLAYER_ROOMTRANSITION`, which is B16's shape; a player
+stranded outside the room bounds is in `PLAYER_NORMAL` with full control and
+the instrument stays silent. Ask *where is he* as well as *what state is he
+in*: comparing his x against `origin_x .. origin_x + width` is one line and
+settles it. And run that trace at its real 180-frame threshold before
+believing it — at `=60` it reports ordinary doorway dithering as a stall.
+
 **B22 is the same assumption a fourth time, one axis over, and it broke
 gameplay rather than rendering.** A room that is *exactly* viewport-sized on
 hardware — 240x160 — pins the camera on the room origin, which makes
