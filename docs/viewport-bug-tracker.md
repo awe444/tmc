@@ -5164,6 +5164,60 @@ and `Port_MapSource_PublishTilesets` does the publish from `PresentFrame`.
   12169, `slot 2: 5 -> 4`, a band in rows 0..20, the periphery *above* the
   centred screen. Same defect, corrected.
 
+**Swept across both managers.** There are exactly two tileset managers —
+`hyruleTownTileSetManager.c` (which also serves festival town) and
+`minishVillageTileSetManager.c` — and they share the publish path B59 moved, so
+the fix reaches both. What the sweep establishes is that their *exposure* is
+not symmetric, and one line says why:
+
+```c
+region->offset = (entry[0] == residentGroup) ? 0u : PORT_VRAM_BANK_OFFSET(entry[0]);
+```
+
+- **Hyrule Town passes the group it has just loaded** as `residentGroup`, so it
+  changes on every swap: the incoming group's regions flip bank→VRAM and the
+  outgoing one's flip VRAM→bank. That flip is exactly what a stale publication
+  gets wrong.
+- **Minish Village passes `PORT_TILESET_NO_RESIDENT`**, which no `entry[0]` can
+  equal, so every region's offset is a function of its *authored* group alone
+  and a one-frame-stale publication describes the identical regions. Its
+  residual exposure is only the gap-tile `fallback`, `fallbackPalette` and the
+  guard rect, which do follow the live group.
+
+Measured pre-B59 against post-B59, sampling the frames each recording's own
+`[groups] frame N slot S: A -> B` events name rather than a fixed stride —
+**seventeen recordings, 384 swap events, 653 frames**:
+
+| | swaps | frames sampled | frames changed |
+|---|---|---|---|
+| eight Hyrule Town recordings | 117 | 135 | **27** |
+| nine Minish Village recordings | 267 | 518 | **1** |
+| canonical route (320x240) | 23 | 36 | **1** |
+| `quick_glitch_hyrule_town_south_wall` | — | 180 (every frame) | **1** (the report) |
+
+The Hyrule Town changes are all the same three shapes, repeating exactly:
+`(0,217)-(320,240)` at 2158 px, `(48,0)-(272,20)` at 477 px, and
+`(0,120)-(8,176)` at 385 px — the bottom, top and left peripheral bands, i.e.
+whichever band the swap's region boundary happened to fall in. `fourth_town_glitch`
+alone carried **17**.
+
+**Minish Village is not immune, and the one hit is the predicted one.**
+`picori_village_room_glitch` frame 2270 changes by **5 pixels** at x=278..279 —
+a single tile edge, which is the gap-tile fallback rather than a region. That is
+the difference between "the regions are group-independent" (true, and why 267
+swaps produce almost nothing) and "Minish Village cannot show this" (false).
+
+**Festival town is the gap in this sweep.** No recording reaches area `0x15`;
+it had to be warped into, and only two swap events could be provoked there, both
+unchanged. Four frames is not coverage — the festival branch of the same manager
+is structurally identical to the Hyrule Town branch, so it should behave the
+same, but that is inference rather than measurement.
+
+**Two recordings have no `quit` line** — `town_wall_glitch` and
+`town_grpahics_glitch_2` — so replaying them without `--exit-frame` never
+terminates. The first sweep hung twenty-four minutes on one of them before that
+was noticed.
+
 **Lesson (53).** *A gate that samples frames on a fixed stride cannot see a
 fault that lasts one frame; sample the event instead.* Two dense route diffs
 came back 0 here and both were honest measurements of the wrong thing. The

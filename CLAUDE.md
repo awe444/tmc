@@ -347,7 +347,15 @@ enumerates them from a first run — and the route turns out to contain another
 instance. The detector for this shape is cheap: with `TMC_DISABLE_OBJ` and
 `TMC_DISABLE_BG0`, a scrolling scene's consecutive-pair residual under a pure
 vertical shift has **median 0**, so one bad frame stands out at 2266 against
-zeros.
+zeros. **Swept: seventeen recordings, 384 swap events — Hyrule Town changed 27
+frames, Minish Village 1.** The asymmetry is `residentGroup`: Hyrule Town passes
+the group it just loaded, so its region offsets flip on every swap, while Minish
+Village passes `PORT_TILESET_NO_RESIDENT`, which no region can equal, so its
+offsets are fixed at declare time. Its one hit is 5 px on a gap tile — the
+*fallback*, which does follow the live group. **Festival town (`0x15`) is the
+hole**: no recording reaches it, a warp provokes only two swaps, and four frames
+is not coverage. Note `town_wall_glitch` and `town_grpahics_glitch_2` have no
+`quit` line, so replaying them needs `--exit-frame` or they never end.
 
 **Above native size the port keeps *every* alternative tileset in memory and
 picks between them per tile (B27).** `gVram` carries one bank per gfx group
