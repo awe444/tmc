@@ -1,7 +1,7 @@
 # Milestone 2 — status at session close, 2026-08-22
 
 The height expansion (320×160 → 320×240). Every planned spike is landed, plus
-the items the plan did not anticipate, and **fifty-three of the fifty-eight
+the items the plan did not anticipate, and **fifty-four of the fifty-nine
 tracked bugs are closed** as of 2026-08-27 (B41, B42, B46, B47 and B49 remain
 open — the tracker is authoritative for the count), B27 included —
 Hyrule Town, festival town and Minish Village, playtested and confirmed

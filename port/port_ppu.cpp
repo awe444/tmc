@@ -6,6 +6,7 @@
 #include "port_filter.h"
 #include "port_touch_controls.h"
 #include "port_viewport.h"
+#include "port_mapsource.h"
 
 #ifdef launcher
 #include "tmc_launcher.h"
@@ -477,6 +478,14 @@ extern "C" void Port_PPU_PresentFrame(void) {
     if (sBackend == RenderBackend::None) {
         return;
     }
+
+    /* Last thing before the frame is drawn: the per-tile tileset selection has
+     * to describe the VRAM that is about to be sampled, and a tileset swap
+     * writes that VRAM from game logic — after Port_MapSource_Update bound the
+     * layers and before this present. Publishing at bind time therefore drew
+     * one frame of the new group's characters against the old group's
+     * selection (B59). */
+    Port_MapSource_PublishTilesets();
 
     dispcnt = (uint16_t)(gIoMem[0x00] | (gIoMem[0x01] << 8));
     gbaMode = (uint8_t)(dispcnt & 0x07);

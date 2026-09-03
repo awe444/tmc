@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-three of the fifty-eight
-bugs are closed: fifty fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-four of the fifty-nine
+bugs are closed: fifty-one fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -5095,6 +5095,89 @@ but on the GBA every use of it as an index is silently truncated by the address
 arithmetic, and eight of the twelve callers here happen to narrow it explicitly
 anyway. The four that did not are the bug. `grep` for the return type rather
 than for the symptom: one declaration bounded the whole class.
+
+## B59 — one frame of wrong tileset in the periphery at every group swap *(fixed)*
+
+Reported 2026-08-27: walking north from Hyrule Town's south entrance, a
+"momentary, maybe single frame" glitch in the white area of the south wall as it
+pans out of view. It is exactly one frame, and it happens at **every** tileset
+group swap — the report just caught the one that is easiest to see.
+
+**Finding a one-frame fault needs a one-frame instrument.** All 180 frames of
+the walk were dumped with `TMC_DISABLE_OBJ=1 TMC_DISABLE_BG0=1`, and each
+consecutive pair scored for residual under a pure vertical shift. The camera
+moves 1-2 px a frame and nothing else does, so the **median residual is 0** and
+a single bad frame is unmissable:
+
+```
+median=0   worst: f989:2266  f990:2108  f861:0  f862:0  ...
+```
+
+Two adjacent pairs, (988,989) and (989,990), which brackets the fault to frame
+989 alone. The differing region is rows **217..239** — below the centred
+240x160 screen, which is rows 40..199.
+
+**The engine's swap is atomic; the port's description of it is not.** Per-4 KB
+hashes of `gVram` across the swap show the two character blocks the manager
+owns, `0x2000` and `0xA000`, changing together on frame 989 and never again,
+and the shadow-bank copies at `0x7A000`/`0x82000` changing on the same frame.
+`0x1000`, `0x4000` and `0x9000` change all through the walk and are ordinary
+tile animation — mistaking one of those for a second, staggered write cost a
+round.
+
+What is a frame late is the **publication**. `Port_MapSource_PublishForBg` rode
+on the map-source binding in `Port_MapSource_Update`, and the frame cycle is:
+
+```
+Present(N) → VBlankIntr → Port_MapSource_Update  →  logic(N) → Present(N+1) → …
+```
+
+`LoadGfxGroup` runs in **logic**. So logic(N) writes VRAM, fills the bank and
+records the new declaration — all *after* the publish that Present(N+1) will
+render against. For that one frame the renderer holds "group 4 is resident"
+while VRAM already holds group 5, and every tile in the slot's character range
+picks the wrong side.
+
+**Confirmed before it was fixed**, by republishing at the top of
+`Port_PPU_PresentFrame` behind a temporary env switch: the outlier vanished and
+the median stayed 0.
+
+**Fix.** Publish immediately before the frame is drawn instead of at bind time.
+The guard rect still has to line up with the camera the *map source* was bound
+at — logic has moved the camera on by then — so `Port_MapSource_Update` records
+that camera (`Port_TilesetResidency_SetPublishOrigin`) and the layers it bound,
+and `Port_MapSource_PublishTilesets` does the publish from `PresentFrame`.
+
+**Verification, and why the route's silence is not coverage.**
+
+- The maintainer's recording: **1 of 180 frames changes**, and it is f989.
+- Gate 11/11, `fetches=265497600 mismatched=0`.
+- 240x160 dense 176-frame route diff: **0**, as it must be —
+  `VIEWPORT_TILESET_RESIDENCY` is 0 at that size and the whole publish is a
+  no-op.
+- 320x240 dense 176-frame route diff: **also 0 — and that proves nothing.** The
+  dense diff samples every 72nd frame and the fault lasts one, so it had about a
+  1-in-72 chance of seeing each occurrence.
+- **So the swap events were sampled instead of the calendar.** The route fires
+  the mechanism **23 times**; dumping each swap frame and its neighbours (36
+  frames) and diffing before/after finds **one** that changes — route frame
+  12169, `slot 2: 5 -> 4`, a band in rows 0..20, the periphery *above* the
+  centred screen. Same defect, corrected.
+
+**Lesson (53).** *A gate that samples frames on a fixed stride cannot see a
+fault that lasts one frame; sample the event instead.* Two dense route diffs
+came back 0 here and both were honest measurements of the wrong thing. The
+mechanism has a name and a trace — `[groups] frame N slot S: A -> B` — so the
+frames worth dumping can be enumerated from a first run and dumped by number in
+a second. That turned "no evidence of change" into "one more instance of the
+reported bug, fixed".
+
+**Lesson (54).** *A publication that describes memory has to be issued in step
+with the writes to that memory, not with whatever it was convenient to bundle
+it with.* The tileset selection was published alongside the map-source binding
+because it needs the same room coordinates, and that is a real dependency — but
+its *subject* is VRAM, which the engine rewrites a step later. The two needed
+splitting: take the coordinates at bind time, publish at draw time.
 
 ## D3 addendum: three scenes override their border colour
 

@@ -90,8 +90,21 @@ void Port_TilesetResidency_SetGroupPalette(u32 group, u32 paletteGroupId);
 void Port_TilesetResidency_UpdatePalettes(void);
 
 /* Hand the declared slots to a layer the port has just bound a map source
- * to. Called per frame, because the gap fallback follows the camera. */
+ * to. Called per frame, because the gap fallback follows the camera.
+ *
+ * Publishing happens immediately before the frame is rendered rather than at
+ * bind time, because a tileset swap writes VRAM from *game logic*, which runs
+ * after Port_MapSource_Update and before the next present. Publishing at bind
+ * time therefore described the previous group while VRAM already held the new
+ * one, for exactly one frame (B59). The guard rect still has to line up with
+ * the camera the map source was bound at, not the one logic has since moved
+ * to, so that camera is handed over separately below. */
 void Port_TilesetResidency_PublishForBg(int bg);
+
+/* The camera the guard rect is built around: the one the map source binding
+ * used, recorded at bind time and consumed by the publish just before render.
+ * In room pixels, i.e. scroll minus origin. */
+void Port_TilesetResidency_SetPublishOrigin(int camX, int camY);
 
 /* The offset the renderer would apply to a tile: same lookup, for probes.
  * Returns 0 when no slot governs the address, which is also what an

@@ -93,6 +93,12 @@ enum {
 };
 void Port_MapSource_DeclareBg3ScreenAnchor(int anchor);
 
+/* Publish the per-tile tileset selection for the layers Port_MapSource_Update
+ * bound, using the camera it bound them at. Call immediately before rendering:
+ * a tileset swap writes VRAM from game logic, which runs after the binding and
+ * before the present, so publishing at bind time is one frame stale (B59). */
+void Port_MapSource_PublishTilesets(void);
+
 /* A world-view layer carrying a tiled, screen-space overlay instead of the
  * room's authored map.
  *

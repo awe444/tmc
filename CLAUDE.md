@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-three of the fifty-eight tracked bugs
+complete — every spike landed and fifty-four of the fifty-nine tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -333,6 +333,21 @@ every table before changing a selection rule; it is static data and costs
 minutes. **Before blaming a per-frame budget, read the authored data**: B26 also
 cost three measured-and-discarded hypotheses (sprite gfx slots, the 128-entry
 OAM cap, screenblock coverage).
+
+**A one-frame fault is invisible to a gate that samples on a stride, and the
+tileset publication was one frame late at every swap (B59).** The per-tile
+selection was published from `Port_MapSource_Update`, which runs *before* the
+frame's game logic — and `LoadGfxGroup` runs *in* that logic, so for one frame
+the renderer held "group 4 is resident" while VRAM already held group 5. Only
+the periphery shows it, because the centred 240x160 does not reach those rows
+until later. **Both dense 176-frame route diffs came back 0 and neither was
+coverage**: the fault lasts one frame and the diff samples every 72nd. Dump the
+frames the mechanism *fires* on instead — `[groups] frame N slot S: A -> B`
+enumerates them from a first run — and the route turns out to contain another
+instance. The detector for this shape is cheap: with `TMC_DISABLE_OBJ` and
+`TMC_DISABLE_BG0`, a scrolling scene's consecutive-pair residual under a pure
+vertical shift has **median 0**, so one bad frame stands out at 2266 against
+zeros.
 
 **Above native size the port keeps *every* alternative tileset in memory and
 picks between them per tile (B27).** `gVram` carries one bank per gfx group
