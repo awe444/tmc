@@ -1021,6 +1021,19 @@ static void mapsource_trace_blend(void) {
             (int)gFadeControl.speed, (unsigned)gFadeControl.mask);
 }
 
+/* Layers that got a map source this update, and therefore want the per-tile
+ * tileset selection published before the next frame is drawn. */
+static u32 sTilesetPublishMask = 0;
+
+void Port_MapSource_PublishTilesets(void) {
+    int bg;
+    for (bg = 0; bg < 4; bg++) {
+        if (sTilesetPublishMask & (1u << bg)) {
+            Port_TilesetResidency_PublishForBg(bg);
+        }
+    }
+}
+
 /* TMC_TILE_PROBE=col,row — what the renderer will do with one room tile.
  *
  * Prints, for both world layers, the tilemap entry at that room tile, the
@@ -1150,6 +1163,9 @@ void Port_MapSource_Update(void) {
     mapsource_ctx_dup_check();
     mapsource_fill_probe();
     int layer;
+    /* Same reasoning as the layer clear below: a BG that stops having a map
+     * source must stop being published too. */
+    sTilesetPublishMask = 0;
     /* Clear every layer first: which BG a map binds to can change between
      * frames, so a stale binding on a BG this frame's layers no longer use
      * would keep sampling after the engine moved on. */
@@ -1219,8 +1235,16 @@ void Port_MapSource_Update(void) {
             /* Per-tile tileset selection rides on this binding and only on
              * this binding: it needs the room coordinates the map source
              * addresses in, so a layer that fell back to a screenblock has
-             * nothing to test and keeps the camera-based group (B27). */
-            Port_TilesetResidency_PublishForBg(bg);
+             * nothing to test and keeps the camera-based group (B27).
+             *
+             * The publish itself is deferred to just before the frame is
+             * rendered — a tileset swap writes VRAM from game logic, which
+             * runs after this function and before the next present, so
+             * publishing here described the previous group against the new
+             * VRAM for one frame (B59). Record the layer and the camera this
+             * binding used; Port_MapSource_PublishTilesets does the rest. */
+            sTilesetPublishMask |= 1u << bg;
+            Port_TilesetResidency_SetPublishOrigin(src.origin_x, src.origin_y);
         }
     }
 

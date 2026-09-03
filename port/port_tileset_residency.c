@@ -459,6 +459,16 @@ u32 Port_TilesetResidency_OffsetFor(u32 charAddr, int tileCol, int tileRow) {
     return 0u;
 }
 
+/* Set from Port_MapSource_Update at bind time; read by the publish, which now
+ * runs a step later (see the header). */
+static int sPublishCamX = 0;
+static int sPublishCamY = 0;
+
+void Port_TilesetResidency_SetPublishOrigin(int camX, int camY) {
+    sPublishCamX = camX;
+    sPublishCamY = camY;
+}
+
 void Port_TilesetResidency_PublishForBg(int bg) {
     static int disabled = -1;
     int i;
@@ -533,8 +543,8 @@ void Port_TilesetResidency_PublishForBg(int bg) {
         }
         if (builtCount < RESIDENCY_MAX_REGIONS) {
             VirtuaPPUMode1CharRegion* guard = &built[builtCount++];
-            guard->x0 = (((int)gRoomControls.scroll_x - (int)gRoomControls.origin_x) + UI_CENTER_DX) >> 3;
-            guard->y0 = (((int)gRoomControls.scroll_y - (int)gRoomControls.origin_y) + UI_CENTER_DY) >> 3;
+            guard->x0 = (sPublishCamX + UI_CENTER_DX) >> 3;
+            guard->y0 = (sPublishCamY + UI_CENTER_DY) >> 3;
             guard->w = DISPLAY_WIDTH / 8;
             guard->h = DISPLAY_HEIGHT / 8;
             guard->offset = fallback;
@@ -594,6 +604,11 @@ u32 Port_TilesetResidency_OffsetFor(u32 charAddr, int tileCol, int tileRow) {
     (void)tileCol;
     (void)tileRow;
     return 0u;
+}
+
+void Port_TilesetResidency_SetPublishOrigin(int camX, int camY) {
+    (void)camX;
+    (void)camY;
 }
 
 void Port_TilesetResidency_SetGroupPalette(u32 group, u32 paletteGroupId) {
