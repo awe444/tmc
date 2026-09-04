@@ -5581,6 +5581,98 @@ The 240x160 gates above were re-run after every change in this document and are
 the standing regression gate; keep running both before any viewport commit
 (`tools/capture/README.md`, "Regression gate").
 
+## Follow-up: 51 enemy structs may share B61's misalignment
+
+**Open. Not swept — recorded here so it is not lost.**
+
+B61 was `EyegoreEntity` declaring its extra area as raw bytes (`u8 unk_68[0x5]`)
+where the canonical `Enemy` opens with `Entity* child`. That pointer is 4 bytes
+on GBA and 8 here, and `GE_FIELD` — which `LoadRoomEntity` writes the spawn
+record through — shifts by the difference whenever `kind == ENEMY`. A subtype
+that reserves nothing therefore has every field below sitting 4 bytes early,
+and the spawn record lands on the wrong ones.
+
+**Scope, and what is *not* in it.** `GE_FIELD` shifts only for `ENEMY` and
+`PLAYER`. Every struct under `src/object/` and `src/npc/` matches
+`GenericEntity`, which has no pointer in the extra area, so those are correctly
+aligned and are not part of this. The exposed set is enemy subtypes only:
+**51 of them lack the leading `Entity*`**, and **46 additionally read a field at
+an offset `LoadRoomEntity` writes** (`0x78`, `0x7a`, `0x7c`, `0x80`, `0x82`,
+`0x84`, `0x86`).
+
+**Sharing the shape is not the same as being broken**, which is why this is a
+follow-up rather than a bulk edit. A field at one of those offsets that the
+entity only ever uses as its own scratch — writes before it reads — is
+harmless: it is consistently 4 bytes early and nothing else touches it. It
+becomes a defect only where the entity *expects the spawn record's value*, as
+Eyegore did with `flag`. Deciding which is which needs reading each entity, not
+a grep, and a bulk "add the pointer everywhere" change would silently alter the
+layout of 51 enemies at once with no test that exercises most of them.
+
+**The cheap way in is to make the compiler enumerate it.** Add
+`PORT_STATIC_ASSERT_OFFSET` to each struct at the offsets `LoadRoomEntity`
+writes, as B61 did for `EyegoreEntity`. Each failure is a real misalignment;
+each pass is a struct that is already correct. That turns the judgement call
+into a build error and is the same move B51 argues for.
+
+| struct | file | reads spawn-written offsets |
+|---|---|---|
+| `ArmosEntity` | `armos.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84 |
+| `BeetleEntity` | `beetle.c` | 0x86 |
+| `BladeTrapEntity` | `bladeTrap.c` | — |
+| `BobombEntity` | `bobomb.c` | 0x80, 0x82 |
+| `BombPeahatEntity` | `bombPeahat.c` | 0x78, 0x7a, 0x80, 0x82 |
+| `BusinessScrubEntity` | `businessScrub.c` | 0x78, 0x7a, 0x7c, 0x80, 0x86 |
+| `CloudPiranhaEntity` | `cloudPiranha.c` | 0x80, 0x82 |
+| `DarkNutEntity` | `darkNut.c` | 0x78, 0x7a, 0x7c |
+| `DoorMimicEntity` | `doorMimic.c` | 0x78, 0x7a, 0x7c |
+| `Enemy4DEntity` | `enemy4D.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `Enemy50Entity` | `enemy50.c` | 0x78, 0x7a, 0x7c, 0x80 |
+| `Enemy64Entity` | `enemy64.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `FallingBoulderEntity` | `fallingBoulder.c` | 0x7a, 0x7c, 0x80, 0x82, 0x84 |
+| `FireballGuyEntity` | `fireballGuy.c` | 0x84 |
+| `GhiniEntity` | `ghini.c` | 0x78, 0x7a, 0x7c |
+| `GyorgMaleEyeEntity` | `gyorgMaleEye.c` | 0x78 |
+| `HelmasaurEntity` | `helmasaur.c` | 0x78 |
+| `KeatonEntity` | `keaton.c` | 0x78 |
+| `LakituCloudEntity` | `lakituCloud.c` | 0x78, 0x7a |
+| `LakituEntity` | `lakitu.c` | 0x78 |
+| `LeeverEntity` | `leever.c` | — |
+| `MadderpillarEntity` | `madderpillar.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `MazaalMacroEntity` | `mazaalMacro.c` | 0x78, 0x84 |
+| `MiniFireballGuyEntity` | `miniFireballGuy.c` | — |
+| `MiniSlimeEntity` | `miniSlime.c` | — |
+| `MulldozerEntity` | `mulldozer.c` | 0x80, 0x82 |
+| `PeahatEntity` | `peahat.c` | 0x80, 0x82 |
+| `PestoEntity` | `pesto.c` | 0x78, 0x80, 0x82, 0x84, 0x86 |
+| `PuffstoolEntity` | `puffstool.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `RollobiteEntity` | `rollobite.c` | 0x84 |
+| `RopeEntity` | `rope.c` | 0x78, 0x7a |
+| `RopeGoldenEntity` | `ropeGolden.c` | 0x78, 0x7a |
+| `RupeeLikeEntity` | `rupeeLike.c` | 0x80, 0x82, 0x84 |
+| `SensorBladeTrapEntity` | `sensorBladeTrap.c` | 0x78, 0x7a, 0x7c, 0x84, 0x86 |
+| `SlimeEntity` | `slime.c` | 0x84 |
+| `SmallPestoEntity` | `smallPesto.c` | 0x80 |
+| `SpearMoblinEntity` | `spearMoblin.c` | 0x7a, 0x80, 0x82 |
+| `SpinyChuchuEntity` | `spinyChuchu.c` | 0x80 |
+| `StalfosEntity` | `stalfos.c` | 0x78, 0x7a, 0x7c |
+| `TektiteEntity` | `tektite.c` | 0x7c, 0x80, 0x82 |
+| `TektiteGoldenEntity` | `tektiteGolden.c` | 0x80 |
+| `TreeItemEntity` | `treeItem.c` | — |
+| `VaatiBallEntity` | `vaatiBall.c` | 0x78, 0x7c, 0x80, 0x84, 0x86 |
+| `VaatiEyesMacroEntity` | `vaatiEyesMacro.c` | 0x78 |
+| `VaatiProjectileEntity` | `vaatiProjectile.c` | 0x78 |
+| `VaatiRebornEnemyEntity` | `vaatiRebornEnemy.c` | 0x78, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `VaatiTransfiguredEntity` | `vaatiTransfigured.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `VaatiTransfiguredEyeEntity` | `vaatiTransfiguredEye.c` | 0x80, 0x82 |
+| `WallMaster2Entity` | `wallMaster2.c` | 0x78, 0x7a, 0x7c |
+| `WallMasterEntity` | `wallMaster.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `WispEntity` | `wisp.c` | 0x7c, 0x80, 0x82 |
+
+Counted 2026-09-04 by matching enemy structs whose extra area declares no
+`Entity*` and whose `.c` dereferences a field declared at one of the written
+offsets. `EyegoreEntity` is absent because B61 fixed it.
+
 ## Carry-forward items — what Milestone 2 inherits
 
 Recorded here so they are not lost with the plan's spike sections. Routing:
@@ -5590,6 +5682,7 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 | ~~Title screen affine sword~~ | **Done** — `docs/affine-viewport.md`; verified pixel-exact |
 | ~~Per-scanline circular windows~~ | **Done — Spike 9.** See B11 and `docs/spike9-hdma-240.md` |
 | World-space window x masked to 8 bits | Spike 9, or sooner if a scene is reported |
+| **51 enemy structs may share B61's 4-byte misalignment** | its own section above — add `PORT_STATIC_ASSERT_OFFSET` and let the build enumerate them |
 | Kinstone menu unverified | any real playthrough |
 | Quicksave state files not portable | nothing — recorded as a dead end |
 

@@ -192,8 +192,8 @@ instead reserves nothing, so every field below sits 4 bytes early:
 closed-eye animation. Castor Wilds' statues were unshootable. **Assert the
 offsets rather than commenting them**: a
 `PORT_STATIC_ASSERT_OFFSET(..., flag, 0x7c, 0xA8, ...)` does not compile against
-the wrong layout, which is proof independent of viewport. **45 enemy structs
-share the shape and are not swept** — `src/object/` and `src/npc/` are fine,
+the wrong layout, which is proof independent of viewport. **51 enemy structs
+share the shape and are not swept — see the tracker's "Follow-up" section** — `src/object/` and `src/npc/` are fine,
 because `GE_FIELD` shifts only for ENEMY and PLAYER and those match
 `GenericEntity`. Being broken also needs the struct to *read* a field
 `LoadRoomEntity` writes (0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86) rather than
