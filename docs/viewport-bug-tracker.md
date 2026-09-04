@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-six of the sixty-one
-bugs are closed: fifty-three fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-seven of the sixty-two
+bugs are closed: fifty-four fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -5581,6 +5581,187 @@ The 240x160 gates above were re-run after every change in this document and are
 the standing regression gate; keep running both before any viewport commit
 (`tools/capture/README.md`, "Regression gate").
 
+## B62 — the lily pad is a solid green square while the pause menu closes *(fixed)*
+
+Reported 2026-09-04 with a recording and two hardware savestates. **Not a
+viewport bug.** Described as happening on the way *into* the menu; it is
+actually on the way **out** — eight frames (6368-6376 of the recording) as the
+world fades back in, snapping correct at 6377. Easy to misread when opening and
+closing the menu repeatedly.
+
+**Measured rather than eyeballed.** The pad's green blob is **52x60 at 90%
+fill** during the glitch and **44x46 at 60%** after — a solid rectangle against
+a disc.
+
+**It is the one affine sprite on screen.** `TMC_DISABLE_OBJ` removes it; every
+BG stays. OAM carries exactly one affine entry, OAM[15], group 2, 64x64,
+tile 464. During the glitch the renderer samples with **pa=pd=1** instead of
+275. An affine matrix is 8.8 fixed point, so 1 is 1/256 scale: one texel
+magnified across the whole 64x64 bounding box, which is precisely a flat
+two-tone block, and the per-line opaque count goes to the full 64 against ~39.
+
+**The chain.** `Subtask_Init` opens a menu with
+`MemClear(gOAMControls.unk, 0x100)` — all 32 affine *sources*. The flag that
+triggers a recompute is **global and slot-agnostic**: `ui.c:913` calls
+`sub_0805ECEC(0, ...)` for slot 0 and sets `gOAMControls.unk[0].unk7 = 1`, so
+`CopyOAM` recomputes all 32 slots at once. Slot 2's source is still the cleared
+zero, so it gets a matrix derived from zero scale. `SetAffineInfo` — the only
+writer of a slot's source — is not called for the pad until **frame 6375**,
+while the pad starts being *drawn* at 6368. Eight frames of a sprite rendered
+from a source nobody has written since the menu wiped it.
+
+**Hardware never presents that state, and two savestates show it:**
+
+| | affine group 2 |
+|---|---|
+| pause menu up | `[275, 20, -20, 275]` |
+| black frame, menu closing | `[285, 21, -21, 285]` |
+| port, same point | `[1, 0, 0, 1]` |
+
+The value *changes* between them, so hardware's pad has already run and
+rewritten its source before anything is drawn. The port draws the world before
+the entity that owns the sprite has updated once.
+
+**Fix.** In `CopyOAM`'s `PC_PORT` branch, a slot whose source is still all zero
+keeps its previous matrix instead of deriving a new one from nothing. The
+owning entity overwrites it the moment it runs, so this only ever covers the
+gap, and stale-but-valid is what hardware shows.
+
+**Verification.** Fill through the transition goes from 0.90 to ~0.60 — round
+for every frame. Gate 11/11 with `fetches=265497600 mismatched=0`. Dense
+176-frame route diff **0 at both 240x160 and 320x240**; `barrel_middle_exit`
+0 of 21 and `post-pause-glitch` 0 of 18.
+
+**The guard is broad and the zero diffs are not the reason to trust it.**
+Counted, it fires **~20,000 times on the canonical route**, and every firing
+changes a matrix — because most of the 32 slots are unused and hold stale
+values that `ObjAffineSet` would otherwise flatten. Nothing draws them, which
+is why the route is pixel-identical. It only *matters* for a slot a sprite
+actually uses while its owner has not yet written a source, which is this bug.
+A slot in use has its source written by `SetAffineInfo` in the same frame, so
+the guard cannot fire for it.
+
+**Not fixed: the underlying ordering.** The port draws entities for several
+frames after a subtask before their first update. That is the real divergence
+from hardware and it is the same family as B59 and B60; this change stops the
+one visible consequence. Anything else drawn from state its entity has not yet
+initialised will show the same shape.
+
+**Two port-only oddities found in passing, both left alone.**
+`port_bios.c`'s `ObjAffineSet` documents `pa = cos(θ)/sx` and computes
+`sx * cos(θ)`; those agree only at `sx = 1.0`, and since sprites are otherwise
+correct the comment is probably the wrong half. Its `if (sx == 0) sx = 1;`
+clamp turns a zero source into 1/256 scale rather than the all-zero matrix the
+BIOS would produce — but an all-zero matrix also collapses every pixel onto one
+texel, so removing the clamp changes the block's colour, not its existence.
+
+**Lesson (59).** *An instrument keyed to its own counter is not keyed to the
+frame you are looking at.* Two separate probes here counted `PresentFrame`
+calls while the image dumps use the capture's frame number. Off by one, an OAM
+comparison straddled the wrong pair, reported "identical inputs, different
+output", and sent the investigation looking for impossible causes. Key every
+probe to `Port_Capture_Frame()` and prove the correspondence on a frame whose
+picture you can identify before trusting a comparison.
+
+**Lesson (60).** *A savestate whose screen is black is still a savestate.* The
+first hardware capture arrived with an apology that it might be mistimed; the
+screen was entirely black, and it was the single most useful artefact in the
+investigation, because the affine matrix lives in OAM and does not care what
+the fade is doing. Ask for state, not for pictures, when the question is about
+state.
+
+## Follow-up: 51 enemy structs may share B61's misalignment
+
+**Open. Not swept — recorded here so it is not lost.**
+
+B61 was `EyegoreEntity` declaring its extra area as raw bytes (`u8 unk_68[0x5]`)
+where the canonical `Enemy` opens with `Entity* child`. That pointer is 4 bytes
+on GBA and 8 here, and `GE_FIELD` — which `LoadRoomEntity` writes the spawn
+record through — shifts by the difference whenever `kind == ENEMY`. A subtype
+that reserves nothing therefore has every field below sitting 4 bytes early,
+and the spawn record lands on the wrong ones.
+
+**Scope, and what is *not* in it.** `GE_FIELD` shifts only for `ENEMY` and
+`PLAYER`. Every struct under `src/object/` and `src/npc/` matches
+`GenericEntity`, which has no pointer in the extra area, so those are correctly
+aligned and are not part of this. The exposed set is enemy subtypes only:
+**51 of them lack the leading `Entity*`**, and **46 additionally read a field at
+an offset `LoadRoomEntity` writes** (`0x78`, `0x7a`, `0x7c`, `0x80`, `0x82`,
+`0x84`, `0x86`).
+
+**Sharing the shape is not the same as being broken**, which is why this is a
+follow-up rather than a bulk edit. A field at one of those offsets that the
+entity only ever uses as its own scratch — writes before it reads — is
+harmless: it is consistently 4 bytes early and nothing else touches it. It
+becomes a defect only where the entity *expects the spawn record's value*, as
+Eyegore did with `flag`. Deciding which is which needs reading each entity, not
+a grep, and a bulk "add the pointer everywhere" change would silently alter the
+layout of 51 enemies at once with no test that exercises most of them.
+
+**The cheap way in is to make the compiler enumerate it.** Add
+`PORT_STATIC_ASSERT_OFFSET` to each struct at the offsets `LoadRoomEntity`
+writes, as B61 did for `EyegoreEntity`. Each failure is a real misalignment;
+each pass is a struct that is already correct. That turns the judgement call
+into a build error and is the same move B51 argues for.
+
+| struct | file | reads spawn-written offsets |
+|---|---|---|
+| `ArmosEntity` | `armos.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84 |
+| `BeetleEntity` | `beetle.c` | 0x86 |
+| `BladeTrapEntity` | `bladeTrap.c` | — |
+| `BobombEntity` | `bobomb.c` | 0x80, 0x82 |
+| `BombPeahatEntity` | `bombPeahat.c` | 0x78, 0x7a, 0x80, 0x82 |
+| `BusinessScrubEntity` | `businessScrub.c` | 0x78, 0x7a, 0x7c, 0x80, 0x86 |
+| `CloudPiranhaEntity` | `cloudPiranha.c` | 0x80, 0x82 |
+| `DarkNutEntity` | `darkNut.c` | 0x78, 0x7a, 0x7c |
+| `DoorMimicEntity` | `doorMimic.c` | 0x78, 0x7a, 0x7c |
+| `Enemy4DEntity` | `enemy4D.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `Enemy50Entity` | `enemy50.c` | 0x78, 0x7a, 0x7c, 0x80 |
+| `Enemy64Entity` | `enemy64.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `FallingBoulderEntity` | `fallingBoulder.c` | 0x7a, 0x7c, 0x80, 0x82, 0x84 |
+| `FireballGuyEntity` | `fireballGuy.c` | 0x84 |
+| `GhiniEntity` | `ghini.c` | 0x78, 0x7a, 0x7c |
+| `GyorgMaleEyeEntity` | `gyorgMaleEye.c` | 0x78 |
+| `HelmasaurEntity` | `helmasaur.c` | 0x78 |
+| `KeatonEntity` | `keaton.c` | 0x78 |
+| `LakituCloudEntity` | `lakituCloud.c` | 0x78, 0x7a |
+| `LakituEntity` | `lakitu.c` | 0x78 |
+| `LeeverEntity` | `leever.c` | — |
+| `MadderpillarEntity` | `madderpillar.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `MazaalMacroEntity` | `mazaalMacro.c` | 0x78, 0x84 |
+| `MiniFireballGuyEntity` | `miniFireballGuy.c` | — |
+| `MiniSlimeEntity` | `miniSlime.c` | — |
+| `MulldozerEntity` | `mulldozer.c` | 0x80, 0x82 |
+| `PeahatEntity` | `peahat.c` | 0x80, 0x82 |
+| `PestoEntity` | `pesto.c` | 0x78, 0x80, 0x82, 0x84, 0x86 |
+| `PuffstoolEntity` | `puffstool.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `RollobiteEntity` | `rollobite.c` | 0x84 |
+| `RopeEntity` | `rope.c` | 0x78, 0x7a |
+| `RopeGoldenEntity` | `ropeGolden.c` | 0x78, 0x7a |
+| `RupeeLikeEntity` | `rupeeLike.c` | 0x80, 0x82, 0x84 |
+| `SensorBladeTrapEntity` | `sensorBladeTrap.c` | 0x78, 0x7a, 0x7c, 0x84, 0x86 |
+| `SlimeEntity` | `slime.c` | 0x84 |
+| `SmallPestoEntity` | `smallPesto.c` | 0x80 |
+| `SpearMoblinEntity` | `spearMoblin.c` | 0x7a, 0x80, 0x82 |
+| `SpinyChuchuEntity` | `spinyChuchu.c` | 0x80 |
+| `StalfosEntity` | `stalfos.c` | 0x78, 0x7a, 0x7c |
+| `TektiteEntity` | `tektite.c` | 0x7c, 0x80, 0x82 |
+| `TektiteGoldenEntity` | `tektiteGolden.c` | 0x80 |
+| `TreeItemEntity` | `treeItem.c` | — |
+| `VaatiBallEntity` | `vaatiBall.c` | 0x78, 0x7c, 0x80, 0x84, 0x86 |
+| `VaatiEyesMacroEntity` | `vaatiEyesMacro.c` | 0x78 |
+| `VaatiProjectileEntity` | `vaatiProjectile.c` | 0x78 |
+| `VaatiRebornEnemyEntity` | `vaatiRebornEnemy.c` | 0x78, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `VaatiTransfiguredEntity` | `vaatiTransfigured.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86 |
+| `VaatiTransfiguredEyeEntity` | `vaatiTransfiguredEye.c` | 0x80, 0x82 |
+| `WallMaster2Entity` | `wallMaster2.c` | 0x78, 0x7a, 0x7c |
+| `WallMasterEntity` | `wallMaster.c` | 0x78, 0x7a, 0x7c, 0x80, 0x82 |
+| `WispEntity` | `wisp.c` | 0x7c, 0x80, 0x82 |
+
+Counted 2026-09-04 by matching enemy structs whose extra area declares no
+`Entity*` and whose `.c` dereferences a field declared at one of the written
+offsets. `EyegoreEntity` is absent because B61 fixed it.
+
 ## Carry-forward items — what Milestone 2 inherits
 
 Recorded here so they are not lost with the plan's spike sections. Routing:
@@ -5590,6 +5771,7 @@ Recorded here so they are not lost with the plan's spike sections. Routing:
 | ~~Title screen affine sword~~ | **Done** — `docs/affine-viewport.md`; verified pixel-exact |
 | ~~Per-scanline circular windows~~ | **Done — Spike 9.** See B11 and `docs/spike9-hdma-240.md` |
 | World-space window x masked to 8 bits | Spike 9, or sooner if a scene is reported |
+| **51 enemy structs may share B61's 4-byte misalignment** | its own section above — add `PORT_STATIC_ASSERT_OFFSET` and let the build enumerate them |
 | Kinstone menu unverified | any real playthrough |
 | Quicksave state files not portable | nothing — recorded as a dead end |
 

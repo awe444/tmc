@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-six of the sixty-one tracked bugs
+complete — every spike landed and fifty-seven of the sixty-two tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -192,8 +192,8 @@ instead reserves nothing, so every field below sits 4 bytes early:
 closed-eye animation. Castor Wilds' statues were unshootable. **Assert the
 offsets rather than commenting them**: a
 `PORT_STATIC_ASSERT_OFFSET(..., flag, 0x7c, 0xA8, ...)` does not compile against
-the wrong layout, which is proof independent of viewport. **45 enemy structs
-share the shape and are not swept** — `src/object/` and `src/npc/` are fine,
+the wrong layout, which is proof independent of viewport. **51 enemy structs
+share the shape and are not swept — see the tracker's "Follow-up" section** — `src/object/` and `src/npc/` are fine,
 because `GE_FIELD` shifts only for ENEMY and PLAYER and those match
 `GenericEntity`. Being broken also needs the struct to *read* a field
 `LoadRoomEntity` writes (0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86) rather than
@@ -369,6 +369,22 @@ map at bind time (64 KB/frame; present unchanged at 12.03 ms vs 12.12).
 block** — pointed at the recording it returned 10,240 on the first run. A
 passing check whose route was never asked whether it exercises the mechanism is
 the number to distrust.
+
+**The port draws entities for several frames after a menu before their first
+update, and anything read at draw time is then uninitialised (B62).**
+`Subtask_Init` wipes all 32 affine *sources*; the recompute flag is global
+(`ui.c` raises it for slot 0), so `CopyOAM` rebuilds every slot from that zero
+— and the lily pad's own `SetAffineInfo` does not run until **8 frames after it
+starts being drawn**. `pa=pd=1` is 1/256 scale in 8.8, i.e. one texel across
+the whole 64x64 box: a solid green square. Two savestates settle it — hardware
+holds a live matrix both during the menu and at the black frame, so it never
+presents that state. Fixed narrowly (a slot whose source is still zero keeps its
+previous matrix); **the ordering itself is not fixed** and is the same family as
+B59/B60. **Key every probe to `Port_Capture_Frame()`** — two instruments here
+counted `PresentFrame` calls instead, went one frame out, and produced
+"identical inputs, different output". And **ask for state, not pictures**: the
+decisive savestate arrived with an apology for being mistimed and had a fully
+black screen, which does not matter when the answer is in OAM.
 
 **A one-frame fault is invisible to a gate that samples on a stride, and the
 tileset publication was one frame late at every swap (B59).** The per-tile
