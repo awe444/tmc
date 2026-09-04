@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-four of the fifty-nine tracked bugs
+complete — every spike landed and fifty-five of the sixty tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -333,6 +333,24 @@ every table before changing a selection rule; it is static data and costs
 minutes. **Before blaming a per-frame budget, read the authored data**: B26 also
 cost three measured-and-discarded hypotheses (sprite gfx slots, the 128-entry
 OAM cap, screenblock coverage).
+
+**The map source was read live while OAM was not, so anything drawn both ways
+tore by one frame (B60).** `Port_MapSource_Update` bound a *pointer* into
+`gMapData*Special`; the renderer dereferences it at draw time, so it showed the
+map as of the logic step that runs *after* the binding — one frame ahead of the
+OAM that same step produced, which arrives via the engine's buffer at the next
+`VBlankIntr`. Invisible until one object is drawn both ways: a large pushed
+block is, and it **vanished for exactly one frame at the start of every push
+step** (the reverse hand-off overlaps pixel-aligned, so only one end shows).
+Hardware settles the design — `baserom.ss1` has the block as OAM[20] over BG2
+tile 671, the same tile as the grass beside it — so the engine does clear the
+BG and draw a sprite, and lands both at one VBlank. Fixed by snapshotting the
+map at bind time (64 KB/frame; present unchanged at 12.03 ms vs 12.12).
+**`--mapsource-audit` is the instrument for this whole class and it read
+`mismatched=0` for two milestones because the canonical route never pushes a
+block** — pointed at the recording it returned 10,240 on the first run. A
+passing check whose route was never asked whether it exercises the mechanism is
+the number to distrust.
 
 **A one-frame fault is invisible to a gate that samples on a stride, and the
 tileset publication was one frame late at every swap (B59).** The per-tile
