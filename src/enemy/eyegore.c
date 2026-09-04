@@ -18,7 +18,25 @@
 
 typedef struct {
     /*0x00*/ Entity base;
+#ifdef PC_PORT
+    /* GBA 0x68..0x6c. The canonical `Enemy` opens its extra area with
+     * `Entity* child`, which is 4 bytes there and 8 here; this struct spells
+     * the same region as raw bytes, so without reserving the difference every
+     * field below sits 4 bytes early.
+     *
+     * That matters because LoadRoomEntity writes the spawn record through
+     * GE_FIELD, which uses the Enemy layout: `dat->type2` lands at PC 0xA8
+     * while `flag` was declared at PC 0xA4. `flag` therefore read whatever
+     * `field_0x78` (kind/flags) had left there — 0x0F03, non-zero — so every
+     * Eyegore took Eyegore_Init's "already triggered" branch, clearing
+     * ENT_COLLIDE and selecting the closed-eye animation. In Castor Wilds
+     * that is the statues' eyes shut and arrows passing straight through
+     * (B61). */
+    Entity* enemyChild;
+    /*0x6c*/ u8 unk_6c;
+#else
     /*0x68*/ u8 unk_68[0x5];
+#endif
     /*0x6d*/ u8 unk_6d;
     /*0x6e*/ u8 unk_6e[0x6];
     /*0x74*/ u16 unk_74;
@@ -35,6 +53,12 @@ typedef struct {
     /*0x84*/ u16 tileIndex3;
     /*0x86*/ u16 tileIndex4;
 } EyegoreEntity;
+
+/* The offsets above are a claim about where LoadRoomEntity's writes land.
+ * Check it (B51's lesson): `flag` must sit where GE_FIELD(field_0x7c) writes. */
+PORT_STATIC_ASSERT_OFFSET(EyegoreEntity, flag, 0x7c, 0xA8, "EyegoreEntity flag offset incorrect");
+PORT_STATIC_ASSERT_OFFSET(EyegoreEntity, unk_74, 0x74, 0xA0, "EyegoreEntity unk_74 offset incorrect");
+PORT_STATIC_ASSERT_OFFSET(EyegoreEntity, tileIndex1, 0x80, 0xAC, "EyegoreEntity tileIndex1 offset incorrect");
 
 extern Entity* sub_08017A90(Entity*, Entity*);
 

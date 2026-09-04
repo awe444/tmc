@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-five of the sixty
-bugs are closed: fifty-two fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-six of the sixty-one
+bugs are closed: fifty-three fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -41,7 +41,8 @@ instrument built to look at it.
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
 room properties, B48's unterminated ones, B56's stale HBlank DMA channel,
-B58's untruncated `u64` fuser id and B60's live map-source pointer.
+B58's untruncated `u64` fuser id, B60's live map-source pointer and
+B61's misaligned `EyegoreEntity`.
 **B57 is the first regression this tracker caused itself** — B45's OBJ priority
 rule, right on the two savestates it was pinned on and wrong on a third. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
@@ -5315,6 +5316,84 @@ jitter, because those are what *changes* most. The maintainer then said the
 block "disappears entirely", and counting the block's own pixels per frame
 found it in one pass. Change detectors find animation; the report said absence,
 and absence is a different query.
+
+## B61 — Castor Wilds statue eyes are shut and arrows pass through them *(fixed)*
+
+Reported 2026-09-04 with a recording and, unusually, **a hardware savestate
+attached to the report** showing the eyes open. **Not a viewport bug** — the
+mechanism is pointer width, identical at both sizes.
+
+**The savestate did most of the work.** Hardware's statue is OAM[17] (32x32,
+priority 2, palette 7, tile 384) and the open eye is *part of that sprite*. The
+port draws OAM[17] with the same tile 384, and its OBJ VRAM matches hardware's
+**byte for byte** — 1002 of 1024 tiles identical, the 22 differences all Link's
+animation phase. What the port adds is an **extra** entry, OAM[16], tile 444,
+16x16, sitting exactly over the eye and earlier in OAM order, so it draws on
+top. The eye is not shut; it is covered.
+
+Tracing which entity emits tile 444 named it outright: `kind=3 id=43` —
+**Eyegore**, the enemy the arrow is supposed to hit.
+
+**`Eyegore_Init` branches on a field that was never being written:**
+
+```c
+if (this->flag != 0) {
+    super->flags &= ~ENT_COLLIDE;   /* arrows pass straight through */
+    InitializeAnimation(super, 10); /* the closed eye */
+} else {
+    InitializeAnimation(super, 0xe);
+}
+```
+
+`flag` is declared at GBA `0x7c`, and `LoadRoomEntity` writes `dat->type2`
+there via `GE_FIELD`. Measured in the port:
+
+```
+[eye] flag@+164 (val 3843)   GE_FIELD(field_0x7c)@+168 (val 0)   sizeof(Entity)=144
+```
+
+Four bytes apart. The canonical `Enemy` opens its extra area with
+`Entity* child` — 4 bytes on GBA, 8 here — and `GE_FIELD` is built to match
+that, which is why `Enemy.field_0x74` is asserted at PC `0xA0`.
+`EyegoreEntity` spells the same region as raw bytes (`u8 unk_68[0x5]`) and
+never reserves the difference, so every field below sits 4 bytes early. `flag`
+landed where `field_0x78` (kind/flags) is written, read `0x0F03`, and every
+Eyegore in the game took the "already triggered" branch.
+
+**Fix.** Reserve the pointer width under `#ifdef PC_PORT` so the fields land
+where `GE_FIELD` writes them, and **assert the offsets** rather than leaving
+them as comments (B51's lesson): the added
+`PORT_STATIC_ASSERT_OFFSET(EyegoreEntity, flag, 0x7c, 0xA8, ...)` does not
+compile against the old struct, which is a size-independent proof that the old
+layout was wrong at both viewports.
+
+**Verification.** The eye opens and matches the savestate; gate 11/11 with
+`fetches=265497600 mismatched=0`; the 240x160 build renders it too.
+
+**The class is bounded but not swept.** `GE_FIELD` shifts only for `ENEMY` and
+`PLAYER`, so every `src/object/` and `src/npc/` struct is correctly aligned —
+they match `GenericEntity`, which has no pointer in the extra area. The exposed
+population is **enemy** structs that declare their extra area without the
+leading `Entity*`: **45 of them**, of which this is the one that was reported
+and fixed. Sharing the shape is not sufficient to be broken — the struct must
+also read a field `LoadRoomEntity` writes (`0x78`, `0x7a`, `0x7c`, `0x80`,
+`0x82`, `0x84`, `0x86`) rather than using it as its own scratch. That
+per-struct check has **not** been done.
+
+**Lesson (57).** *A report that arrives with a hardware savestate skips the
+entire argument.* Six passes of B45 compared state against hardware and
+concluded the port was faithful while the screen differed. Here the savestate
+came *with* the report, and OAM plus OBJ VRAM answered "is the artwork loaded"
+(yes, byte-identical), "is the statue the same sprite" (yes, tile 384) and
+"what is different" (one extra OAM entry) in three reads. Ask for the savestate
+with the recording, not after the inference fails.
+
+**Lesson (58).** *When a struct's GBA offsets are comments, the 64-bit build
+needs an assertion at every offset another file writes through.* B51 made this
+point about `SaveFile`; this is the same defect one layer down, and the same
+tell — the fields *before* the pointer read correctly and the ones after do
+not. `GE_FIELD` exists precisely because subtypes disagree on the extra area's
+layout, and nothing checked that any given subtype agreed with it.
 
 ## D3 addendum: three scenes override their border colour
 

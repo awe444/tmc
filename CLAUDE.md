@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-five of the sixty tracked bugs
+complete — every spike landed and fifty-six of the sixty-one tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -180,6 +180,24 @@ the only `u64`-returning function in any header, which bounds the class exactly:
 twelve callers, eight narrow to a `u32` local and are fine, four index directly
 and crash — the Tingle siblings and all three Great Fairies. **Grep for the
 return type, not for the symptom.**
+
+**An enemy struct that spells its extra area as raw bytes is 4 bytes out on
+64-bit, and `GE_FIELD` will not save it (B61).** The canonical `Enemy` opens
+that area with `Entity* child` — 4 bytes on GBA, 8 here — and `GE_FIELD` shifts
+by that difference for `kind == ENEMY`. A subtype that writes `u8 unk_68[0x5]`
+instead reserves nothing, so every field below sits 4 bytes early:
+`LoadRoomEntity` wrote `dat->type2` to PC 0xA8 while `EyegoreEntity.flag` read
+0xA4, got `field_0x78`'s kind/flags byte, and **every Eyegore in the game** took
+`Eyegore_Init`'s already-triggered branch — `ENT_COLLIDE` cleared and the
+closed-eye animation. Castor Wilds' statues were unshootable. **Assert the
+offsets rather than commenting them**: a
+`PORT_STATIC_ASSERT_OFFSET(..., flag, 0x7c, 0xA8, ...)` does not compile against
+the wrong layout, which is proof independent of viewport. **45 enemy structs
+share the shape and are not swept** — `src/object/` and `src/npc/` are fine,
+because `GE_FIELD` shifts only for ENEMY and PLAYER and those match
+`GenericEntity`. Being broken also needs the struct to *read* a field
+`LoadRoomEntity` writes (0x78, 0x7a, 0x7c, 0x80, 0x82, 0x84, 0x86) rather than
+use it as scratch.
 
 **A raw GBA byte offset into a struct that holds a pointer is wrong here, and
 only from the pointer onward (B53).** `itemForSale.c` read the player's
