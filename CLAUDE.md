@@ -7,7 +7,7 @@ unexplained literals as load-bearing until proven otherwise.
 ## Current work: viewport expansion (240×160 → 320×240)
 
 **Milestone 1 (width) is signed off. Milestone 2 (height) is functionally
-complete — every spike landed and fifty-four of the fifty-nine tracked bugs
+complete — every spike landed and fifty-five of the sixty tracked bugs
 are closed; B41, B42, B46, B47 and B49 are open.**
 What is left is one decision rather than work: frame time is +41% over the
 canvas baseline with peak frames past the 16.67 ms deadline, and no go/no-go is
@@ -334,6 +334,24 @@ minutes. **Before blaming a per-frame budget, read the authored data**: B26 also
 cost three measured-and-discarded hypotheses (sprite gfx slots, the 128-entry
 OAM cap, screenblock coverage).
 
+**The map source was read live while OAM was not, so anything drawn both ways
+tore by one frame (B60).** `Port_MapSource_Update` bound a *pointer* into
+`gMapData*Special`; the renderer dereferences it at draw time, so it showed the
+map as of the logic step that runs *after* the binding — one frame ahead of the
+OAM that same step produced, which arrives via the engine's buffer at the next
+`VBlankIntr`. Invisible until one object is drawn both ways: a large pushed
+block is, and it **vanished for exactly one frame at the start of every push
+step** (the reverse hand-off overlaps pixel-aligned, so only one end shows).
+Hardware settles the design — `baserom.ss1` has the block as OAM[20] over BG2
+tile 671, the same tile as the grass beside it — so the engine does clear the
+BG and draw a sprite, and lands both at one VBlank. Fixed by snapshotting the
+map at bind time (64 KB/frame; present unchanged at 12.03 ms vs 12.12).
+**`--mapsource-audit` is the instrument for this whole class and it read
+`mismatched=0` for two milestones because the canonical route never pushes a
+block** — pointed at the recording it returned 10,240 on the first run. A
+passing check whose route was never asked whether it exercises the mechanism is
+the number to distrust.
+
 **A one-frame fault is invisible to a gate that samples on a stride, and the
 tileset publication was one frame late at every swap (B59).** The per-tile
 selection was published from `Port_MapSource_Update`, which runs *before* the
@@ -347,7 +365,15 @@ enumerates them from a first run — and the route turns out to contain another
 instance. The detector for this shape is cheap: with `TMC_DISABLE_OBJ` and
 `TMC_DISABLE_BG0`, a scrolling scene's consecutive-pair residual under a pure
 vertical shift has **median 0**, so one bad frame stands out at 2266 against
-zeros.
+zeros. **Swept: seventeen recordings, 384 swap events — Hyrule Town changed 27
+frames, Minish Village 1.** The asymmetry is `residentGroup`: Hyrule Town passes
+the group it just loaded, so its region offsets flip on every swap, while Minish
+Village passes `PORT_TILESET_NO_RESIDENT`, which no region can equal, so its
+offsets are fixed at declare time. Its one hit is 5 px on a gap tile — the
+*fallback*, which does follow the live group. **Festival town (`0x15`) is the
+hole**: no recording reaches it, a warp provokes only two swaps, and four frames
+is not coverage. Note `town_wall_glitch` and `town_grpahics_glitch_2` have no
+`quit` line, so replaying them needs `--exit-frame` or they never end.
 
 **Above native size the port keeps *every* alternative tileset in memory and
 picks between them per tile (B27).** `gVram` carries one bank per gfx group

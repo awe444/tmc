@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-four of the fifty-nine
-bugs are closed: fifty-one fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-five of the sixty
+bugs are closed: fifty-two fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -40,8 +40,8 @@ instrument built to look at it.
 **Nine of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
-room properties, B48's unterminated ones, B56's stale HBlank DMA channel and
-B58's untruncated `u64` fuser id.
+room properties, B48's unterminated ones, B56's stale HBlank DMA channel,
+B58's untruncated `u64` fuser id and B60's live map-source pointer.
 **B57 is the first regression this tracker caused itself** — B45's OBJ priority
 rule, right on the two savestates it was pinned on and wrong on a third. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
@@ -5164,6 +5164,60 @@ and `Port_MapSource_PublishTilesets` does the publish from `PresentFrame`.
   12169, `slot 2: 5 -> 4`, a band in rows 0..20, the periphery *above* the
   centred screen. Same defect, corrected.
 
+**Swept across both managers.** There are exactly two tileset managers —
+`hyruleTownTileSetManager.c` (which also serves festival town) and
+`minishVillageTileSetManager.c` — and they share the publish path B59 moved, so
+the fix reaches both. What the sweep establishes is that their *exposure* is
+not symmetric, and one line says why:
+
+```c
+region->offset = (entry[0] == residentGroup) ? 0u : PORT_VRAM_BANK_OFFSET(entry[0]);
+```
+
+- **Hyrule Town passes the group it has just loaded** as `residentGroup`, so it
+  changes on every swap: the incoming group's regions flip bank→VRAM and the
+  outgoing one's flip VRAM→bank. That flip is exactly what a stale publication
+  gets wrong.
+- **Minish Village passes `PORT_TILESET_NO_RESIDENT`**, which no `entry[0]` can
+  equal, so every region's offset is a function of its *authored* group alone
+  and a one-frame-stale publication describes the identical regions. Its
+  residual exposure is only the gap-tile `fallback`, `fallbackPalette` and the
+  guard rect, which do follow the live group.
+
+Measured pre-B59 against post-B59, sampling the frames each recording's own
+`[groups] frame N slot S: A -> B` events name rather than a fixed stride —
+**seventeen recordings, 384 swap events, 653 frames**:
+
+| | swaps | frames sampled | frames changed |
+|---|---|---|---|
+| eight Hyrule Town recordings | 117 | 135 | **27** |
+| nine Minish Village recordings | 267 | 518 | **1** |
+| canonical route (320x240) | 23 | 36 | **1** |
+| `quick_glitch_hyrule_town_south_wall` | — | 180 (every frame) | **1** (the report) |
+
+The Hyrule Town changes are all the same three shapes, repeating exactly:
+`(0,217)-(320,240)` at 2158 px, `(48,0)-(272,20)` at 477 px, and
+`(0,120)-(8,176)` at 385 px — the bottom, top and left peripheral bands, i.e.
+whichever band the swap's region boundary happened to fall in. `fourth_town_glitch`
+alone carried **17**.
+
+**Minish Village is not immune, and the one hit is the predicted one.**
+`picori_village_room_glitch` frame 2270 changes by **5 pixels** at x=278..279 —
+a single tile edge, which is the gap-tile fallback rather than a region. That is
+the difference between "the regions are group-independent" (true, and why 267
+swaps produce almost nothing) and "Minish Village cannot show this" (false).
+
+**Festival town is the gap in this sweep.** No recording reaches area `0x15`;
+it had to be warped into, and only two swap events could be provoked there, both
+unchanged. Four frames is not coverage — the festival branch of the same manager
+is structurally identical to the Hyrule Town branch, so it should behave the
+same, but that is inference rather than measurement.
+
+**Two recordings have no `quit` line** — `town_wall_glitch` and
+`town_grpahics_glitch_2` — so replaying them without `--exit-frame` never
+terminates. The first sweep hung twenty-four minutes on one of them before that
+was noticed.
+
 **Lesson (53).** *A gate that samples frames on a fixed stride cannot see a
 fault that lasts one frame; sample the event instead.* Two dense route diffs
 came back 0 here and both were honest measurements of the wrong thing. The
@@ -5178,6 +5232,89 @@ it with.* The tileset selection was published alongside the map-source binding
 because it needs the same room coordinates, and that is a real dependency — but
 its *subject* is VRAM, which the engine rewrites a step later. The two needed
 splitting: take the coordinates at bind time, publish at draw time.
+
+## B60 — the pushed block vanishes for one frame at every push step *(fixed)*
+
+Reported 2026-09-03 with a recording: a visual glitch on the large sliding block
+Link pushes after charging his sword and spawning a clone, "probably only one
+frame, but it repeats at least a couple of times during the full slide".
+**Not a viewport bug** — identical at 240x160.
+
+**It vanishes outright.** The block's body pixels go to **zero** on exactly five
+frames — 1616, 1658, 1700, 1742, 1784 — spaced exactly **42 frames**, which is
+one push step. Nothing subtle about it once counted the right way; see the
+lesson below for how much time went into counting it the wrong way.
+
+**The block is drawn two ways, and the hand-off is one frame out.**
+
+| | BG | sprites |
+|---|---|---|
+| settled (1614-15) | **1024 px** | 0 |
+| **transition (1616)** | **0** | **0** |
+| sliding (1617+) | 0 | **907 px** |
+
+The BG tile is cleared a frame before the sprite starts drawing, so nothing
+draws the block in between. At the *end* of each step the same skew runs the
+harmless way: at 1732/1774/1816 both draw it, aligned to the pixel (dx=dy=0),
+which is invisible. One end of every step gaps, the other overlaps.
+
+**Hardware says the design is right and the timing is ours.** `baserom.ss1`,
+taken mid-push, has the block as **OAM[20]** — 32x32, priority 2, opaque — and
+the BG2 tile beneath it is **671**, which is the *same tile as the plain grass
+to its right*. So the engine really does clear the BG tile and draw a sprite,
+and on hardware the tilemap DMA and the OAM copy both land at the same VBlank.
+
+**The port's map source is read live; OAM is not.** `Port_MapSource_Update`
+runs after `VBlankIntr` and before the frame's game logic, and it bound a
+*pointer* into `gMapData*Special`. The renderer dereferences that pointer at
+draw time, so it sees the map as of the logic step in between — one frame ahead
+of the OAM the same logic step produced, which reaches the screen through the
+engine's own buffer at the next `VBlankIntr`.
+
+**Two independent confirmations, both from switches that already existed.**
+
+- `--no-map-sampling` routes the BG through the screenblock, which is what the
+  engine's VBlank DMA writes and what hardware reads. Same binary, 240x160:
+  `map-sourced -> vanish frames [1616,1658,1700,1742,1784]`,
+  `screenblock -> vanish frames []`.
+- `--mapsource-audit` compares every map-sampled fetch against the screenblock
+  entry the hardware path would read, which is exactly this divergence:
+
+| run | fetches | mismatched |
+|---|---|---|
+| this recording, full | 99,763,200 | **10,240** |
+| this recording, up to f1500 (before the push) | 66,892,800 | 0 |
+| canonical route | 265,497,600 | 0 |
+
+**Fix.** Snapshot the room map at bind time instead of binding a live pointer —
+64 KB a frame across both layers. The whole 32 KB per layer is copied rather
+than the visible window, because the renderer addresses it in room coordinates
+and clamping to the camera is the shape B26 and B33 already were.
+
+**Verification.** Vanish frames gone at both sizes; the recording's audit goes
+**10,240 -> 0**; gate 11/11 with `fetches=265497600 mismatched=0`; the dense
+176-frame route diff is **0 at both 240x160 and 320x240**. Frame time over the
+canonical route at 320x240: logic mean moves 0.01-0.03 ms — the same order as
+run-to-run noise — and **present is unchanged**, 12.03 ms against 12.12. The
+copy is not in the present path.
+
+**Lesson (55).** *A gate that reports zero is reporting about its route.* The
+map-source audit is the instrument that finds this defect, it has been in the
+tree since Spike 3, and it has read `mismatched=0` over 265 million fetches
+every time because **the canonical route never pushes a block**. Pointed at the
+recording it returned 10,240 on the first run. The number to distrust is not a
+failing check but a passing one whose route was never asked whether it
+exercises the mechanism.
+
+**Lesson (56).** *Measure the thing the reporter described, not the thing that
+is easy to measure.* "Probably one frame" was read as "find the outlier frame",
+and three detectors were built for it — a pure-shift residual, a
+`d(n-1,n)+d(n,n+1)-d(n-1,n+1)` outlier score, a strict flip-and-back census.
+All three worked, and all three found the sword-charge flash and ordinary sprite
+jitter, because those are what *changes* most. The maintainer then said the
+block "disappears entirely", and counting the block's own pixels per frame
+found it in one pass. Change detectors find animation; the report said absence,
+and absence is a different query.
 
 ## D3 addendum: three scenes override their border colour
 

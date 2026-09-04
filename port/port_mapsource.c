@@ -1025,6 +1025,11 @@ static void mapsource_trace_blend(void) {
  * tileset selection published before the next frame is drawn. */
 static u32 sTilesetPublishMask = 0;
 
+/* The room map as it stood when the binding was made — see the copy in
+ * Port_MapSource_Update for why the renderer must not read the live one.
+ * One per world layer; gMapData*Special are u16[0x4000]. */
+static u16 sMapSnapshot[2][0x4000];
+
 void Port_MapSource_PublishTilesets(void) {
     int bg;
     for (bg = 0; bg < 4; bg++) {
@@ -1225,7 +1230,38 @@ void Port_MapSource_Update(void) {
              * reduce to the same map entry. That identity is what makes the
              * map-sampled output bit-identical at GBA-native size. */
             VirtuaPPUMode1MapSource src;
-            src.map = (layer == 0) ? gMapDataBottomSpecial : gMapDataTopSpecial;
+            /* Snapshot the room map rather than handing the renderer a live
+             * pointer into it.
+             *
+             * This function runs after VBlankIntr and before the frame's game
+             * logic; the frame it prepares is drawn at the *next* present. OAM
+             * reaches that present through the engine's own buffer, committed
+             * at VBlankIntr, so what the sprites show is the state as of the
+             * previous logic step. A live map pointer is read at draw time
+             * instead, so it shows the state as of the logic step in between —
+             * one frame ahead of the sprites.
+             *
+             * That skew is invisible until one thing is drawn both ways. A
+             * large pushed block is: the engine clears its BG tile and draws it
+             * as a sprite for the slide, and hardware does both at the same
+             * VBlank. Here the clear landed a frame early and nothing drew the
+             * block at all on that frame — it vanished, once per push step
+             * (B60). The reverse hand-off overlapped instead, pixel-aligned,
+             * which is why only one end of each step was visible.
+             *
+             * Copying the whole 32 KB is deliberate: the renderer addresses
+             * this in room coordinates and clamping the copy to the visible
+             * window would make the bound extent depend on the camera, which
+             * is the sort of thing B26 and B33 were. Measured over the canonical
+             * route at 320x240: ~64 KB of memcpy a frame across both layers,
+             * which moves logic mean by 0.01-0.03 ms — the same order as the
+             * run-to-run noise — and leaves present at 12.0 ms against 12.1,
+             * i.e. unchanged. Present is the number the shipping decision
+             * tracks and the copy is not in that path. */
+            memcpy(sMapSnapshot[layer],
+                   (layer == 0) ? gMapDataBottomSpecial : gMapDataTopSpecial,
+                   sizeof(sMapSnapshot[layer]));
+            src.map = sMapSnapshot[layer];
             src.stride = MAPSRC_STRIDE;
             src.width_tiles = gRoomControls.width >> 3;
             src.height_tiles = gRoomControls.height >> 3;
