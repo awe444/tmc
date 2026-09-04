@@ -35,6 +35,9 @@ tools/binutils
 # The mGBA comparison harness. These are the technique, not scratch scripts:
 # tools/mgba/README.md documents them and is useless without them.
 !tools/mgba/*.py
+# The entity-pool slot check. Same reasoning: B63 is swept by running it, and
+# the tracker cites it as the instrument for that whole class.
+!tools/check_entity_slots.py
 *.pl
 
 # graphics

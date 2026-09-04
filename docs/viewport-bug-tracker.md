@@ -2,13 +2,13 @@
 
 Bugs found across both viewport milestones. B1–B9 came from the maintainer
 playtesting the 320×160 build; B10–B12 from sweeps during Milestone 2; B13–B22
-from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B34, B46 and B49 were found by instrument rather than by report. B16 and B17 were
+from the maintainer playtesting 320×240, most with recordings; B22–B25 from the 2026-08-08 barrel and lily-pad sessions, and B26 from a 2026-08-09 Hyrule Town report. B34, B46, B49 and B63's `MazaalBraceletEntity` half were found by instrument rather than by report. B16 and B17 were
 reported from the Android build — which is the same viewport on other hardware,
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-seven of the sixty-two
-bugs are closed: fifty-four fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-eight of the sixty-three
+bugs are closed: fifty-five fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -24,7 +24,9 @@ scripted tester cannot reach; **B45** arrived 2026-08-22 with a recording, is
 to write savestates carrying a frame's state and picture together. **B46**
 was found by inspection while ruling a mechanism out of B45 — the second bug in
 the tracker found by instrument rather than by report, after B34; **B49** is
-the third, found 2026-08-23 while A/B-ing B48's fix against the shipping size.
+the third, found 2026-08-23 while A/B-ing B48's fix against the shipping size;
+B63's second half, `MazaalBraceletEntity`, is the fourth, found 2026-09-04 by
+sweeping every entity struct for the size that crashed the first.
 **B48** arrived 2026-08-22 as "the game hangs climbing the beanstalk" and was a
 SIGSEGV in every beanstalk in the game, at both sizes. **B43 closed 2026-08-22**, once the maintainer's 240x160
 recording made it reproducible on the shipping build: it was one port-only line
@@ -37,12 +39,12 @@ layer *reach* further, and the fix was to stop it wrapping and pin it to the
 edge it belongs to. B34 was found the same day, in the same layer, by the
 instrument built to look at it.
 
-**Nine of these were live in the shipping 240×160 build or through all of
+**Ten of these were live in the shipping 240×160 build or through all of
 Milestone 1** — B11, B12's horizontal half, B13's horizontal half, the iris
 veto, B23's angle-gate bypass, B25's post-menu buffer copy, B28's truncated
 room properties, B48's unterminated ones, B56's stale HBlank DMA channel,
-B58's untruncated `u64` fuser id, B60's live map-source pointer and
-B61's misaligned `EyegoreEntity`.
+B58's untruncated `u64` fuser id, B60's live map-source pointer,
+B61's misaligned `EyegoreEntity` and B63's oversized `MoldormEntity`.
 **B57 is the first regression this tracker caused itself** — B45's OBJ priority
 rule, right on the two savestates it was pinned on and wrong on a third. The expansion exposed them; it did not cause them, and B23 and
 B25 were only found because the 320×240 build made the rolling barrel worth
@@ -5670,6 +5672,120 @@ investigation, because the affine matrix lives in OAM and does not care what
 the fade is doing. Ask for state, not for pictures, when the question is about
 state.
 
+## B63 — the Outer Fortress of Winds crashes when Link kills a rupee-like *(fixed)*
+
+Reported 2026-09-04 with a recording and its save (`like_crash.script`),
+described as "a reproducible crash when Link kills the Like". **Not a viewport
+bug** — the mechanism is pointer width and it was live in the shipping 240x160
+build. Same family as B61, but it is *not* one of the 51 structs that follow-up
+lists, for a reason worth keeping.
+
+**The crash site is not the defect.** The SIGSEGV is in `UnlinkEntity`:
+
+```
+#0  UnlinkEntity (ent=gEntities+6992) at src/entity.c:645   ent->prev->next = ent->next;
+#2  sub_08029688 (this=gEntities+6992) at src/enemy/rupeeLike.c:246
+```
+
+`sub_08029688` is the *child* rupee-like deleting itself once its parent is
+gone, which is exactly what "Link kills the Like" does — so the report points
+straight at the victim. The victim is innocent. Its `prev` read
+`0x0000555511111133` where a live pointer in that build looks like
+`0x0000555555f687f0`: **the high half is intact and the low four bytes are
+gone**, which is a 32-bit store into a 64-bit pointer field, not a stale or
+uninitialised pointer. Its `next` was correct and its successor pointed back at
+it, so exactly one 4-byte write had landed at offset 0.
+
+**One conditional watchpoint names the writer.** Watching those four bytes for
+the observed value cost one run:
+
+```
+=== WRITE frame=6089 ===
+#0  sub_08022EAC (this=gEntities+6624) at src/enemy/moldorm.c:217
+        ((MoldormEntity*)super->child)->unk_84 = tmp;
+```
+
+A moldorm writing its *own* `unk_84` — 368 bytes away, two entity slots over.
+
+**`MoldormEntity` did not fit an entity slot.** `gEntities` is
+`GenericEntity[72]` and every subtype overlays one of those slots. Measured:
+
+```
+sizeof(GenericEntity) = 184      <- the slot
+sizeof(MoldormEntity) = 192
+offsetof(unk_84)      = 184      <- one byte past the end
+```
+
+So `child->unk_84` *is* the next entity's `prev`, by construction rather than
+by accident, and the value confirms it: `unk_84` is eight packed 4-bit
+animation states, so `0x11111133` is the field working normally. It is written
+every frame a moldorm moves.
+
+**Why it grew.** GBA `0x7c` and `0x80` carry two roles that never share an
+entity — the head (type 0) keeps its two trailing segments there, a segment
+(types 1..3) uses the same bytes as an eight-entry ring of packed position
+deltas, with `unk_84` following. On the GBA both roles are 4-byte fields, so
+the struct declared them as two unions side by side and ended at `0x88`. Here
+each pointer is 8 bytes, so the two unions consume 16 bytes instead of 8 and
+push `unk_84` out of the slot. The struct also lacked the leading `Entity*`
+that B61 is about, which put `unk_74`..`unk_7b` four bytes early as well.
+
+**Fix.** Reserve the pointer width at `0x68` as B61 did, and **overlay the two
+roles** rather than declaring them side by side: two 8-byte pointers are 16
+bytes against the ring's 12, and 16 is exactly what the slot has left.
+`unk_74` now lands at PC `0xA0` and `unk_84` at `0xB0`, both matching the
+canonical `Enemy`. Asserted, not commented:
+
+```c
+PORT_STATIC_ASSERT_EXPR(sizeof(MoldormEntity) <= sizeof(GenericEntity), 1, 1, ...);
+PORT_STATIC_ASSERT_OFFSET(MoldormEntity, split.unk_84, 0x84, 0xB0, ...);
+```
+
+**Swept by mechanism, and it found a second one.** The question "which subtype
+does not fit its slot" is one number per struct, so it can be asked of every
+struct at once — `tools/check_entity_slots.py` reads the built binary's DWARF
+and checks all **312** entity-overlay structs. Exactly two overflowed:
+`MoldormEntity` and **`MazaalBraceletEntity`** (`mazaalBracelet.c`), whose
+`u8 unk_84` — the Mazaal fight's beetle-spawn counter — sat at the same 184.
+That one is **fixed but unreproduced**: no recording reaches it, and it is
+found by instrument, like B34, B46 and B49. Its `unk_84` is not reached through
+a cast from the head or hand structs, unlike `0x74`..`0x82`, so it was free to
+move into the trailing padding.
+
+**Verification.** The recording replays to its 7000-frame exit with no fault.
+The moldorm still works, which the crash's absence does not prove on its own:
+all four moldorms in that room have their segments trailing the head by a few
+pixels, the head's two tail pointers resolve to the right entities, and the
+ring holds small deltas around `0x88`. Gate 11/11 with
+`fetches=265497600 mismatched=0`. `check_entity_slots.py` reports 0 overflows
+on the fix and both structs on the pre-fix binary.
+
+**It was live at 240x160.** The recording cannot answer this — frame-exact
+replay desynchronises across viewport sizes, and replaying it on the 240x160
+build simply walks somewhere else — but the struct does not depend on the
+viewport, and running the checker against the **pre-fix shipping binary**
+reports both structs at 192 bytes. That makes eleven of this milestone's
+defects that were live in the shipping build.
+
+**Lesson (61).** *A partially-overwritten pointer names its own cause.* A
+pointer whose high half is a plausible address and whose low half is not was
+not corrupted by a wild copy or freed early — it was hit by a **32-bit store
+into a 64-bit field**, which is the signature of this port's whole struct-layout
+class (B51, B53, B58, B61). Reading the value that way turned "something
+corrupted the entity list" into "find a 4-byte writer", and a conditional
+watchpoint on that exact value then cost one run. Contrast B48, where the crash
+site moved between identical runs and reading it at all was the mistake.
+
+**Lesson (62).** *"Does it declare the leading pointer" and "does it fit the
+slot" are different questions, and the follow-up list only asked the first.*
+Neither `MoldormEntity` nor `MazaalBraceletEntity` appears among the 51 structs
+recorded under B61, because both *do* declare `Entity*` in their extra area —
+they just declare it in the wrong place, and in the wrong quantity. The size
+check is one number per struct, needs no judgement about which fields the spawn
+record touches, and catches both failures of the same layout contract. **When a
+sweep's criterion is a proxy for the defect, check what the proxy misses**, and
+prefer the criterion the compiler can evaluate.
+
 ## Follow-up: 51 enemy structs may share B61's misalignment
 
 **Open. Not swept — recorded here so it is not lost.**
@@ -5761,6 +5877,15 @@ into a build error and is the same move B51 argues for.
 Counted 2026-09-04 by matching enemy structs whose extra area declares no
 `Entity*` and whose `.c` dereferences a field declared at one of the written
 offsets. `EyegoreEntity` is absent because B61 fixed it.
+
+**That criterion has a blind spot, and B63 fell in it.** `MoldormEntity` and
+`MazaalBraceletEntity` are both absent from this table because both *do*
+declare an `Entity*` in the extra area — in the wrong place, and in the wrong
+quantity, which put a field past the end of the entity pool slot and onto the
+next entity's `prev`. Declaring the pointer is not the same as agreeing with
+the canonical `Enemy`. `tools/check_entity_slots.py` asks the size question
+over every subtype at once and is worth running before trusting this list's
+scope; it is clean as of B63.
 
 ## Carry-forward items — what Milestone 2 inherits
 

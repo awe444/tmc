@@ -36,9 +36,23 @@ typedef struct MazaalBraceletEntity_ {
     /*0x7c*/ union SplitHWord unk_7c;
     /*0x7e*/ u16 unk_7e;
     /*0x80*/ union SplitHWord unk_80;
+#ifdef PC_PORT
+    /* There is no room for the GBA's 0x82..0x84 padding here: the 64-bit
+     * pointers at 0x74 and 0x78 already run this struct to the end of a
+     * GenericEntity pool slot, so keeping it puts `unk_84` at 0xB8 -- the
+     * *next* entity's `prev` (B63, the same shape as moldorm.c). `unk_84` is
+     * this bracelet's own beetle-spawn counter; unlike 0x74..0x82 it is never
+     * reached through a cast from the head or hand structs, so it is free to
+     * move into the padding instead. */
+    /*0x84*/ u8 unk_84;
+#else
     /*0x82*/ u8 unused4[2];
     /*0x84*/ u8 unk_84;
+#endif
 } MazaalBraceletEntity;
+
+PORT_STATIC_ASSERT_EXPR(sizeof(MazaalBraceletEntity) <= sizeof(GenericEntity), 1, 1,
+                        "MazaalBraceletEntity overflows the gEntities pool slot");
 
 extern void SoundReqClipped(Entity*, u32);
 
