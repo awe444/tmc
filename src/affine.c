@@ -83,12 +83,55 @@ void CopyOAM(void) {
         gOAMControls.unk[0].unk7 = 0;
 #ifdef PC_PORT
         struct ObjAffineSrcData affineSrc[32];
+        s16 keep[32][4];
         u32 i;
+        u32 k;
 
         for (i = 0; i < ARRAY_COUNT(affineSrc); i++) {
             memcpy(&affineSrc[i], &gOAMControls.unk[i].unk0, sizeof(affineSrc[i]));
         }
+
+        /* A slot whose source is still all zero has not been written since
+         * Subtask_Init's MemClear(gOAMControls.unk, 0x100), which wipes all 32
+         * affine sources when a menu opens. The flag that triggers this
+         * recompute is global — ui.c raises it for slot 0 alone — so one UI
+         * write recomputes every slot, and a slot nobody has rewritten yet
+         * gets a matrix derived from zero scale. That is a degenerate matrix:
+         * every screen pixel of the sprite samples one texel, which draws as a
+         * flat block over the sprite's whole bounding box.
+         *
+         * It shows because the port draws the world for several frames after a
+         * menu before the entity that owns the sprite has updated once — the
+         * lily pad's first SetAffineInfo lands 8 frames after it starts being
+         * drawn, so it spent those frames as a solid green square (B62). Two
+         * mGBA savestates say hardware never presents that state: slot 2 holds
+         * a live matrix both during the menu ([275,20,-20,275]) and at the
+         * black frame as the world returns ([285,21,-21,285]).
+         *
+         * Keep the previous matrix for such a slot rather than deriving a new
+         * one from nothing. The owning entity overwrites it the moment it runs,
+         * so this only ever covers the gap. */
+        for (k = 0; k < ARRAY_COUNT(affineSrc); k++) {
+            if (affineSrc[k].xScale == 0 && affineSrc[k].yScale == 0 && affineSrc[k].rotation == 0) {
+                keep[k][0] = gOAMControls.oam[k * 4 + 0].affineParam;
+                keep[k][1] = gOAMControls.oam[k * 4 + 1].affineParam;
+                keep[k][2] = gOAMControls.oam[k * 4 + 2].affineParam;
+                keep[k][3] = gOAMControls.oam[k * 4 + 3].affineParam;
+            } else {
+                keep[k][0] = keep[k][1] = keep[k][2] = keep[k][3] = 0;
+            }
+        }
+
         ObjAffineSet(affineSrc, &gOAMControls.oam[0].affineParam, 32, 8);
+
+        for (k = 0; k < ARRAY_COUNT(affineSrc); k++) {
+            if (affineSrc[k].xScale == 0 && affineSrc[k].yScale == 0 && affineSrc[k].rotation == 0) {
+                gOAMControls.oam[k * 4 + 0].affineParam = keep[k][0];
+                gOAMControls.oam[k * 4 + 1].affineParam = keep[k][1];
+                gOAMControls.oam[k * 4 + 2].affineParam = keep[k][2];
+                gOAMControls.oam[k * 4 + 3].affineParam = keep[k][3];
+            }
+        }
 #else
         ObjAffineSet((struct ObjAffineSrcData*)gOAMControls.unk, &gOAMControls.oam[0].affineParam, 32, 8);
 #endif

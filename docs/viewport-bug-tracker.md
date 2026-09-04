@@ -7,8 +7,8 @@ reported from the Android build — which is the same viewport on other hardware
 and neither turned out to be a platform bug.
 
 **Status: Milestone 1 signed off 2026-07-30. Milestone 2 is functionally
-complete — see `docs/milestone2-status.md`.** Fifty-six of the sixty-one
-bugs are closed: fifty-three fixed with a root cause and evidence, B4 closed as
+complete — see `docs/milestone2-status.md`.** Fifty-seven of the sixty-two
+bugs are closed: fifty-four fixed with a root cause and evidence, B4 closed as
 **no longer observed** rather than diagnosed, and B52 closed as a deliberate
 divergence from hardware rather than as a defect. **There is a hardware oracle
 now** — mGBA runs headless on this machine and its savestates carry a frame's
@@ -5580,6 +5580,95 @@ is dominated by a texture upload whose size did not change.
 The 240x160 gates above were re-run after every change in this document and are
 the standing regression gate; keep running both before any viewport commit
 (`tools/capture/README.md`, "Regression gate").
+
+## B62 — the lily pad is a solid green square while the pause menu closes *(fixed)*
+
+Reported 2026-09-04 with a recording and two hardware savestates. **Not a
+viewport bug.** Described as happening on the way *into* the menu; it is
+actually on the way **out** — eight frames (6368-6376 of the recording) as the
+world fades back in, snapping correct at 6377. Easy to misread when opening and
+closing the menu repeatedly.
+
+**Measured rather than eyeballed.** The pad's green blob is **52x60 at 90%
+fill** during the glitch and **44x46 at 60%** after — a solid rectangle against
+a disc.
+
+**It is the one affine sprite on screen.** `TMC_DISABLE_OBJ` removes it; every
+BG stays. OAM carries exactly one affine entry, OAM[15], group 2, 64x64,
+tile 464. During the glitch the renderer samples with **pa=pd=1** instead of
+275. An affine matrix is 8.8 fixed point, so 1 is 1/256 scale: one texel
+magnified across the whole 64x64 bounding box, which is precisely a flat
+two-tone block, and the per-line opaque count goes to the full 64 against ~39.
+
+**The chain.** `Subtask_Init` opens a menu with
+`MemClear(gOAMControls.unk, 0x100)` — all 32 affine *sources*. The flag that
+triggers a recompute is **global and slot-agnostic**: `ui.c:913` calls
+`sub_0805ECEC(0, ...)` for slot 0 and sets `gOAMControls.unk[0].unk7 = 1`, so
+`CopyOAM` recomputes all 32 slots at once. Slot 2's source is still the cleared
+zero, so it gets a matrix derived from zero scale. `SetAffineInfo` — the only
+writer of a slot's source — is not called for the pad until **frame 6375**,
+while the pad starts being *drawn* at 6368. Eight frames of a sprite rendered
+from a source nobody has written since the menu wiped it.
+
+**Hardware never presents that state, and two savestates show it:**
+
+| | affine group 2 |
+|---|---|
+| pause menu up | `[275, 20, -20, 275]` |
+| black frame, menu closing | `[285, 21, -21, 285]` |
+| port, same point | `[1, 0, 0, 1]` |
+
+The value *changes* between them, so hardware's pad has already run and
+rewritten its source before anything is drawn. The port draws the world before
+the entity that owns the sprite has updated once.
+
+**Fix.** In `CopyOAM`'s `PC_PORT` branch, a slot whose source is still all zero
+keeps its previous matrix instead of deriving a new one from nothing. The
+owning entity overwrites it the moment it runs, so this only ever covers the
+gap, and stale-but-valid is what hardware shows.
+
+**Verification.** Fill through the transition goes from 0.90 to ~0.60 — round
+for every frame. Gate 11/11 with `fetches=265497600 mismatched=0`. Dense
+176-frame route diff **0 at both 240x160 and 320x240**; `barrel_middle_exit`
+0 of 21 and `post-pause-glitch` 0 of 18.
+
+**The guard is broad and the zero diffs are not the reason to trust it.**
+Counted, it fires **~20,000 times on the canonical route**, and every firing
+changes a matrix — because most of the 32 slots are unused and hold stale
+values that `ObjAffineSet` would otherwise flatten. Nothing draws them, which
+is why the route is pixel-identical. It only *matters* for a slot a sprite
+actually uses while its owner has not yet written a source, which is this bug.
+A slot in use has its source written by `SetAffineInfo` in the same frame, so
+the guard cannot fire for it.
+
+**Not fixed: the underlying ordering.** The port draws entities for several
+frames after a subtask before their first update. That is the real divergence
+from hardware and it is the same family as B59 and B60; this change stops the
+one visible consequence. Anything else drawn from state its entity has not yet
+initialised will show the same shape.
+
+**Two port-only oddities found in passing, both left alone.**
+`port_bios.c`'s `ObjAffineSet` documents `pa = cos(θ)/sx` and computes
+`sx * cos(θ)`; those agree only at `sx = 1.0`, and since sprites are otherwise
+correct the comment is probably the wrong half. Its `if (sx == 0) sx = 1;`
+clamp turns a zero source into 1/256 scale rather than the all-zero matrix the
+BIOS would produce — but an all-zero matrix also collapses every pixel onto one
+texel, so removing the clamp changes the block's colour, not its existence.
+
+**Lesson (59).** *An instrument keyed to its own counter is not keyed to the
+frame you are looking at.* Two separate probes here counted `PresentFrame`
+calls while the image dumps use the capture's frame number. Off by one, an OAM
+comparison straddled the wrong pair, reported "identical inputs, different
+output", and sent the investigation looking for impossible causes. Key every
+probe to `Port_Capture_Frame()` and prove the correspondence on a frame whose
+picture you can identify before trusting a comparison.
+
+**Lesson (60).** *A savestate whose screen is black is still a savestate.* The
+first hardware capture arrived with an apology that it might be mistimed; the
+screen was entirely black, and it was the single most useful artefact in the
+investigation, because the affine matrix lives in OAM and does not care what
+the fade is doing. Ask for state, not for pictures, when the question is about
+state.
 
 ## Follow-up: 51 enemy structs may share B61's misalignment
 
